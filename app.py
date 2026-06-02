@@ -27,6 +27,9 @@ COLORES = {
 }
 LABELS = {"ANG1":"Angamos U1","ANG2":"Angamos U2","CCR1":"Cochrane U1","CCR2":"Cochrane U2"}
 
+# Potencias máximas reales declaradas por AES Andes ante el CEN
+PMAX = {"ANG1": 277.0, "ANG2": 280.0, "CCR1": 276.0, "CCR2": 276.0}
+
 st.markdown("""
 <style>
 @import url('https://fonts.googleapis.com/css2?family=IBM+Plex+Mono:wght@400;600&family=Inter:wght@300;400;500;600;700&display=swap');
@@ -200,7 +203,7 @@ for i,u in enumerate(["ANG1","ANG2","CCR1","CCR2"]):
             st.markdown(f'<div class="kpi"><div class="kpi-badge" style="background:{COLORES[u]["badge"]};color:{COLORES[u]["text"]}">{LABELS[u]}</div><div class="kpi-val">—</div></div>', unsafe_allow_html=True)
             continue
         prom  = df_u["gen_real_mw"].mean()
-        pmax  = float(df_u["potencia_maxima"].iloc[0]) if not df_u["potencia_maxima"].isnull().all() else 0
+        pmax  = PMAX.get(u, 0)
         fp    = prom/pmax*100 if pmax else 0
         ult_mw= df_u.sort_values("fecha_hora").iloc[-1]["gen_real_mw"]
         delta = ult_mw-prom
