@@ -187,10 +187,15 @@ with ch1:
     st.markdown("# Dashboard Operacional — CTM Mejillones")
     st.markdown(f'<p style="color:#64748B;font-size:0.85rem;margin-top:-0.5rem">Período {s} → {e} · Generación real + Programada + CMG Nodo Crucero</p>', unsafe_allow_html=True)
 with ch2:
-    ult  = df_r["fecha_hora"].max()
-    diff = (datetime.now()-ult.to_pydatetime()).seconds
+    ult_real = df_r["fecha_hora"].max()
+    ult_cmg  = df_c["fecha_hora"].max() if not df_c.empty else None
+    diff = (datetime.now()-ult_real.to_pydatetime()).seconds
     cls  = "dot-g" if diff<7200 else "dot-y"
-    st.markdown(f'<div style="text-align:right;padding-top:1.5rem"><span class="dot-status {cls}"></span><span style="font-size:0.75rem;color:#64748B">Último dato: {ult.strftime("%d/%m %H:%M")}</span></div>', unsafe_allow_html=True)
+    cmg_str  = ult_cmg.strftime("%d/%m %H:%M") if ult_cmg is not None else "—"
+    st.markdown(f'''<div style="text-align:right;padding-top:1rem;line-height:1.8">
+        <div><span class="dot-status {cls}"></span><span style="font-size:0.72rem;color:#64748B">Gen. real: <b>{ult_real.strftime("%d/%m %H:%M")}</b></span></div>
+        <div><span style="font-size:0.72rem;color:#64748B">CMG Crucero: <b>{cmg_str}</b></span></div>
+    </div>''', unsafe_allow_html=True)
 
 
 # ── KPI cards ─────────────────────────────────────────────────
