@@ -10,6 +10,16 @@ import psycopg2
 import plotly.graph_objects as go
 from plotly.subplots import make_subplots
 from datetime import date, datetime, timedelta
+import io
+import matplotlib
+matplotlib.use("Agg")
+import matplotlib.pyplot as plt
+import matplotlib.dates as mdates
+from reportlab.lib.pagesizes import landscape, A4
+from reportlab.lib.units import inch
+from reportlab.lib.colors import HexColor, white
+from reportlab.lib.styles import getSampleStyleSheet, ParagraphStyle
+from reportlab.platypus import SimpleDocTemplate, Paragraph, Spacer, Table, TableStyle, Image as RLImage
 
 st.set_page_config(
     page_title="CTM Mejillones",
@@ -44,6 +54,13 @@ p,span,div,label{font-family:'Inter',sans-serif!important;}
 [data-testid="stToolbar"]{display:none;}
 [data-testid="InputInstructions"]{display:none!important;}
 kbd{display:none!important;}
+/* Aggressive keyboard_double fix */
+[role="tooltip"]{display:none!important;}
+[data-baseweb="tooltip"]{display:none!important;}
+.material-symbols-rounded{display:none!important;}
+[aria-label*="keyboard"]{display:none!important;}
+div[class*="Tooltip"]{display:none!important;}
+span[class*="instruction"]{display:none!important;}
 .kpi{background:var(--surf);border:1px solid var(--bord);border-radius:12px;padding:1.2rem 1.4rem;box-shadow:0 1px 3px rgba(0,0,0,0.06);}
 .kpi-badge{display:inline-block;font-size:0.65rem;font-weight:700;letter-spacing:0.08em;text-transform:uppercase;padding:3px 10px;border-radius:20px;margin-bottom:0.7rem;}
 .kpi-val{font-family:'IBM Plex Mono',monospace;font-size:2rem;font-weight:600;color:var(--txt);line-height:1;}
@@ -65,6 +82,131 @@ kbd{display:none!important;}
 .stTabs [data-baseweb="tab"]{border-radius:8px 8px 0 0;font-weight:600;font-family:'Inter',sans-serif;}
 </style>
 """, unsafe_allow_html=True)
+
+
+
+# ══════════════════════════════════════════════════════════════
+# GENERADOR PDF
+# ══════════════════════════════════════════════════════════════
+def generar_pdf(df_real, df_prog, df_cmg, start_str, end_str):
+    buf = io.BytesIO()
+    doc = SimpleDocTemplate(buf, pagesize=landscape(A4),
+                            leftMargin=0.6*inch, rightMargin=0.6*inch,
+                            topMargin=0.6*inch, bottomMargin=0.6*inch)
+    C_DARK  = HexColor("#0F172A")
+    C_BLUE  = HexColor("#0284C7")
+    C_LIGHT = HexColor("#F1F5F9")
+    C_GRAY  = HexColor("#64748B")
+
+    st_title  = ParagraphStyle("t", fontSize=16, textColor=C_DARK, fontName="Helvetica-Bold", spaceAfter=4)
+    st_sub    = ParagraphStyle("s", fontSize=11, textColor=C_BLUE, fontName="Helvetica-Bold", spaceAfter=2)
+    st_meta   = ParagraphStyle("m", fontSize=8,  textColor=C_GRAY, fontName="Helvetica", spaceAfter=10)
+    st_footer = ParagraphStyle("f", fontSize=7,  textColor=C_GRAY, fontName="Helvetica", alignment=1)
+
+    story = []
+    story.append(Paragraph("Reporte de Generación — Complejo Térmico Mejillones", st_title))
+    story.append(Paragraph(f"Período: {start_str}  →  {end_str}", st_sub))
+    story.append(Paragraph(f"Generado: {datetime.now().strftime('%d/%m/%Y %H:%M')}  |  Fuente: API CEN SIPUB + CMG S3", st_meta))
+
+    # Tabla resumen
+    cmg_prom = df_cmg["cmg_usd_mwh"].mean() if not df_cmg.empty else 0
+    table_data = [["Unidad","Gen. Real Prom.(MW)","Gen. Prog. Prom.(MW)","Desv. Media(MW)","FP (%)","CMG Prom.(USD/MWh)"]]
+    for u in ["ANG1","ANG2","CCR1","CCR2"]:
+        df_u = df_real[df_real["unidad"]==u]
+        df_up = df_prog[df_prog["unidad"]==u] if not df_prog.empty else pd.DataFrame()
+        pmax = PMAX.get(u,0)
+        if df_u.empty:
+            table_data.append([LABELS[u],"—","—","—","—",f"{cmg_prom:.1f}"])
+        else:
+            r_prom = df_u["gen_real_mw"].mean()
+            p_prom = df_up["gen_programada_mw"].mean() if not df_up.empty else 0
+            desv   = r_prom - p_prom if not df_up.empty else 0
+            fp     = r_prom/pmax*100 if pmax else 0
+            table_data.append([LABELS[u],f"{r_prom:.1f}",f"{p_prom:.1f}" if not df_up.empty else "—",
+                               f"{desv:+.1f}" if not df_up.empty else "—",f"{fp:.0f}%",f"{cmg_prom:.1f}"])
+
+    tabla = Table(table_data, colWidths=[1.8*inch,1.4*inch,1.4*inch,1.2*inch,0.9*inch,1.4*inch])
+    tabla.setStyle(TableStyle([
+        ("BACKGROUND",(0,0),(-1,0),C_BLUE),("TEXTCOLOR",(0,0),(-1,0),white),
+        ("FONTNAME",(0,0),(-1,0),"Helvetica-Bold"),("FONTSIZE",(0,0),(-1,-1),8),
+        ("ALIGN",(1,0),(-1,-1),"CENTER"),("ALIGN",(0,0),(0,-1),"LEFT"),
+        ("GRID",(0,0),(-1,-1),0.4,HexColor("#E2E8F0")),
+        ("ROWBACKGROUNDS",(0,1),(-1,-1),[white,C_LIGHT]),
+        ("TOPPADDING",(0,0),(-1,-1),5),("BOTTOMPADDING",(0,0),(-1,-1),5),
+        ("LEFTPADDING",(0,0),(-1,-1),6),
+    ]))
+    story.append(tabla)
+    story.append(Spacer(1, 0.25*inch))
+
+    # Gráfico por unidad
+    UNIT_COLORS = {"ANG1":"#0284C7","ANG2":"#059669","CCR1":"#D97706","CCR2":"#DC2626"}
+    UNIT_PROG   = {"ANG1":"#7DD3FC","ANG2":"#6EE7B7","CCR1":"#FCD34D","CCR2":"#FCA5A5"}
+
+    for u in ["ANG1","ANG2","CCR1","CCR2"]:
+        df_u  = df_real[df_real["unidad"]==u].sort_values("fecha_hora")
+        df_up = df_prog[df_prog["unidad"]==u].sort_values("fecha_hora") if not df_prog.empty else pd.DataFrame()
+        if df_u.empty: continue
+
+        story.append(Paragraph(f"Unidad: {LABELS[u]}", st_sub))
+
+        fig_m, axes = plt.subplots(2,1,figsize=(9.5,3.5),gridspec_kw={"height_ratios":[0.65,0.35]})
+        ax1, ax2 = axes
+
+        ax1.plot(df_u["fecha_hora"], df_u["gen_real_mw"],
+                color=UNIT_COLORS[u], linewidth=2, label="Real")
+        if not df_up.empty:
+            ax1.plot(df_up["fecha_hora"], df_up["gen_programada_mw"],
+                    color=UNIT_PROG[u], linewidth=1.8, linestyle="--", label="Programada")
+        ax1.set_ylabel("MW", fontsize=8)
+        ax1.legend(fontsize=7, loc="upper right")
+        ax1.xaxis.set_major_formatter(mdates.DateFormatter("%d/%m %H:%M"))
+        ax1.xaxis.set_major_locator(mdates.AutoDateLocator())
+        plt.setp(ax1.xaxis.get_majorticklabels(), rotation=20, fontsize=6)
+        ax1.set_facecolor("#FAFAFA")
+        ax1.tick_params(axis="y", labelsize=7)
+
+        if not df_cmg.empty:
+            ax2.plot(df_cmg["fecha_hora"], df_cmg["cmg_usd_mwh"],
+                    color="#7C3AED", linewidth=2, label="CMG Crucero")
+            ax2.axhline(df_cmg["cmg_usd_mwh"].mean(), color="#94A3B8",
+                       linestyle=":", linewidth=1, label=f"Prom: {df_cmg['cmg_usd_mwh'].mean():.1f}")
+            ax2.set_ylabel("USD/MWh", fontsize=8)
+            ax2.legend(fontsize=7, loc="upper right")
+            ax2.xaxis.set_major_formatter(mdates.DateFormatter("%d/%m %H:%M"))
+            ax2.xaxis.set_major_locator(mdates.AutoDateLocator())
+            plt.setp(ax2.xaxis.get_majorticklabels(), rotation=20, fontsize=6)
+            ax2.set_facecolor("#FAFAFA")
+            ax2.tick_params(axis="y", labelsize=7)
+
+        fig_m.patch.set_facecolor("white")
+        fig_m.tight_layout(pad=0.8)
+
+        img_buf = io.BytesIO()
+        fig_m.savefig(img_buf, format="png", dpi=130, bbox_inches="tight")
+        plt.close(fig_m)
+        img_buf.seek(0)
+        story.append(RLImage(img_buf, width=9.0*inch, height=3.4*inch))
+        story.append(Spacer(1, 0.15*inch))
+
+    # CMG resumen
+    if not df_cmg.empty:
+        story.append(Paragraph("Resumen CMG Nodo Crucero", st_sub))
+        story.append(Paragraph(
+            f"Promedio: {df_cmg['cmg_usd_mwh'].mean():.1f} USD/MWh  |  "
+            f"Mín: {df_cmg['cmg_usd_mwh'].min():.1f}  |  "
+            f"Máx: {df_cmg['cmg_usd_mwh'].max():.1f}  |  "
+            f"Fuente: Portal CEN (preliminar)", st_meta
+        ))
+
+    story.append(Spacer(1,0.2*inch))
+    story.append(Paragraph(
+        f"Reporte generado automáticamente — CTM Mejillones — {datetime.now().strftime('%d/%m/%Y %H:%M')}",
+        st_footer
+    ))
+
+    doc.build(story)
+    buf.seek(0)
+    return buf.read()
 
 
 # ── DB ────────────────────────────────────────────────────────
@@ -158,8 +300,8 @@ with st.sidebar:
 
     st.markdown("---")
     hoy   = date.today()
-    lunes = hoy - timedelta(days=hoy.weekday())
-    fi = st.date_input("Desde", value=lunes, max_value=hoy)
+    inicio_semana = hoy - timedelta(days=7)
+    fi = st.date_input("Desde", value=inicio_semana, max_value=hoy)
     ff = st.date_input("Hasta", value=hoy,   max_value=hoy)
     if fi > ff: st.error("Fecha inicio > fin"); st.stop()
     st.markdown("---")
@@ -168,6 +310,24 @@ with st.sidebar:
     st.markdown("---")
     if st.button("Actualizar datos"):
         st.cache_data.clear(); st.rerun()
+
+    st.markdown("---")
+    st.markdown('<p style="font-size:0.72rem;font-weight:600;color:#475569">REPORTE PDF</p>', unsafe_allow_html=True)
+    if st.button("Generar PDF"):
+        with st.spinner("Generando reporte..."):
+            try:
+                pdf_bytes = generar_pdf(
+                    load_real(s,e), load_prog(s,e), load_cmg(s,e), s, e
+                )
+                st.download_button(
+                    "Descargar PDF",
+                    data=pdf_bytes,
+                    file_name=f"CTM_Reporte_{s}_{e}.pdf",
+                    mime="application/pdf",
+                )
+            except Exception as ex:
+                st.error(f"Error generando PDF: {ex}")
+
     st.markdown(f'<p style="font-size:0.65rem;color:#94A3B8">{datetime.now().strftime("%d/%m/%Y %H:%M")}</p>', unsafe_allow_html=True)
 
 s = fi.strftime("%Y-%m-%d")
@@ -225,7 +385,7 @@ for i,u in enumerate(["ANG1","ANG2","CCR1","CCR2"]):
 # ── Función gráfico por unidad ────────────────────────────────
 BG = "#FFFFFF"; GR = "#F1F5F9"
 
-def chart_unidad(unidad: str):
+def chart_unidad(unidad: str, mostrar_desviacion: bool = False):
     df_u  = df_r[df_r["unidad"]==unidad].sort_values("fecha_hora")
     df_up = df_p[df_p["unidad"]==unidad].sort_values("fecha_hora") if not df_p.empty else pd.DataFrame()
     c     = COLORES[unidad]
@@ -251,7 +411,7 @@ def chart_unidad(unidad: str):
     fig.add_trace(go.Scatter(
         x=df_u["fecha_hora"], y=df_u["gen_real_mw"],
         name="Real", mode="lines",
-        line=dict(color=c["line"], width=2.5),
+        line=dict(color=c["line"], width=3),
         hovertemplate="<b>Real</b> %{x|%d/%m %H:%M}<br>%{y:.1f} MW<extra></extra>",
     ), row=1, col=1)
 
@@ -260,16 +420,35 @@ def chart_unidad(unidad: str):
         fig.add_trace(go.Scatter(
             x=df_up["fecha_hora"], y=df_up["gen_programada_mw"],
             name="Programada", mode="lines",
-            line=dict(color=c["prog"], width=2, dash="dash"),
+            line=dict(color=c["prog"], width=2.5, dash="dash"),
             hovertemplate="<b>Programada</b> %{x|%d/%m %H:%M}<br>%{y:.1f} MW<extra></extra>",
         ), row=1, col=1)
+
+        # ── Área de desviación ──
+        if mostrar_desviacion:
+            df_merge = pd.merge_asof(
+                df_u[["fecha_hora","gen_real_mw"]].sort_values("fecha_hora"),
+                df_up[["fecha_hora","gen_programada_mw"]].sort_values("fecha_hora"),
+                on="fecha_hora", direction="nearest", tolerance=pd.Timedelta("1h")
+            ).dropna()
+            if not df_merge.empty:
+                r_hex = c["line"][1:3]; g_hex = c["line"][3:5]; b_hex = c["line"][5:7]
+                r_int = int(r_hex,16); g_int = int(g_hex,16); b_int = int(b_hex,16)
+                fig.add_trace(go.Scatter(
+                    x=pd.concat([df_merge["fecha_hora"], df_merge["fecha_hora"][::-1]]),
+                    y=pd.concat([df_merge["gen_real_mw"], df_merge["gen_programada_mw"][::-1]]),
+                    fill="toself",
+                    fillcolor=f"rgba({r_int},{g_int},{b_int},0.12)",
+                    line=dict(color="rgba(0,0,0,0)"),
+                    hoverinfo="skip", showlegend=True, name="Desviación",
+                ), row=1, col=1)
 
     # ── CMG ──
     if tiene_cmg:
         fig.add_trace(go.Scatter(
             x=df_c["fecha_hora"], y=df_c["cmg_usd_mwh"],
             name="CMG Crucero", mode="lines",
-            line=dict(color=COLORES["CMG"]["line"], width=2),
+            line=dict(color=COLORES["CMG"]["line"], width=3),
             hovertemplate="<b>CMG</b> %{x|%d/%m %H:%M}<br>%{y:.1f} USD/MWh<extra></extra>",
         ), row=2, col=1)
         prom_cmg = df_c["cmg_usd_mwh"].mean()
@@ -295,30 +474,25 @@ def chart_unidad(unidad: str):
         hoverlabel=dict(bgcolor="#1E293B", font_color="#F8FAFC", bordercolor="#334155"),
     )
 
-    # ── Eje Y fila 1 ──
+    # ── Eje Y ──
     fig.update_yaxes(
-        title_text="MW",
-        gridcolor=GR, zeroline=False,
+        title_text="MW", gridcolor=GR, zeroline=False,
         tickfont=dict(color="#94A3B8", size=10),
         title_font=dict(color="#94A3B8", size=11),
         row=1, col=1
     )
-
-    # ── Eje Y fila 2 ──
     if tiene_cmg:
         fig.update_yaxes(
-            title_text="USD/MWh",
-            gridcolor=GR, zeroline=False,
+            title_text="USD/MWh", gridcolor=GR, zeroline=False,
             tickfont=dict(color="#94A3B8", size=10),
             title_font=dict(color="#94A3B8", size=11),
             row=2, col=1
         )
 
-    # ── Eje X: mostrar solo en la fila inferior ──
+    # ── Eje X visible en TODAS las filas ──
     for r in range(1, n_rows+1):
-        show_labels = (r == n_rows)
         fig.update_xaxes(
-            showticklabels=show_labels,
+            showticklabels=True,
             tickformat="%d/%m\n%H:%M",
             tickfont=dict(color="#64748B", size=10),
             showgrid=False,
@@ -327,13 +501,18 @@ def chart_unidad(unidad: str):
 
     st.plotly_chart(fig, use_container_width=True, config={"displayModeBar": False})
 
-    # Info programada
     if mostrar_prog and df_up.empty:
         st.caption("💡 Sin datos de programada — ingresa valores en la sección inferior.")
 
 
 # ── Tabs por unidad ───────────────────────────────────────────
 st.markdown('<div class="sec">POTENCIA REAL vs PROGRAMADA + CMG CRUCERO · POR UNIDAD</div>', unsafe_allow_html=True)
+
+# Checkbox desviación — solo si hay programada
+hay_prog_general = not df_p.empty
+mostrar_desv = False
+if hay_prog_general and mostrar_prog:
+    mostrar_desv = st.checkbox("Mostrar área de desviación (Real vs Programada)", value=False)
 
 tabs = st.tabs([
     f"{COLORES[u]['dot']} {LABELS[u]}" for u in ["ANG1","ANG2","CCR1","CCR2"]
@@ -342,7 +521,7 @@ for tab, u in zip(tabs, ["ANG1","ANG2","CCR1","CCR2"]):
     with tab:
         c = COLORES[u]
         st.markdown(f'<p style="color:{c["text"]};font-weight:600;font-size:0.9rem;margin-bottom:0.5rem">{LABELS[u]} · Real vs Programada (MW) + CMG Nodo Crucero (USD/MWh)</p>', unsafe_allow_html=True)
-        chart_unidad(u)
+        chart_unidad(u, mostrar_desviacion=mostrar_desv)
 
 
 # ── Análisis de costo ─────────────────────────────────────────
