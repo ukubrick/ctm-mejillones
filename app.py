@@ -57,10 +57,14 @@ kbd{display:none!important;}
 /* Aggressive keyboard_double fix */
 [role="tooltip"]{display:none!important;}
 [data-baseweb="tooltip"]{display:none!important;}
-.material-symbols-rounded{display:none!important;}
+.material-symbols-rounded{display:none!important;font-size:0!important;width:0!important;}
 [aria-label*="keyboard"]{display:none!important;}
 div[class*="Tooltip"]{display:none!important;}
 span[class*="instruction"]{display:none!important;}
+[data-testid="InputInstructions"]{display:none!important;visibility:hidden!important;}
+[class*="stWidgetLabel"] span[class*="material"]{display:none!important;}
+span.material-symbols-rounded{visibility:hidden!important;position:absolute!important;}
+[data-testid="stWidgetLabel"] > div > span{display:none!important;}
 .kpi{background:var(--surf);border:1px solid var(--bord);border-radius:12px;padding:1.2rem 1.4rem;box-shadow:0 1px 3px rgba(0,0,0,0.06);}
 .kpi-badge{display:inline-block;font-size:0.65rem;font-weight:700;letter-spacing:0.08em;text-transform:uppercase;padding:3px 10px;border-radius:20px;margin-bottom:0.7rem;}
 .kpi-val{font-family:'IBM Plex Mono',monospace;font-size:2rem;font-weight:600;color:var(--txt);line-height:1;}
@@ -316,13 +320,18 @@ with st.sidebar:
     if st.button("Generar PDF"):
         with st.spinner("Generando reporte..."):
             try:
+                s_pdf = fi.strftime("%Y-%m-%d")
+                e_pdf = ff.strftime("%Y-%m-%d")
                 pdf_bytes = generar_pdf(
-                    load_real(s,e), load_prog(s,e), load_cmg(s,e), s, e
+                    load_real(s_pdf, e_pdf),
+                    load_prog(s_pdf, e_pdf),
+                    load_cmg(s_pdf, e_pdf),
+                    s_pdf, e_pdf
                 )
                 st.download_button(
                     "Descargar PDF",
                     data=pdf_bytes,
-                    file_name=f"CTM_Reporte_{s}_{e}.pdf",
+                    file_name=f"CTM_Reporte_{s_pdf}_{e_pdf}.pdf",
                     mime="application/pdf",
                 )
             except Exception as ex:
