@@ -1,8 +1,7 @@
 """
-app.py — Dashboard CTM Mejillones v4
-- Gráficos individuales por unidad (tabs)
-- Ingreso masivo programada (24h de una vez)
-- Fixes: expanders, keyboard_double
+app.py — Dashboard CTM Mejillones v5
+Fixes: dots de color en tabs, estado conexión sidebar,
+eje X visible, títulos separados, programada visible
 """
 
 import streamlit as st
@@ -20,11 +19,11 @@ st.set_page_config(
 )
 
 COLORES = {
-    "ANG1": {"line": "#0284C7", "prog": "#93C5FD", "badge": "#E0F2FE", "text": "#0284C7"},
-    "ANG2": {"line": "#059669", "prog": "#6EE7B7", "badge": "#D1FAE5", "text": "#059669"},
-    "CCR1": {"line": "#D97706", "prog": "#FCD34D", "badge": "#FEF3C7", "text": "#D97706"},
-    "CCR2": {"line": "#DC2626", "prog": "#FCA5A5", "badge": "#FEE2E2", "text": "#DC2626"},
-    "CMG":  {"line": "#7C3AED"},
+    "ANG1": {"line":"#0284C7","prog":"#7DD3FC","badge":"#E0F2FE","text":"#0284C7","dot":"🔵"},
+    "ANG2": {"line":"#059669","prog":"#6EE7B7","badge":"#D1FAE5","text":"#059669","dot":"🟢"},
+    "CCR1": {"line":"#D97706","prog":"#FCD34D","badge":"#FEF3C7","text":"#D97706","dot":"🟡"},
+    "CCR2": {"line":"#DC2626","prog":"#FCA5A5","badge":"#FEE2E2","text":"#DC2626","dot":"🔴"},
+    "CMG":  {"line":"#7C3AED"},
 }
 LABELS = {"ANG1":"Angamos U1","ANG2":"Angamos U2","CCR1":"Cochrane U1","CCR2":"Cochrane U2"}
 
@@ -40,11 +39,8 @@ h1,h2,h3{font-family:'Inter',sans-serif!important;color:var(--txt)!important;}
 p,span,div,label{font-family:'Inter',sans-serif!important;}
 #MainMenu,footer,header{visibility:hidden;}
 [data-testid="stToolbar"]{display:none;}
-/* Fix keyboard_double tooltip */
 [data-testid="InputInstructions"]{display:none!important;}
-[class*="InputInstructions"]{display:none!important;}
 kbd{display:none!important;}
-/* KPI */
 .kpi{background:var(--surf);border:1px solid var(--bord);border-radius:12px;padding:1.2rem 1.4rem;box-shadow:0 1px 3px rgba(0,0,0,0.06);}
 .kpi-badge{display:inline-block;font-size:0.65rem;font-weight:700;letter-spacing:0.08em;text-transform:uppercase;padding:3px 10px;border-radius:20px;margin-bottom:0.7rem;}
 .kpi-val{font-family:'IBM Plex Mono',monospace;font-size:2rem;font-weight:600;color:var(--txt);line-height:1;}
@@ -52,19 +48,16 @@ kbd{display:none!important;}
 .kpi-sub{font-size:0.75rem;color:var(--muted);margin-top:0.4rem;}
 .kpi-delta{font-size:0.78rem;margin-top:0.5rem;font-weight:500;}
 .sec{font-size:0.68rem;font-weight:700;letter-spacing:0.15em;text-transform:uppercase;color:var(--muted);border-bottom:1px solid var(--bord);padding-bottom:0.4rem;margin:1.8rem 0 1rem;}
-.stat{background:var(--surf);border:1px solid var(--bord);border-radius:10px;padding:1rem 1.2rem;box-shadow:0 1px 3px rgba(0,0,0,0.05);}
-.stat-label{font-size:0.68rem;font-weight:600;letter-spacing:0.1em;text-transform:uppercase;color:var(--muted);margin-bottom:0.4rem;}
-.stat-val{font-family:'IBM Plex Mono',monospace;font-size:1.4rem;font-weight:600;color:var(--txt);}
-.stat-sub{font-size:0.72rem;color:var(--muted);margin-top:0.2rem;}
-.dot{display:inline-block;width:8px;height:8px;border-radius:50%;margin-right:5px;}
-.dot-g{background:#10B981;box-shadow:0 0 6px rgba(16,185,129,0.5);animation:blink 2s infinite;}
+.dot-status{display:inline-block;width:8px;height:8px;border-radius:50%;margin-right:6px;vertical-align:middle;}
+.dot-g{background:#10B981;box-shadow:0 0 5px rgba(16,185,129,0.6);animation:blink 2s infinite;}
+.dot-r{background:#EF4444;}
 .dot-y{background:#F59E0B;animation:blink 2s infinite;}
 @keyframes blink{0%,100%{opacity:1}50%{opacity:.3}}
+.status-box{background:var(--surf2);border:1px solid var(--bord);border-radius:8px;padding:0.6rem 0.8rem;margin-top:0.5rem;font-size:0.72rem;}
 .stTextInput>div>div>input,.stTextArea>div>div>textarea,.stNumberInput>div>div>input{
     background:var(--surf2)!important;border:1px solid var(--bord)!important;border-radius:8px!important;color:var(--txt)!important;}
 .stButton>button{background:var(--accent)!important;color:#fff!important;border:none!important;border-radius:8px!important;font-family:'Inter',sans-serif!important;font-weight:600!important;}
 .stButton>button:hover{opacity:.88!important;}
-/* Tabs */
 .stTabs [data-baseweb="tab-list"]{gap:4px;}
 .stTabs [data-baseweb="tab"]{border-radius:8px 8px 0 0;font-weight:600;font-family:'Inter',sans-serif;}
 </style>
@@ -78,6 +71,14 @@ def get_conn():
     if not url: st.error("DATABASE_URL no configurada."); st.stop()
     return psycopg2.connect(url)
 
+def test_conn():
+    try:
+        conn = get_conn()
+        with conn.cursor() as c: c.execute("SELECT 1")
+        return True, None
+    except Exception as e:
+        return False, str(e)
+
 def qry(sql, params=None):
     try:
         conn = get_conn()
@@ -85,7 +86,7 @@ def qry(sql, params=None):
     except Exception:
         get_conn.clear()
         try: return pd.read_sql(sql, get_conn(), params=params)
-        except Exception as e: st.error(f"Error DB: {e}"); return pd.DataFrame()
+        except Exception as ex: st.error(f"Error DB: {ex}"); return pd.DataFrame()
 
 def exe(sql, params=None):
     try:
@@ -131,7 +132,28 @@ def load_bit(s,e,u=None):
 # ── Sidebar ───────────────────────────────────────────────────
 with st.sidebar:
     st.markdown("### ⚡ CTM Mejillones")
-    st.markdown('<p style="font-size:0.72rem;color:#64748B;margin-bottom:1.2rem">Complejo Térmico · Monitoreo Operacional</p>', unsafe_allow_html=True)
+    st.markdown('<p style="font-size:0.75rem;color:#64748B;margin-bottom:0.3rem">Complejo Térmico · Monitoreo Operacional</p>', unsafe_allow_html=True)
+
+    # Estado de conexión y fuentes
+    db_ok, db_err = test_conn()
+    dot_db = "dot-g" if db_ok else "dot-r"
+    txt_db = "Supabase conectado" if db_ok else f"Error DB"
+
+    st.markdown(f"""
+    <div class="status-box">
+        <div style="margin-bottom:4px">
+            <span class="dot-status {dot_db}"></span>
+            <span style="font-size:0.72rem;font-weight:600;color:#0F172A">{txt_db}</span>
+        </div>
+        <div style="color:#64748B;font-size:0.68rem;line-height:1.6">
+            📡 Gen. real → API CEN SIPUB<br>
+            📡 CMG → Portal CEN S3 (15min)<br>
+            🔄 Adquisición → GitHub Actions /hora
+        </div>
+    </div>
+    """, unsafe_allow_html=True)
+
+    st.markdown("---")
     hoy   = date.today()
     lunes = hoy - timedelta(days=hoy.weekday())
     fi = st.date_input("Desde", value=lunes, max_value=hoy)
@@ -165,7 +187,7 @@ with ch2:
     ult  = df_r["fecha_hora"].max()
     diff = (datetime.now()-ult.to_pydatetime()).seconds
     cls  = "dot-g" if diff<7200 else "dot-y"
-    st.markdown(f'<div style="text-align:right;padding-top:1.5rem"><span class="dot {cls}"></span><span style="font-size:0.75rem;color:#64748B">Último: {ult.strftime("%d/%m %H:%M")}</span></div>', unsafe_allow_html=True)
+    st.markdown(f'<div style="text-align:right;padding-top:1.5rem"><span class="dot-status {cls}"></span><span style="font-size:0.75rem;color:#64748B">Último dato: {ult.strftime("%d/%m %H:%M")}</span></div>', unsafe_allow_html=True)
 
 
 # ── KPI cards ─────────────────────────────────────────────────
@@ -192,30 +214,32 @@ for i,u in enumerate(["ANG1","ANG2","CCR1","CCR2"]):
         </div>""", unsafe_allow_html=True)
 
 
-# ── Gráficos por unidad (TABS) ────────────────────────────────
-st.markdown('<div class="sec">POTENCIA REAL vs PROGRAMADA + CMG CRUCERO · POR UNIDAD</div>', unsafe_allow_html=True)
-
+# ── Función gráfico por unidad ────────────────────────────────
 BG = "#FFFFFF"; GR = "#F1F5F9"
 
 def chart_unidad(unidad: str):
-    df_u = df_r[df_r["unidad"]==unidad].sort_values("fecha_hora")
+    df_u  = df_r[df_r["unidad"]==unidad].sort_values("fecha_hora")
     df_up = df_p[df_p["unidad"]==unidad].sort_values("fecha_hora") if not df_p.empty else pd.DataFrame()
-    c = COLORES[unidad]
+    c     = COLORES[unidad]
 
-    n_rows  = 2 if (mostrar_cmg and not df_c.empty) else 1
-    heights = [0.65, 0.35] if n_rows==2 else [1.0]
-    titles  = [f"{LABELS[unidad]} · Real vs Programada (MW)",
-               "CMG Nodo Crucero (USD/MWh)"] if n_rows==2 else [f"{LABELS[unidad]} · Real vs Programada (MW)"]
+    tiene_cmg  = mostrar_cmg and not df_c.empty
+    tiene_prog = mostrar_prog and not df_up.empty
 
-    fig = make_subplots(rows=n_rows, cols=1, shared_xaxes=True,
-                        row_heights=heights, vertical_spacing=0.08,
-                        subplot_titles=titles)
+    n_rows  = 2 if tiene_cmg else 1
+    heights = [0.62, 0.38] if n_rows==2 else [1.0]
+
+    fig = make_subplots(
+        rows=n_rows, cols=1,
+        shared_xaxes=True,
+        row_heights=heights,
+        vertical_spacing=0.12,
+    )
 
     if df_u.empty:
         st.info(f"Sin datos para {LABELS[unidad]} en el período.")
         return
 
-    # Real
+    # ── Real ──
     fig.add_trace(go.Scatter(
         x=df_u["fecha_hora"], y=df_u["gen_real_mw"],
         name="Real", mode="lines",
@@ -223,8 +247,8 @@ def chart_unidad(unidad: str):
         hovertemplate="<b>Real</b> %{x|%d/%m %H:%M}<br>%{y:.1f} MW<extra></extra>",
     ), row=1, col=1)
 
-    # Programada
-    if mostrar_prog and not df_up.empty:
+    # ── Programada ──
+    if tiene_prog:
         fig.add_trace(go.Scatter(
             x=df_up["fecha_hora"], y=df_up["gen_programada_mw"],
             name="Programada", mode="lines",
@@ -232,64 +256,85 @@ def chart_unidad(unidad: str):
             hovertemplate="<b>Programada</b> %{x|%d/%m %H:%M}<br>%{y:.1f} MW<extra></extra>",
         ), row=1, col=1)
 
-        # Área de desviación
-        df_merge = pd.merge_asof(
-            df_u[["fecha_hora","gen_real_mw"]].sort_values("fecha_hora"),
-            df_up[["fecha_hora","gen_programada_mw"]].sort_values("fecha_hora"),
-            on="fecha_hora", direction="nearest", tolerance=pd.Timedelta("1h")
-        ).dropna()
-        if not df_merge.empty:
-            fig.add_trace(go.Scatter(
-                x=pd.concat([df_merge["fecha_hora"], df_merge["fecha_hora"][::-1]]),
-                y=pd.concat([df_merge["gen_real_mw"], df_merge["gen_programada_mw"][::-1]]),
-                fill="toself",
-                fillcolor=f"rgba({int(c['line'][1:3],16)},{int(c['line'][3:5],16)},{int(c['line'][5:7],16)},0.08)",
-                line=dict(color="rgba(0,0,0,0)"),
-                hoverinfo="skip", showlegend=False, name="Desviación",
-            ), row=1, col=1)
-
-    # CMG
-    if mostrar_cmg and not df_c.empty and n_rows==2:
+    # ── CMG ──
+    if tiene_cmg:
         fig.add_trace(go.Scatter(
             x=df_c["fecha_hora"], y=df_c["cmg_usd_mwh"],
             name="CMG Crucero", mode="lines",
             line=dict(color=COLORES["CMG"]["line"], width=2),
             hovertemplate="<b>CMG</b> %{x|%d/%m %H:%M}<br>%{y:.1f} USD/MWh<extra></extra>",
         ), row=2, col=1)
-        # Promedio CMG
-        fig.add_hline(y=df_c["cmg_usd_mwh"].mean(), line_color="#94A3B8",
-                      line_width=1, line_dash="dot",
-                      annotation_text=f"Prom: {df_c['cmg_usd_mwh'].mean():.1f}",
-                      annotation_position="right",
-                      annotation_font_color="#94A3B8", annotation_font_size=10,
-                      row=2, col=1)
+        prom_cmg = df_c["cmg_usd_mwh"].mean()
+        fig.add_hline(
+            y=prom_cmg, line_color="#94A3B8", line_width=1, line_dash="dot",
+            annotation_text=f"Prom: {prom_cmg:.1f}", annotation_position="right",
+            annotation_font_color="#64748B", annotation_font_size=10,
+            row=2, col=1
+        )
 
+    # ── Layout ──
     fig.update_layout(
-        height=500, margin=dict(l=10,r=60,t=40,b=10),
+        height=520,
+        margin=dict(l=10, r=70, t=20, b=10),
         plot_bgcolor=BG, paper_bgcolor="rgba(0,0,0,0)",
-        legend=dict(orientation="h", yanchor="bottom", y=1.02, xanchor="left", x=0,
-                    font=dict(color="#475569",size=11), bgcolor="rgba(0,0,0,0)"),
+        legend=dict(
+            orientation="h", yanchor="bottom", y=1.02,
+            xanchor="left", x=0,
+            font=dict(color="#475569", size=11),
+            bgcolor="rgba(0,0,0,0)",
+        ),
         hovermode="x unified",
-        hoverlabel=dict(bgcolor="#1E293B",font_color="#F8FAFC",bordercolor="#334155"),
+        hoverlabel=dict(bgcolor="#1E293B", font_color="#F8FAFC", bordercolor="#334155"),
     )
-    for r in range(1, n_rows+1):
-        ylab = "MW" if r==1 else "USD/MWh"
-        fig.update_yaxes(gridcolor=GR, tickfont=dict(color="#94A3B8",size=10),
-                         title_text=ylab, title_font=dict(color="#94A3B8",size=10),
-                         row=r, col=1)
-    fig.update_xaxes(tickfont=dict(color="#94A3B8",size=10), showgrid=False)
-    st.plotly_chart(fig, use_container_width=True, config={"displayModeBar":False})
 
-tab_ang1, tab_ang2, tab_ccr1, tab_ccr2 = st.tabs([
-    f"⚡ {LABELS['ANG1']}",
-    f"⚡ {LABELS['ANG2']}",
-    f"⚡ {LABELS['CCR1']}",
-    f"⚡ {LABELS['CCR2']}",
+    # ── Eje Y fila 1 ──
+    fig.update_yaxes(
+        title_text="MW",
+        gridcolor=GR, zeroline=False,
+        tickfont=dict(color="#94A3B8", size=10),
+        title_font=dict(color="#94A3B8", size=11),
+        row=1, col=1
+    )
+
+    # ── Eje Y fila 2 ──
+    if tiene_cmg:
+        fig.update_yaxes(
+            title_text="USD/MWh",
+            gridcolor=GR, zeroline=False,
+            tickfont=dict(color="#94A3B8", size=10),
+            title_font=dict(color="#94A3B8", size=11),
+            row=2, col=1
+        )
+
+    # ── Eje X: mostrar solo en la fila inferior ──
+    for r in range(1, n_rows+1):
+        show_labels = (r == n_rows)
+        fig.update_xaxes(
+            showticklabels=show_labels,
+            tickformat="%d/%m\n%H:%M",
+            tickfont=dict(color="#64748B", size=10),
+            showgrid=False,
+            row=r, col=1
+        )
+
+    st.plotly_chart(fig, use_container_width=True, config={"displayModeBar": False})
+
+    # Info programada
+    if mostrar_prog and df_up.empty:
+        st.caption("💡 Sin datos de programada — ingresa valores en la sección inferior.")
+
+
+# ── Tabs por unidad ───────────────────────────────────────────
+st.markdown('<div class="sec">POTENCIA REAL vs PROGRAMADA + CMG CRUCERO · POR UNIDAD</div>', unsafe_allow_html=True)
+
+tabs = st.tabs([
+    f"{COLORES[u]['dot']} {LABELS[u]}" for u in ["ANG1","ANG2","CCR1","CCR2"]
 ])
-with tab_ang1: chart_unidad("ANG1")
-with tab_ang2: chart_unidad("ANG2")
-with tab_ccr1: chart_unidad("CCR1")
-with tab_ccr2: chart_unidad("CCR2")
+for tab, u in zip(tabs, ["ANG1","ANG2","CCR1","CCR2"]):
+    with tab:
+        c = COLORES[u]
+        st.markdown(f'<p style="color:{c["text"]};font-weight:600;font-size:0.9rem;margin-bottom:0.5rem">{LABELS[u]} · Real vs Programada (MW) + CMG Nodo Crucero (USD/MWh)</p>', unsafe_allow_html=True)
+        chart_unidad(u)
 
 
 # ── Análisis de costo ─────────────────────────────────────────
@@ -301,7 +346,7 @@ if not df_c.empty:
         df_c[["fecha_hora","cmg_usd_mwh"]].sort_values("fecha_hora"),
         on="fecha_hora", direction="nearest", tolerance=pd.Timedelta("1h")
     )
-    df_merge["ingreso_usd"] = df_merge["gen_real_mw"]*df_merge["cmg_usd_mwh"]
+    df_merge["ingreso_usd"] = df_merge["gen_real_mw"] * df_merge["cmg_usd_mwh"]
     ingreso_unit  = df_merge.groupby("unidad")["ingreso_usd"].sum()
     energia_unit  = df_r.groupby("unidad")["gen_real_mw"].sum()
     ingreso_total = ingreso_unit.sum()
@@ -310,10 +355,11 @@ if not df_c.empty:
     cmg_min  = df_c["cmg_usd_mwh"].min()
     cmg_max  = df_c["cmg_usd_mwh"].max()
 
-    gc1,gc2 = st.columns(2)
+    gc1, gc2 = st.columns(2)
+    unidades_ord = ["ANG1","ANG2","CCR1","CCR2"]
+
     with gc1:
-        unidades_ord = ["ANG1","ANG2","CCR1","CCR2"]
-        fig2 = make_subplots(specs=[[{"secondary_y":True}]])
+        fig2 = make_subplots(specs=[[{"secondary_y": True}]])
         fig2.add_trace(go.Bar(
             x=[LABELS[u] for u in unidades_ord],
             y=[ingreso_unit.get(u,0) for u in unidades_ord],
@@ -321,25 +367,31 @@ if not df_c.empty:
             marker_color=[COLORES[u]["line"] for u in unidades_ord],
             marker_opacity=0.85,
             text=[f"${ingreso_unit.get(u,0):,.0f}" for u in unidades_ord],
-            textposition="outside", textfont=dict(size=11,color="#475569"),
+            textposition="outside",
+            textfont=dict(size=11, color="#475569"),
         ), secondary_y=False)
         fig2.add_trace(go.Scatter(
             x=[LABELS[u] for u in unidades_ord],
             y=[energia_unit.get(u,0) for u in unidades_ord],
             name="Energía (MWh)", mode="markers+lines",
-            marker=dict(size=10,color="#0F172A",symbol="diamond"),
-            line=dict(color="#0F172A",width=1.5,dash="dot"),
+            marker=dict(size=10, color="#0F172A", symbol="diamond"),
+            line=dict(color="#0F172A", width=1.5, dash="dot"),
         ), secondary_y=True)
         fig2.update_layout(
-            title=dict(text="Ingreso Estimado + Energía por Unidad",font=dict(size=13,color="#0F172A")),
-            height=320, margin=dict(l=10,r=10,t=45,b=10),
+            title=dict(text="Ingreso Estimado + Energía por Unidad",
+                      font=dict(size=13,color="#0F172A"), x=0),
+            height=340,
+            margin=dict(l=10, r=10, t=60, b=10),
             plot_bgcolor=BG, paper_bgcolor="rgba(0,0,0,0)",
-            legend=dict(orientation="h",y=1.15,font=dict(size=10,color="#475569")),
+            legend=dict(orientation="h", y=-0.15, x=0,
+                       font=dict(size=10,color="#475569")),
         )
-        fig2.update_yaxes(title_text="USD",secondary_y=False,gridcolor=GR,
-                          tickfont=dict(color="#94A3B8",size=10),title_font=dict(color="#94A3B8",size=10))
-        fig2.update_yaxes(title_text="MWh",secondary_y=True,
-                          tickfont=dict(color="#94A3B8",size=10),title_font=dict(color="#94A3B8",size=10),showgrid=False)
+        fig2.update_yaxes(title_text="USD", secondary_y=False,
+                          gridcolor=GR, tickfont=dict(color="#94A3B8",size=10),
+                          title_font=dict(color="#94A3B8",size=10))
+        fig2.update_yaxes(title_text="MWh", secondary_y=True,
+                          tickfont=dict(color="#94A3B8",size=10),
+                          title_font=dict(color="#94A3B8",size=10), showgrid=False)
         fig2.update_xaxes(tickfont=dict(color="#475569",size=11))
         st.plotly_chart(fig2, use_container_width=True, config={"displayModeBar":False})
 
@@ -348,34 +400,43 @@ if not df_c.empty:
         idx_min = df_c["cmg_usd_mwh"].idxmin()
         fig3 = go.Figure()
         fig3.add_trace(go.Scatter(
-            x=df_c["fecha_hora"],y=df_c["cmg_usd_mwh"],
-            mode="lines",line=dict(color=COLORES["CMG"]["line"],width=2),
-            fill="tozeroy",fillcolor="rgba(124,58,237,0.06)",showlegend=False,
+            x=df_c["fecha_hora"], y=df_c["cmg_usd_mwh"],
+            mode="lines", line=dict(color=COLORES["CMG"]["line"],width=2),
+            fill="tozeroy", fillcolor="rgba(124,58,237,0.06)",
+            showlegend=False,
             hovertemplate="%{x|%d/%m %H:%M}<br><b>%{y:.1f} USD/MWh</b><extra></extra>",
         ))
-        fig3.add_hline(y=cmg_prom,line_color="#94A3B8",line_width=1.2,line_dash="dot",
-                       annotation_text=f"Prom: {cmg_prom:.1f}",annotation_position="right",
-                       annotation_font_color="#64748B",annotation_font_size=10)
+        fig3.add_hline(y=cmg_prom, line_color="#94A3B8", line_width=1.2, line_dash="dot",
+                      annotation_text=f"Prom: {cmg_prom:.1f}",
+                      annotation_position="right",
+                      annotation_font_color="#64748B", annotation_font_size=10)
         fig3.add_trace(go.Scatter(
-            x=[df_c.loc[idx_max,"fecha_hora"]],y=[cmg_max],
-            mode="markers+text",marker=dict(size=10,color="#EF4444",symbol="triangle-up"),
-            text=[f" Máx: {cmg_max:.1f}"],textposition="top right",
-            textfont=dict(size=10,color="#EF4444"),showlegend=False,
+            x=[df_c.loc[idx_max,"fecha_hora"]], y=[cmg_max],
+            mode="markers+text",
+            marker=dict(size=10,color="#EF4444",symbol="triangle-up"),
+            text=[f" Máx: {cmg_max:.1f}"], textposition="top right",
+            textfont=dict(size=10,color="#EF4444"), showlegend=False,
         ))
         fig3.add_trace(go.Scatter(
-            x=[df_c.loc[idx_min,"fecha_hora"]],y=[cmg_min],
-            mode="markers+text",marker=dict(size=10,color="#10B981",symbol="triangle-down"),
-            text=[f" Mín: {cmg_min:.1f}"],textposition="bottom right",
-            textfont=dict(size=10,color="#10B981"),showlegend=False,
+            x=[df_c.loc[idx_min,"fecha_hora"]], y=[cmg_min],
+            mode="markers+text",
+            marker=dict(size=10,color="#10B981",symbol="triangle-down"),
+            text=[f" Mín: {cmg_min:.1f}"], textposition="bottom right",
+            textfont=dict(size=10,color="#10B981"), showlegend=False,
         ))
         fig3.update_layout(
-            title=dict(text="CMG Nodo Crucero en el Tiempo",font=dict(size=13,color="#0F172A")),
-            height=320,margin=dict(l=10,r=60,t=45,b=10),
-            plot_bgcolor=BG,paper_bgcolor="rgba(0,0,0,0)",
-            yaxis=dict(title="USD/MWh",gridcolor=GR,tickfont=dict(color="#94A3B8",size=10),
-                       title_font=dict(color="#94A3B8",size=10)),
-            xaxis=dict(tickfont=dict(color="#94A3B8",size=10),showgrid=False),
-            hovermode="x unified",hoverlabel=dict(bgcolor="#1E293B",font_color="#F8FAFC"),
+            title=dict(text="CMG Nodo Crucero en el Tiempo",
+                      font=dict(size=13,color="#0F172A"), x=0),
+            height=340,
+            margin=dict(l=10, r=70, t=60, b=10),
+            plot_bgcolor=BG, paper_bgcolor="rgba(0,0,0,0)",
+            yaxis=dict(title="USD/MWh", gridcolor=GR,
+                      tickfont=dict(color="#94A3B8",size=10),
+                      title_font=dict(color="#94A3B8",size=10)),
+            xaxis=dict(tickfont=dict(color="#94A3B8",size=10),
+                      tickformat="%d/%m\n%H:%M", showgrid=False),
+            hovermode="x unified",
+            hoverlabel=dict(bgcolor="#1E293B",font_color="#F8FAFC"),
         )
         st.plotly_chart(fig3, use_container_width=True, config={"displayModeBar":False})
 
@@ -386,72 +447,59 @@ if not df_c.empty:
         ("CMG Promedio",       f"{cmg_prom:.1f}",        "USD/MWh"),
         ("Rango CMG",          f"{cmg_min:.1f} – {cmg_max:.1f}", "USD/MWh mín/máx"),
     ]):
-        col.metric(lbl,val,sub)
+        col.metric(lbl, val, sub)
 else:
     st.info("Sin datos de CMG para calcular estadísticos de costo.")
 
 
-# ── Potencia programada — ingreso masivo ──────────────────────
+# ── Potencia programada ───────────────────────────────────────
 st.markdown('<div class="sec">POTENCIA PROGRAMADA · INGRESO MANUAL</div>', unsafe_allow_html=True)
+tab_p1, tab_p2 = st.tabs(["Por hora", "24 horas de una vez"])
 
-tab_prog1, tab_prog2 = st.tabs(["Ingreso por hora", "Ingreso masivo (24h)"])
-
-with tab_prog1:
+with tab_p1:
     pc1,pc2,pc3,pc4 = st.columns(4)
-    with pc1: u_prog  = st.selectbox("Unidad", ["ANG1","ANG2","CCR1","CCR2"], key="up")
-    with pc2: f_prog  = st.date_input("Fecha", value=hoy, max_value=hoy, key="fp")
-    with pc3: h_prog  = st.number_input("Hora (1-24)", 1, 24, datetime.now().hour+1, key="hp")
-    with pc4: mw_prog = st.number_input("MW programados", 0.0, 400.0, step=0.5, key="mwp")
-    if st.button("Guardar hora", key="btn_hora"):
+    with pc1: u_prog  = st.selectbox("Unidad",["ANG1","ANG2","CCR1","CCR2"],key="up")
+    with pc2: f_prog  = st.date_input("Fecha",value=hoy,max_value=hoy,key="fp")
+    with pc3: h_prog  = st.number_input("Hora (1-24)",1,24,datetime.now().hour+1,key="hp")
+    with pc4: mw_prog = st.number_input("MW programados",0.0,400.0,step=0.5,key="mwp")
+    if st.button("Guardar hora",key="btn_h"):
         fh = f"{f_prog} {int(h_prog)-1:02d}:00:00"
         ok = exe("""INSERT INTO generacion_programada (unidad,gen_programada_mw,fecha_hora,hora,fuente)
                     VALUES (%s,%s,%s,%s,'MANUAL')
                     ON CONFLICT (unidad,fecha_hora,fuente) DO UPDATE SET gen_programada_mw=EXCLUDED.gen_programada_mw""",
                  (u_prog,mw_prog,fh,int(h_prog)))
-        if ok: st.success(f"Guardado: {LABELS[u_prog]} Hora {h_prog} → {mw_prog} MW"); st.cache_data.clear(); st.rerun()
+        if ok: st.success(f"Guardado: {LABELS[u_prog]} H{h_prog} → {mw_prog} MW"); st.cache_data.clear(); st.rerun()
 
-with tab_prog2:
-    st.caption("Pega las 24 horas de potencia programada para una unidad y fecha. Un valor por línea, de hora 1 a hora 24.")
-    mc1,mc2 = st.columns(2)
+with tab_p2:
+    st.caption("Selecciona unidad y fecha, luego pega los 24 valores MW separados por salto de línea (hora 1 → hora 24).")
+    mc1,mc2 = st.columns([1,2])
     with mc1:
-        u_masa = st.selectbox("Unidad", ["ANG1","ANG2","CCR1","CCR2"], key="um")
-        f_masa = st.date_input("Fecha", value=hoy, max_value=hoy, key="fm")
+        u_masa = st.selectbox("Unidad",["ANG1","ANG2","CCR1","CCR2"],key="um")
+        f_masa = st.date_input("Fecha",value=hoy,max_value=hoy,key="fm")
+        st.caption("Ejemplo formato:\n280.5\n275.3\n271.0\n...")
     with mc2:
-        mw_masa = st.text_area(
-            "24 valores MW (uno por línea, hora 1→24):",
-            height=200,
-            placeholder="280.5\n275.3\n271.0\n...",
-            key="mwmasa"
-        )
-
-    if st.button("Guardar las 24 horas", key="btn_masa"):
+        mw_masa = st.text_area("24 valores MW (uno por línea):", height=220, key="mwm",
+                               placeholder="280.5\n275.3\n271.0\n268.5\n...")
+    if st.button("Guardar las 24 horas",key="btn_m"):
         try:
             valores = [float(v.strip().replace(",",".")) for v in mw_masa.strip().split("\n") if v.strip()]
             if len(valores) != 24:
-                st.error(f"Se esperan exactamente 24 valores, se ingresaron {len(valores)}.")
+                st.error(f"Se esperan 24 valores, se ingresaron {len(valores)}.")
             else:
-                params_list = []
-                for hora_idx, mw in enumerate(valores, start=1):
-                    fh = f"{f_masa} {hora_idx-1:02d}:00:00"
-                    params_list.append((u_masa, mw, fh, hora_idx, "MANUAL"))
+                params_list = [(u_masa, mw, f"{f_masa} {h-1:02d}:00:00", h, "MANUAL") for h,mw in enumerate(valores,1)]
                 ok = exe_many("""INSERT INTO generacion_programada (unidad,gen_programada_mw,fecha_hora,hora,fuente)
                                  VALUES (%s,%s,%s,%s,%s)
                                  ON CONFLICT (unidad,fecha_hora,fuente) DO UPDATE SET gen_programada_mw=EXCLUDED.gen_programada_mw""",
                               params_list)
-                if ok:
-                    st.success(f"24 horas guardadas para {LABELS[u_masa]} · {f_masa}")
-                    st.cache_data.clear(); st.rerun()
+                if ok: st.success(f"24 horas guardadas: {LABELS[u_masa]} · {f_masa}"); st.cache_data.clear(); st.rerun()
         except ValueError:
-            st.error("Formato inválido. Asegúrate de ingresar solo números, uno por línea.")
+            st.error("Formato inválido. Solo números, uno por línea.")
 
-# Tabla programada ingresada
 df_pv2 = load_prog(s,e)
 if not df_pv2.empty:
     df_pv2["fecha_hora"] = pd.to_datetime(df_pv2["fecha_hora"]).dt.strftime("%Y-%m-%d %H:%M")
-    st.dataframe(
-        df_pv2[["unidad","fecha_hora","hora","gen_programada_mw"]].rename(columns={"gen_programada_mw":"MW Programado"}),
-        use_container_width=True, hide_index=True
-    )
+    st.dataframe(df_pv2[["unidad","fecha_hora","hora","gen_programada_mw"]].rename(
+        columns={"gen_programada_mw":"MW Programado"}), use_container_width=True, hide_index=True)
 
 
 # ── Datos horarios ────────────────────────────────────────────
@@ -469,7 +517,6 @@ if show_table:
 # ── Bitácora ──────────────────────────────────────────────────
 st.markdown('<div class="sec">BITÁCORA DE NOVEDADES OPERACIONALES</div>', unsafe_allow_html=True)
 tab_b1,tab_b2 = st.tabs(["Ver registros","Nueva novedad"])
-
 with tab_b1:
     fu   = st.selectbox("Filtrar","Todas ANG1 ANG2 CCR1 CCR2".split(),label_visibility="collapsed")
     df_b = load_bit(s,e,fu)
@@ -479,7 +526,6 @@ with tab_b1:
         st.dataframe(df_b.drop(columns=["id"],errors="ignore"),use_container_width=True,hide_index=True)
     else:
         st.info("Sin novedades para el período seleccionado.")
-
 with tab_b2:
     b1,b2,b3 = st.columns([1,1,1])
     with b1: ub = st.selectbox("Unidad",["ANG1","ANG2","CCR1","CCR2"],key="ub")
@@ -491,5 +537,4 @@ with tab_b2:
             ok = exe("INSERT INTO bitacora (unidad,autor,comentario,fecha,hora) VALUES (%s,%s,%s,%s,%s)",
                      (ub,ab.strip(),cb.strip(),str(date.today()),str(hb)))
             if ok: st.success("Novedad guardada."); st.cache_data.clear(); st.rerun()
-        else:
-            st.warning("Completa autor y comentario.")
+        else: st.warning("Completa autor y comentario.")
