@@ -47,25 +47,29 @@ st.markdown("""
 :root{--bg:#F1F5F9;--surf:#FFFFFF;--surf2:#F8FAFC;--bord:#E2E8F0;--txt:#0F172A;--muted:#64748B;--accent:#2563EB;}
 .stApp{background:var(--bg)!important;}
 .block-container{padding:1.5rem 2rem 3rem;max-width:1400px;}
-[data-testid="stSidebar"]{background:var(--surf)!important;border-right:1px solid var(--bord)!important;}
-[data-testid="stSidebar"] *{color:var(--txt)!important;}
+[data-testid="stSidebar"]{background:#1E293B!important;border-right:1px solid #334155!important;}
+[data-testid="stSidebar"] *{color:#E2E8F0!important;}
+[data-testid="stSidebar"] .status-box{background:#0F172A!important;border-color:#334155!important;}
+[data-testid="stSidebar"] .stCheckbox label{color:#CBD5E1!important;}
+[data-testid="stSidebar"] .stDateInput label{color:#94A3B8!important;font-size:0.75rem!important;}
+[data-testid="stSidebar"] input{background:#0F172A!important;color:#E2E8F0!important;border-color:#334155!important;}
 h1,h2,h3{font-family:'Inter',sans-serif!important;color:var(--txt)!important;}
 p,span,div,label{font-family:'Inter',sans-serif!important;}
 #MainMenu,footer,header{visibility:hidden;}
 [data-testid="stToolbar"]{display:none;}
 [data-testid="InputInstructions"]{display:none!important;}
 kbd{display:none!important;}
-/* Aggressive keyboard_double fix */
+/* keyboard_double fix */
 [role="tooltip"]{display:none!important;}
 [data-baseweb="tooltip"]{display:none!important;}
-.material-symbols-rounded{display:none!important;font-size:0!important;width:0!important;}
+.material-symbols-rounded{font-size:0!important;width:0!important;height:0!important;overflow:hidden!important;display:inline-block!important;}
 [aria-label*="keyboard"]{display:none!important;}
 div[class*="Tooltip"]{display:none!important;}
 span[class*="instruction"]{display:none!important;}
 [data-testid="InputInstructions"]{display:none!important;visibility:hidden!important;}
-[class*="stWidgetLabel"] span[class*="material"]{display:none!important;}
-span.material-symbols-rounded{visibility:hidden!important;position:absolute!important;}
-[data-testid="stWidgetLabel"] > div > span{display:none!important;}
+span[class*="material"]{font-size:0!important;color:transparent!important;width:0!important;}
+[data-testid="stWidgetLabel"] span{font-size:0!important;}
+[data-testid="stWidgetLabel"] span[data-testid="stWidgetLabelHelpInline"]{display:none!important;}
 .kpi{background:var(--surf);border:1px solid var(--bord);border-radius:12px;padding:1.2rem 1.4rem;box-shadow:0 1px 3px rgba(0,0,0,0.06);}
 .kpi-badge{display:inline-block;font-size:0.65rem;font-weight:700;letter-spacing:0.08em;text-transform:uppercase;padding:3px 10px;border-radius:20px;margin-bottom:0.7rem;}
 .kpi-val{font-family:'IBM Plex Mono',monospace;font-size:2rem;font-weight:600;color:var(--txt);line-height:1;}
@@ -86,128 +90,183 @@ span.material-symbols-rounded{visibility:hidden!important;position:absolute!impo
 .stTabs [data-baseweb="tab-list"]{gap:4px;}
 .stTabs [data-baseweb="tab"]{border-radius:8px 8px 0 0;font-weight:600;font-family:'Inter',sans-serif;}
 </style>
+<script>
+function hideKeyboardHints() {
+    document.querySelectorAll('[data-testid="InputInstructions"]').forEach(function(el){el.style.display='none';});
+    document.querySelectorAll('.material-symbols-rounded').forEach(function(el){el.style.fontSize='0';el.style.width='0';});
+}
+hideKeyboardHints();
+setInterval(hideKeyboardHints, 500);
+</script>
 """, unsafe_allow_html=True)
 
 
 
 # ══════════════════════════════════════════════════════════════
-# GENERADOR PDF
+# GENERADOR PDF — Formato Highlight Semanal
 # ══════════════════════════════════════════════════════════════
 def generar_pdf(df_real, df_prog, df_cmg, start_str, end_str):
-    buf = io.BytesIO()
-    doc = SimpleDocTemplate(buf, pagesize=landscape(A4),
-                            leftMargin=0.6*inch, rightMargin=0.6*inch,
-                            topMargin=0.6*inch, bottomMargin=0.6*inch)
-    C_DARK  = HexColor("#0F172A")
-    C_BLUE  = HexColor("#0284C7")
-    C_LIGHT = HexColor("#F1F5F9")
-    C_GRAY  = HexColor("#64748B")
+    from reportlab.lib.pagesizes import A4
+    from reportlab.lib.units import cm
+    from reportlab.lib.colors import HexColor, black, white
+    from reportlab.platypus import SimpleDocTemplate, Paragraph, Spacer, Image as RLImage, HRFlowable
+    from reportlab.lib.styles import ParagraphStyle
+    from reportlab.lib.enums import TA_CENTER, TA_LEFT
+    import matplotlib.pyplot as plt
+    import matplotlib.dates as mdates
+    import io as _io
 
-    st_title  = ParagraphStyle("t", fontSize=16, textColor=C_DARK, fontName="Helvetica-Bold", spaceAfter=4)
-    st_sub    = ParagraphStyle("s", fontSize=11, textColor=C_BLUE, fontName="Helvetica-Bold", spaceAfter=2)
-    st_meta   = ParagraphStyle("m", fontSize=8,  textColor=C_GRAY, fontName="Helvetica", spaceAfter=10)
-    st_footer = ParagraphStyle("f", fontSize=7,  textColor=C_GRAY, fontName="Helvetica", alignment=1)
+    buf = _io.BytesIO()
+    W, H = A4  # portrait
+    doc = SimpleDocTemplate(buf, pagesize=A4,
+                            leftMargin=1.5*cm, rightMargin=1.5*cm,
+                            topMargin=1.5*cm, bottomMargin=1.5*cm)
+
+    # Colores AES
+    C_DARK   = HexColor("#0F172A")
+    C_BLUE   = HexColor("#2563EB")
+    C_GRAY   = HexColor("#64748B")
+    C_LGRAY  = HexColor("#94A3B8")
+
+    UNIT_REAL = {"ANG1":"#1E3A8A","ANG2":"#1E3A8A","CCR1":"#1E3A8A","CCR2":"#1E3A8A"}
+    UNIT_PROG = {"ANG1":"#67E8F9","ANG2":"#67E8F9","CCR1":"#67E8F9","CCR2":"#67E8F9"}
+    UNIT_NAMES= {"ANG1":"Angamos 1","ANG2":"Angamos 2","CCR1":"Cochrane 1","CCR2":"Cochrane 2"}
+
+    # Estilos
+    sTitle   = ParagraphStyle("t",  fontName="Helvetica-Bold", fontSize=22, textColor=C_DARK, spaceAfter=6)
+    sSub     = ParagraphStyle("s",  fontName="Helvetica",      fontSize=13, textColor=C_GRAY, spaceAfter=4)
+    sWeek    = ParagraphStyle("w",  fontName="Helvetica-Bold", fontSize=15, textColor=C_DARK, spaceAfter=4)
+    sPeriod  = ParagraphStyle("p",  fontName="Helvetica",      fontSize=12, textColor=C_GRAY, spaceAfter=20)
+    sUnit    = ParagraphStyle("u",  fontName="Helvetica-Bold", fontSize=16, textColor=C_DARK, spaceAfter=10)
+    sDate    = ParagraphStyle("d",  fontName="Helvetica-Bold", fontSize=10, textColor=C_BLUE, spaceAfter=2)
+    sNov     = ParagraphStyle("n",  fontName="Helvetica",      fontSize=10, textColor=C_DARK, spaceAfter=8, leftIndent=0)
+    sNone    = ParagraphStyle("nn", fontName="Helvetica-Oblique",fontSize=10, textColor=C_LGRAY,spaceAfter=8)
+    sFooter  = ParagraphStyle("f",  fontName="Helvetica",      fontSize=8,  textColor=C_LGRAY, alignment=TA_CENTER)
+
+    # Número de semana
+    try:
+        from datetime import datetime as _dt
+        dt_start = _dt.strptime(start_str, "%Y-%m-%d")
+        semana_num = dt_start.isocalendar()[1]
+    except: semana_num = "—"
+
+    # Fecha formateada
+    def fmt(d):
+        try:
+            from datetime import datetime as _dt
+            return _dt.strptime(d, "%Y-%m-%d").strftime("%d/%m/%Y")
+        except: return d
 
     story = []
-    story.append(Paragraph("Reporte de Generación — Complejo Térmico Mejillones", st_title))
-    story.append(Paragraph(f"Período: {start_str}  →  {end_str}", st_sub))
-    story.append(Paragraph(f"Generado: {datetime.now().strftime('%d/%m/%Y %H:%M')}  |  Fuente: API CEN SIPUB + CMG S3", st_meta))
 
-    # Tabla resumen
-    cmg_prom = df_cmg["cmg_usd_mwh"].mean() if not df_cmg.empty else 0
-    table_data = [["Unidad","Gen. Real Prom.(MW)","Gen. Prog. Prom.(MW)","Desv. Media(MW)","FP (%)","CMG Prom.(USD/MWh)"]]
-    for u in ["ANG1","ANG2","CCR1","CCR2"]:
-        df_u = df_real[df_real["unidad"]==u]
-        df_up = df_prog[df_prog["unidad"]==u] if not df_prog.empty else pd.DataFrame()
-        pmax = PMAX.get(u,0)
-        if df_u.empty:
-            table_data.append([LABELS[u],"—","—","—","—",f"{cmg_prom:.1f}"])
-        else:
-            r_prom = df_u["gen_real_mw"].mean()
-            p_prom = df_up["gen_programada_mw"].mean() if not df_up.empty else 0
-            desv   = r_prom - p_prom if not df_up.empty else 0
-            fp     = r_prom/pmax*100 if pmax else 0
-            table_data.append([LABELS[u],f"{r_prom:.1f}",f"{p_prom:.1f}" if not df_up.empty else "—",
-                               f"{desv:+.1f}" if not df_up.empty else "—",f"{fp:.0f}%",f"{cmg_prom:.1f}"])
-
-    tabla = Table(table_data, colWidths=[1.8*inch,1.4*inch,1.4*inch,1.2*inch,0.9*inch,1.4*inch])
-    tabla.setStyle(TableStyle([
-        ("BACKGROUND",(0,0),(-1,0),C_BLUE),("TEXTCOLOR",(0,0),(-1,0),white),
-        ("FONTNAME",(0,0),(-1,0),"Helvetica-Bold"),("FONTSIZE",(0,0),(-1,-1),8),
-        ("ALIGN",(1,0),(-1,-1),"CENTER"),("ALIGN",(0,0),(0,-1),"LEFT"),
-        ("GRID",(0,0),(-1,-1),0.4,HexColor("#E2E8F0")),
-        ("ROWBACKGROUNDS",(0,1),(-1,-1),[white,C_LIGHT]),
-        ("TOPPADDING",(0,0),(-1,-1),5),("BOTTOMPADDING",(0,0),(-1,-1),5),
-        ("LEFTPADDING",(0,0),(-1,-1),6),
-    ]))
-    story.append(tabla)
-    story.append(Spacer(1, 0.25*inch))
-
-    # Gráfico por unidad
-    UNIT_COLORS = {"ANG1":"#0284C7","ANG2":"#059669","CCR1":"#D97706","CCR2":"#DC2626"}
-    UNIT_PROG   = {"ANG1":"#7DD3FC","ANG2":"#6EE7B7","CCR1":"#FCD34D","CCR2":"#FCA5A5"}
-
-    for u in ["ANG1","ANG2","CCR1","CCR2"]:
-        df_u  = df_real[df_real["unidad"]==u].sort_values("fecha_hora")
-        df_up = df_prog[df_prog["unidad"]==u].sort_values("fecha_hora") if not df_prog.empty else pd.DataFrame()
-        if df_u.empty: continue
-
-        story.append(Paragraph(f"Unidad: {LABELS[u]}", st_sub))
-
-        fig_m, axes = plt.subplots(2,1,figsize=(9.5,3.5),gridspec_kw={"height_ratios":[0.65,0.35]})
-        ax1, ax2 = axes
-
-        ax1.plot(df_u["fecha_hora"], df_u["gen_real_mw"],
-                color=UNIT_COLORS[u], linewidth=2, label="Real")
-        if not df_up.empty:
-            ax1.plot(df_up["fecha_hora"], df_up["gen_programada_mw"],
-                    color=UNIT_PROG[u], linewidth=1.8, linestyle="--", label="Programada")
-        ax1.set_ylabel("MW", fontsize=8)
-        ax1.legend(fontsize=7, loc="upper right")
-        ax1.xaxis.set_major_formatter(mdates.DateFormatter("%d/%m %H:%M"))
-        ax1.xaxis.set_major_locator(mdates.AutoDateLocator())
-        plt.setp(ax1.xaxis.get_majorticklabels(), rotation=20, fontsize=6)
-        ax1.set_facecolor("#FAFAFA")
-        ax1.tick_params(axis="y", labelsize=7)
-
-        if not df_cmg.empty:
-            ax2.plot(df_cmg["fecha_hora"], df_cmg["cmg_usd_mwh"],
-                    color="#7C3AED", linewidth=2, label="CMG Crucero")
-            ax2.axhline(df_cmg["cmg_usd_mwh"].mean(), color="#94A3B8",
-                       linestyle=":", linewidth=1, label=f"Prom: {df_cmg['cmg_usd_mwh'].mean():.1f}")
-            ax2.set_ylabel("USD/MWh", fontsize=8)
-            ax2.legend(fontsize=7, loc="upper right")
-            ax2.xaxis.set_major_formatter(mdates.DateFormatter("%d/%m %H:%M"))
-            ax2.xaxis.set_major_locator(mdates.AutoDateLocator())
-            plt.setp(ax2.xaxis.get_majorticklabels(), rotation=20, fontsize=6)
-            ax2.set_facecolor("#FAFAFA")
-            ax2.tick_params(axis="y", labelsize=7)
-
-        fig_m.patch.set_facecolor("white")
-        fig_m.tight_layout(pad=0.8)
-
-        img_buf = io.BytesIO()
-        fig_m.savefig(img_buf, format="png", dpi=130, bbox_inches="tight")
-        plt.close(fig_m)
-        img_buf.seek(0)
-        story.append(RLImage(img_buf, width=9.0*inch, height=3.4*inch))
-        story.append(Spacer(1, 0.15*inch))
-
-    # CMG resumen
-    if not df_cmg.empty:
-        story.append(Paragraph("Resumen CMG Nodo Crucero", st_sub))
-        story.append(Paragraph(
-            f"Promedio: {df_cmg['cmg_usd_mwh'].mean():.1f} USD/MWh  |  "
-            f"Mín: {df_cmg['cmg_usd_mwh'].min():.1f}  |  "
-            f"Máx: {df_cmg['cmg_usd_mwh'].max():.1f}  |  "
-            f"Fuente: Portal CEN (preliminar)", st_meta
-        ))
-
-    story.append(Spacer(1,0.2*inch))
+    # ── PORTADA ──────────────────────────────────────────────
+    story.append(Spacer(1, 3*cm))
+    story.append(Paragraph("Complejo Térmico Mejillones", sTitle))
+    story.append(Paragraph("Thermal Operations", sSub))
+    story.append(Spacer(1, 1*cm))
+    story.append(HRFlowable(width="100%", thickness=1, color=HexColor("#E2E8F0")))
+    story.append(Spacer(1, 0.8*cm))
+    story.append(Paragraph(f"Highlight Semana {semana_num}", sWeek))
+    story.append(Paragraph(f"Periodo: {fmt(start_str)} — {fmt(end_str)}", sPeriod))
+    story.append(Spacer(1, 2*cm))
     story.append(Paragraph(
-        f"Reporte generado automáticamente — Complejo Térmico Mejillones — {datetime.now().strftime('%d/%m/%Y %H:%M')}",
-        st_footer
+        f"Generado: {datetime.now().strftime('%d/%m/%Y %H:%M')}  ·  Fuente: API CEN SIPUB + CMG S3",
+        sFooter
     ))
+    from reportlab.platypus import PageBreak
+    story.append(PageBreak())
+
+    # ── PÁGINA POR UNIDAD ─────────────────────────────────────
+    for u in ["ANG1","ANG2","CCR1","CCR2"]:
+        df_u  = df_real[df_real["unidad"]==u].sort_values("fecha_hora") if not df_real.empty else pd.DataFrame()
+        df_up = df_prog[df_prog["unidad"]==u].sort_values("fecha_hora") if not df_prog.empty else pd.DataFrame()
+
+        # Novedades de bitácora — query directa
+        try:
+            novedades = qry(
+                "SELECT fecha, hora, comentario FROM bitacora WHERE unidad=%s AND fecha BETWEEN %s AND %s ORDER BY fecha,hora",
+                (u, start_str, end_str)
+            )
+        except: novedades = pd.DataFrame()
+
+        # Header unidad
+        story.append(Paragraph(UNIT_NAMES[u], sUnit))
+
+        # Novedades arriba (si existen)
+        if not novedades.empty:
+            for _, row in novedades.iterrows():
+                fecha_str = str(row["fecha"])
+                hora_str  = str(row["hora"])[:5]
+                try:
+                    from datetime import datetime as _dt
+                    fd = _dt.strptime(fecha_str, "%Y-%m-%d").strftime("%d/%m/%Y")
+                except: fd = fecha_str
+                story.append(Paragraph(f"{fd} — {hora_str} hrs", sDate))
+                story.append(Paragraph(str(row["comentario"]), sNov))
+        else:
+            story.append(Paragraph("Sin novedades", sNone))
+
+        # Gráfico
+        if not df_u.empty:
+            fig, ax = plt.subplots(figsize=(15, 4.5))
+            ax.plot(df_u["fecha_hora"], df_u["gen_real_mw"],
+                   color=UNIT_REAL[u], linewidth=2.2, label="Potencia Real MW", zorder=3)
+            if not df_up.empty:
+                ax.plot(df_up["fecha_hora"], df_up["gen_programada_mw"],
+                       color=UNIT_PROG[u], linewidth=2.2, label="Potencia Programada MW", zorder=2)
+                # Área entre curvas
+                df_m = pd.merge_asof(
+                    df_u[["fecha_hora","gen_real_mw"]].sort_values("fecha_hora"),
+                    df_up[["fecha_hora","gen_programada_mw"]].sort_values("fecha_hora"),
+                    on="fecha_hora", direction="nearest", tolerance=pd.Timedelta("1h")
+                ).dropna()
+                if not df_m.empty:
+                    ax.fill_between(df_m["fecha_hora"], df_m["gen_real_mw"],
+                                   df_m["gen_programada_mw"],
+                                   alpha=0.12, color="#2563EB")
+            ax.set_ylabel("MW", fontsize=10)
+            ax.set_ylim(bottom=0)
+            ax.xaxis.set_major_formatter(mdates.DateFormatter("%a %d/%m"))
+            ax.xaxis.set_major_locator(mdates.DayLocator())
+            plt.setp(ax.xaxis.get_majorticklabels(), fontsize=9)
+            ax.tick_params(axis="y", labelsize=9)
+            ax.set_facecolor("#FAFBFF")
+            ax.grid(axis="y", color="#E2E8F0", linewidth=0.8)
+            ax.grid(axis="x", color="#E2E8F0", linewidth=0.5)
+            ax.spines["top"].set_visible(False)
+            ax.spines["right"].set_visible(False)
+            ax.legend(loc="lower right", fontsize=9, framealpha=0.9)
+            fig.patch.set_facecolor("white")
+            fig.tight_layout(pad=0.5)
+
+            img_buf = _io.BytesIO()
+            fig.savefig(img_buf, format="png", dpi=150, bbox_inches="tight")
+            plt.close(fig)
+            img_buf.seek(0)
+            story.append(Spacer(1, 0.3*cm))
+            story.append(RLImage(img_buf, width=17*cm, height=7.5*cm))
+
+        # CMG stats si hay datos
+        if not df_cmg.empty:
+            story.append(Spacer(1, 0.3*cm))
+            story.append(Paragraph(
+                f"CMG Nodo Crucero (preliminar) · Prom: {df_cmg['cmg_usd_mwh'].mean():.1f} USD/MWh  ·  "
+                f"Mín: {df_cmg['cmg_usd_mwh'].min():.1f}  ·  Máx: {df_cmg['cmg_usd_mwh'].max():.1f}",
+                ParagraphStyle("cmg", fontName="Helvetica", fontSize=8, textColor=C_LGRAY)
+            ))
+
+        story.append(Spacer(1, 0.5*cm))
+        story.append(HRFlowable(width="100%", thickness=0.5, color=HexColor("#E2E8F0")))
+        story.append(Spacer(1, 0.2*cm))
+        story.append(Paragraph(
+            f"Reporte generado: {datetime.now().strftime('%d/%m/%Y %H:%M')}",
+            sFooter
+        ))
+        story.append(PageBreak())
+
+    # Quitar último PageBreak
+    if story and isinstance(story[-1], PageBreak):
+        story.pop()
 
     doc.build(story)
     buf.seek(0)
@@ -768,14 +827,15 @@ with tab_b1:
     else:
         st.info("Sin novedades para el período seleccionado.")
 with tab_b2:
-    b1,b2,b3 = st.columns([1,1,1])
+    b1,b2,b3,b4 = st.columns([1,1,1,1])
     with b1: ub = st.selectbox("Unidad",["ANG1","ANG2","CCR1","CCR2"],key="ub")
     with b2: ab = st.text_input("Autor / Turno",key="ab")
-    with b3: hb = st.time_input("Hora evento",value=datetime.now().time(),step=60,key="hb")
+    with b3: fb = st.date_input("Fecha del evento",value=date.today(),key="fb")
+    with b4: hb = st.time_input("Hora evento",value=datetime.now().time(),step=60,key="hb")
     cb = st.text_area("Comentario",height=90,placeholder="Descripción de la novedad operacional...",key="cb")
     if st.button("Guardar novedad",type="primary"):
         if ab.strip() and cb.strip():
             ok = exe("INSERT INTO bitacora (unidad,autor,comentario,fecha,hora) VALUES (%s,%s,%s,%s,%s)",
-                     (ub,ab.strip(),cb.strip(),str(date.today()),str(hb)))
+                     (ub,ab.strip(),cb.strip(),str(fb),str(hb)))
             if ok: st.success("Novedad guardada."); st.cache_data.clear(); st.rerun()
         else: st.warning("Completa autor y comentario.")
