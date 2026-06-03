@@ -1,5 +1,5 @@
 """
-app.py — Dashboard CTM Mejillones v5
+app.py — Dashboard Complejo Térmico Mejillones v5
 Fixes: dots de color en tabs, estado conexión sidebar,
 eje X visible, títulos separados, programada visible
 """
@@ -22,18 +22,19 @@ from reportlab.lib.styles import getSampleStyleSheet, ParagraphStyle
 from reportlab.platypus import SimpleDocTemplate, Paragraph, Spacer, Table, TableStyle, Image as RLImage
 
 st.set_page_config(
-    page_title="CTM Mejillones",
+    page_title="Complejo Térmico Mejillones",
     layout="wide",
     page_icon="⚡",
     initial_sidebar_state="expanded",
 )
 
+# Paleta AES: púrpura → azul → cyan → verde (logo AES)
 COLORES = {
-    "ANG1": {"line":"#0284C7","prog":"#7DD3FC","badge":"#E0F2FE","text":"#0284C7","dot":"🔵"},
-    "ANG2": {"line":"#059669","prog":"#6EE7B7","badge":"#D1FAE5","text":"#059669","dot":"🟢"},
-    "CCR1": {"line":"#D97706","prog":"#FCD34D","badge":"#FEF3C7","text":"#D97706","dot":"🟡"},
-    "CCR2": {"line":"#DC2626","prog":"#FCA5A5","badge":"#FEE2E2","text":"#DC2626","dot":"🔴"},
-    "CMG":  {"line":"#7C3AED"},
+    "ANG1": {"line":"#6D28D9","prog":"#C4B5FD","badge":"#EDE9FE","text":"#6D28D9","dot":"🟣"},
+    "ANG2": {"line":"#2563EB","prog":"#93C5FD","badge":"#DBEAFE","text":"#2563EB","dot":"🔵"},
+    "CCR1": {"line":"#0891B2","prog":"#67E8F9","badge":"#CFFAFE","text":"#0891B2","dot":"🔷"},
+    "CCR2": {"line":"#16A34A","prog":"#86EFAC","badge":"#DCFCE7","text":"#16A34A","dot":"🟢"},
+    "CMG":  {"line":"#6D28D9"},
 }
 LABELS = {"ANG1":"Angamos U1","ANG2":"Angamos U2","CCR1":"Cochrane U1","CCR2":"Cochrane U2"}
 
@@ -43,7 +44,7 @@ PMAX = {"ANG1": 277.0, "ANG2": 280.0, "CCR1": 276.0, "CCR2": 276.0}
 st.markdown("""
 <style>
 @import url('https://fonts.googleapis.com/css2?family=IBM+Plex+Mono:wght@400;600&family=Inter:wght@300;400;500;600;700&display=swap');
-:root{--bg:#F1F5F9;--surf:#FFFFFF;--surf2:#F8FAFC;--bord:#E2E8F0;--txt:#0F172A;--muted:#64748B;--accent:#0284C7;}
+:root{--bg:#F1F5F9;--surf:#FFFFFF;--surf2:#F8FAFC;--bord:#E2E8F0;--txt:#0F172A;--muted:#64748B;--accent:#2563EB;}
 .stApp{background:var(--bg)!important;}
 .block-container{padding:1.5rem 2rem 3rem;max-width:1400px;}
 [data-testid="stSidebar"]{background:var(--surf)!important;border-right:1px solid var(--bord)!important;}
@@ -204,7 +205,7 @@ def generar_pdf(df_real, df_prog, df_cmg, start_str, end_str):
 
     story.append(Spacer(1,0.2*inch))
     story.append(Paragraph(
-        f"Reporte generado automáticamente — CTM Mejillones — {datetime.now().strftime('%d/%m/%Y %H:%M')}",
+        f"Reporte generado automáticamente — Complejo Térmico Mejillones — {datetime.now().strftime('%d/%m/%Y %H:%M')}",
         st_footer
     ))
 
@@ -280,7 +281,7 @@ def load_bit(s,e,u=None):
 
 # ── Sidebar ───────────────────────────────────────────────────
 with st.sidebar:
-    st.markdown("### ⚡ CTM Mejillones")
+    st.markdown("### ⚡ Complejo Térmico Mejillones")
     st.markdown('<p style="font-size:0.75rem;color:#64748B;margin-bottom:0.3rem">Complejo Térmico · Monitoreo Operacional</p>', unsafe_allow_html=True)
 
     # Estado de conexión y fuentes
@@ -331,7 +332,7 @@ with st.sidebar:
                 st.download_button(
                     "Descargar PDF",
                     data=pdf_bytes,
-                    file_name=f"CTM_Reporte_{s_pdf}_{e_pdf}.pdf",
+                    file_name=f"CTM-Reporte_{s_pdf}_{e_pdf}.pdf",
                     mime="application/pdf",
                 )
             except Exception as ex:
@@ -353,7 +354,7 @@ if df_r.empty: st.warning("Sin datos para el período seleccionado."); st.stop()
 # ── Header ────────────────────────────────────────────────────
 ch1,ch2 = st.columns([3,1])
 with ch1:
-    st.markdown("# Dashboard Operacional — CTM Mejillones")
+    st.markdown("# Dashboard Operacional — Complejo Térmico Mejillones")
     st.markdown(f'<p style="color:#64748B;font-size:0.85rem;margin-top:-0.5rem">Período {s} → {e} · Generación real + Programada + CMG Nodo Crucero</p>', unsafe_allow_html=True)
 with ch2:
     ult_real = df_r["fecha_hora"].max()
@@ -693,9 +694,34 @@ with tab_p2:
 
 df_pv2 = load_prog(s,e)
 if not df_pv2.empty:
-    df_pv2["fecha_hora"] = pd.to_datetime(df_pv2["fecha_hora"]).dt.strftime("%Y-%m-%d %H:%M")
-    st.dataframe(df_pv2[["unidad","fecha_hora","hora","gen_programada_mw"]].rename(
+    df_show = df_pv2.copy()
+    df_show["fecha_hora"] = pd.to_datetime(df_show["fecha_hora"]).dt.strftime("%Y-%m-%d %H:%M")
+    st.dataframe(df_show[["unidad","fecha_hora","hora","gen_programada_mw"]].rename(
         columns={"gen_programada_mw":"MW Programado"}), use_container_width=True, hide_index=True)
+
+    st.markdown("---")
+    st.markdown("**Modificar o eliminar registro programada:**")
+    # Necesitamos id — hacer query con id
+    df_prog_crud = qry("SELECT id,unidad,gen_programada_mw,fecha_hora,hora FROM generacion_programada WHERE fecha_hora::date BETWEEN %s AND %s ORDER BY unidad,fecha_hora",(s,e))
+    if not df_prog_crud.empty:
+        df_prog_crud["fecha_hora"] = pd.to_datetime(df_prog_crud["fecha_hora"])
+        opc_p = df_prog_crud.apply(lambda r: f"[{r['unidad']}] {r['fecha_hora'].strftime('%d/%m %H:%M')} — {r['gen_programada_mw']:.1f} MW", axis=1).tolist()
+        idx_p = st.selectbox("Seleccionar registro programada", range(len(opc_p)),
+                             format_func=lambda i: opc_p[i], key="sel_prog")
+        reg_p = df_prog_crud.iloc[idx_p]
+        col_ep, col_dp = st.columns([2,1])
+        with col_ep:
+            new_mw_p = st.number_input("Nuevo valor MW:", value=float(reg_p["gen_programada_mw"]),
+                                       min_value=0.0, max_value=400.0, step=0.5, key="edit_mw_p")
+            if st.button("Actualizar MW", key="upd_prog"):
+                ok = exe("UPDATE generacion_programada SET gen_programada_mw=%s WHERE id=%s",
+                         (new_mw_p, int(reg_p["id"])))
+                if ok: st.success("✅ Actualizado."); st.cache_data.clear(); st.rerun()
+        with col_dp:
+            st.markdown("<br>", unsafe_allow_html=True)
+            if st.button("Eliminar", key="del_prog", type="primary"):
+                ok = exe("DELETE FROM generacion_programada WHERE id=%s", (int(reg_p["id"]),))
+                if ok: st.success("✅ Eliminado."); st.cache_data.clear(); st.rerun()
 
 
 # ── Datos horarios ────────────────────────────────────────────
@@ -707,7 +733,7 @@ if show_table:
         df_pv = df_pv.merge(df_c[["fecha_hora","cmg_usd_mwh"]].rename(columns={"cmg_usd_mwh":"CMG (USD/MWh)"}),on="fecha_hora",how="left")
     df_pv["fecha_hora"] = pd.to_datetime(df_pv["fecha_hora"]).dt.strftime("%Y-%m-%d %H:%M")
     st.dataframe(df_pv, use_container_width=True, hide_index=True)
-    st.download_button("Descargar CSV", df_pv.to_csv(index=False).encode(), f"ctm_{s}.csv","text/csv")
+    st.download_button("Descargar CSV", df_pv.to_csv(index=False).encode(), f"complejo-termico-mejillones_{s}.csv","text/csv")
 
 
 # ── Bitácora ──────────────────────────────────────────────────
@@ -717,16 +743,35 @@ with tab_b1:
     fu   = st.selectbox("Filtrar","Todas ANG1 ANG2 CCR1 CCR2".split(),label_visibility="collapsed")
     df_b = load_bit(s,e,fu)
     if not df_b.empty:
-        df_b["fecha"] = df_b["fecha"].astype(str)
-        df_b["hora"]  = df_b["hora"].astype(str).str[:5]
-        st.dataframe(df_b.drop(columns=["id"],errors="ignore"),use_container_width=True,hide_index=True)
+        df_b2 = df_b.copy()
+        df_b2["fecha"] = df_b2["fecha"].astype(str)
+        df_b2["hora"]  = df_b2["hora"].astype(str).str[:5]
+        st.dataframe(df_b2.drop(columns=["id"],errors="ignore"),use_container_width=True,hide_index=True)
+
+        st.markdown("---")
+        st.markdown("**Modificar o eliminar registro:**")
+        opciones_b = df_b.apply(lambda r: f"[{r['unidad']}] {str(r['fecha'])} {str(r['hora'])[:5]} — {str(r['comentario'])[:50]}", axis=1).tolist()
+        idx_b = st.selectbox("Seleccionar registro", range(len(opciones_b)),
+                             format_func=lambda i: opciones_b[i], key="sel_bit")
+        reg_b = df_b.iloc[idx_b]
+        col_edit_b, col_del_b = st.columns([3,1])
+        with col_edit_b:
+            new_com_b = st.text_area("Editar comentario:", value=str(reg_b.get("comentario","")), height=80, key="edit_com_b")
+            if st.button("Actualizar novedad", key="upd_bit"):
+                ok = exe("UPDATE bitacora SET comentario=%s WHERE id=%s", (new_com_b.strip(), int(reg_b["id"])))
+                if ok: st.success("✅ Actualizado."); st.cache_data.clear(); st.rerun()
+        with col_del_b:
+            st.markdown("<br>", unsafe_allow_html=True)
+            if st.button("Eliminar", key="del_bit", type="primary"):
+                ok = exe("DELETE FROM bitacora WHERE id=%s", (int(reg_b["id"]),))
+                if ok: st.success("✅ Eliminado."); st.cache_data.clear(); st.rerun()
     else:
         st.info("Sin novedades para el período seleccionado.")
 with tab_b2:
     b1,b2,b3 = st.columns([1,1,1])
     with b1: ub = st.selectbox("Unidad",["ANG1","ANG2","CCR1","CCR2"],key="ub")
     with b2: ab = st.text_input("Autor / Turno",key="ab")
-    with b3: hb = st.time_input("Hora evento",value=datetime.now().time(),key="hb")
+    with b3: hb = st.time_input("Hora evento",value=datetime.now().time(),step=60,key="hb")
     cb = st.text_area("Comentario",height=90,placeholder="Descripción de la novedad operacional...",key="cb")
     if st.button("Guardar novedad",type="primary"):
         if ab.strip() and cb.strip():
