@@ -443,6 +443,7 @@ def run():
     hoy    = datetime.now(TZ_CHILE).date()
     fechas = [(hoy - timedelta(days=d)).strftime("%Y-%m-%d")
               for d in range(DIAS_VENTANA - 1, -1, -1)]
+    hoy_str = hoy.strftime("%Y-%m-%d")
 
     # ── Generación real ───────────────────────────────────────
     for fecha in fechas:
@@ -458,19 +459,21 @@ def run():
         log_adquisicion("generacion_real", fecha, nuevos, dupes,
                         int((time.time() - t0) * 1000), err_str)
 
-    # ── Generación programada PCP ─────────────────────────────
-    for fecha in fechas:
-        log.info(f"\n  ── Gen. programada PCP {fecha}")
-        t0 = time.time()
-        err_str = None
-        try:
-            regs             = fetch_generacion_programada(fecha, fecha)
-            nuevos, actualizados = upsert_generacion_programada(regs)
-            log.info(f"  ✅ PCP: {nuevos} nuevos, {actualizados} actualizados")
-        except Exception as e:
-            err_str = str(e); log.error(f"  ❌ PCP: {e}"); nuevos = actualizados = 0
-        log_adquisicion("generacion_programada_pcp", fecha, nuevos, actualizados,
-                        int((time.time() - t0) * 1000), err_str)
+    # ── Generación programada PCP (solo hoy) ──────────────────
+    # El PCP no filtra por central en el servidor: pagina ~61 páginas de
+    # 5000 registros. Limitamos a hoy para no repetir páginas de días ya
+    # guardados (la programada del día anterior no cambia).
+    log.info(f"\n  ── Gen. programada PCP {hoy_str}")
+    t0 = time.time()
+    err_str = None
+    try:
+        regs             = fetch_generacion_programada(hoy_str, hoy_str)
+        nuevos, actualizados = upsert_generacion_programada(regs)
+        log.info(f"  ✅ PCP: {nuevos} nuevos, {actualizados} actualizados")
+    except Exception as e:
+        err_str = str(e); log.error(f"  ❌ PCP: {e}"); nuevos = actualizados = 0
+    log_adquisicion("generacion_programada_pcp", hoy_str, nuevos, actualizados,
+                    int((time.time() - t0) * 1000), err_str)
 
     # ── CMG múltiples nodos (S3) ──────────────────────────────
     log.info(f"\n  ── CMG Nodos CTM (S3 portal CEN)")
