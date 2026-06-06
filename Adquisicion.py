@@ -144,7 +144,7 @@ def fetch_generacion_programada(start: str, end: str) -> list[dict]:
     registros    = []
     ids_objetivo = {ID_ANGAMOS, ID_COCHRANE, str(ID_ANGAMOS), str(ID_COCHRANE)}
     page         = 0
-    limit        = 5000
+    limit        = 50000   # máximo posible para minimizar llamadas API (~61 págs con 5k → ~7 con 50k)
     llaves_no_mapeadas: set[str] = set()
 
     try:
@@ -233,7 +233,7 @@ def fetch_generacion_programada(start: str, end: str) -> list[dict]:
                 break
 
             page += 1
-            time.sleep(0.4)
+            time.sleep(0.1)
 
     except Exception as e:
         log.error(f"  Error gen. programada PCP: {e}")
