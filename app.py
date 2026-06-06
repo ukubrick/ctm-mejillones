@@ -41,6 +41,11 @@ LABELS = {"ANG1":"Angamos U1","ANG2":"Angamos U2","CCR1":"Cochrane U1","CCR2":"C
 # Potencias máximas reales declaradas por AES Andes ante el CEN
 PMAX = {"ANG1": 277.0, "ANG2": 280.0, "CCR1": 276.0, "CCR2": 276.0}
 
+NOMBRES_NODO = {
+    "CRUCERO_______220": "Crucero 220kV",
+    "TARAPACA______220": "Tarapacá 220kV",
+}
+
 st.markdown("""
 <style>
 @import url('https://fonts.googleapis.com/css2?family=IBM+Plex+Mono:wght@400;600&family=Inter:wght@300;400;500;600;700&display=swap');
@@ -285,8 +290,14 @@ def test_conn():
         conn = get_conn()
         with conn.cursor() as c: c.execute("SELECT 1")
         return True, None
-    except Exception as e:
-        return False, str(e)
+    except Exception:
+        get_conn.clear()
+        try:
+            conn = get_conn()
+            with conn.cursor() as c: c.execute("SELECT 1")
+            return True, None
+        except Exception as e:
+            return False, str(e)
 
 def qry(sql, params=None):
     try:
@@ -321,13 +332,25 @@ def load_real(s,e):
 
 @st.cache_data(ttl=300)
 def load_prog(s,e):
-    df = qry("SELECT unidad,gen_programada_mw,fecha_hora,hora FROM generacion_programada WHERE fecha_hora::date BETWEEN %s AND %s ORDER BY unidad,fecha_hora",(s,e))
+    df = qry("""
+        SELECT DISTINCT ON (unidad, fecha_hora)
+            unidad, gen_programada_mw, fecha_hora, hora, fuente
+        FROM generacion_programada
+        WHERE fecha_hora::date BETWEEN %s AND %s
+        ORDER BY unidad, fecha_hora,
+            CASE fuente WHEN 'CEN_PCP' THEN 0 ELSE 1 END
+    """, (s,e))
     if not df.empty: df["fecha_hora"]=pd.to_datetime(df["fecha_hora"])
     return df
 
 @st.cache_data(ttl=300)
-def load_cmg(s,e):
-    df = qry("SELECT fecha_hora,hora,cmg_usd_mwh FROM costo_marginal WHERE barra_transf='CRUCERO_______220' AND fecha_hora::date BETWEEN %s AND %s ORDER BY fecha_hora",(s,e))
+def load_cmg(s, e, nodo="CRUCERO_______220"):
+    df = qry(
+        "SELECT fecha_hora,hora,cmg_usd_mwh FROM costo_marginal "
+        "WHERE barra_transf=%s AND fecha_hora::date BETWEEN %s AND %s "
+        "ORDER BY fecha_hora",
+        (nodo, s, e),
+    )
     if not df.empty: df["fecha_hora"]=pd.to_datetime(df["fecha_hora"])
     return df
 
@@ -356,6 +379,7 @@ with st.sidebar:
         </div>
         <div style="color:#64748B;font-size:0.68rem;line-height:1.6">
             📡 Gen. real → API CEN SIPUB<br>
+            📡 Gen. programada → CEN PCP (auto)<br>
             📡 CMG → Portal CEN S3 (15min)<br>
             🔄 Adquisición → GitHub Actions /hora
         </div>
@@ -371,6 +395,14 @@ with st.sidebar:
     st.markdown("---")
     mostrar_prog = st.checkbox("Mostrar programada", value=True)
     mostrar_cmg  = st.checkbox("Mostrar CMG en gráficos", value=True)
+    nodo_cmg = "CRUCERO_______220"
+    if mostrar_cmg:
+        nodo_cmg = st.selectbox(
+            "Nodo CMG",
+            list(NOMBRES_NODO.keys()),
+            format_func=lambda x: NOMBRES_NODO[x],
+            key="nodo_cmg_sel",
+        )
     st.markdown("---")
     if st.button("Actualizar datos"):
         st.cache_data.clear(); st.rerun()
@@ -405,7 +437,7 @@ e = ff.strftime("%Y-%m-%d")
 with st.spinner("Cargando datos..."):
     df_r = load_real(s,e)
     df_p = load_prog(s,e)
-    df_c = load_cmg(s,e)
+    df_c = load_cmg(s, e, nodo_cmg)
 
 if df_r.empty: st.warning("Sin datos para el período seleccionado."); st.stop()
 
@@ -414,7 +446,7 @@ if df_r.empty: st.warning("Sin datos para el período seleccionado."); st.stop()
 ch1,ch2 = st.columns([3,1])
 with ch1:
     st.markdown("# Dashboard Operacional — Complejo Térmico Mejillones")
-    st.markdown(f'<p style="color:#64748B;font-size:0.85rem;margin-top:-0.5rem">Período {s} → {e} · Generación real + Programada + CMG Nodo Crucero</p>', unsafe_allow_html=True)
+    st.markdown(f'<p style="color:#64748B;font-size:0.85rem;margin-top:-0.5rem">Período {s} → {e} · Generación real + Programada PCP + CMG {NOMBRES_NODO.get(nodo_cmg, "Crucero 220kV")}</p>', unsafe_allow_html=True)
 with ch2:
     ult_real = df_r["fecha_hora"].max()
     ult_cmg  = df_c["fecha_hora"].max() if not df_c.empty else None
@@ -423,7 +455,7 @@ with ch2:
     cmg_str  = ult_cmg.strftime("%d/%m %H:%M") if ult_cmg is not None else "—"
     st.markdown(f'''<div style="text-align:right;padding-top:1rem;line-height:1.8">
         <div><span class="dot-status {cls}"></span><span style="font-size:0.72rem;color:#64748B">Gen. real: <b>{ult_real.strftime("%d/%m %H:%M")}</b></span></div>
-        <div><span style="font-size:0.72rem;color:#64748B">CMG Crucero: <b>{cmg_str}</b></span></div>
+        <div><span style="font-size:0.72rem;color:#64748B">CMG {NOMBRES_NODO.get(nodo_cmg,"Crucero 220kV")}: <b>{cmg_str}</b></span></div>
     </div>''', unsafe_allow_html=True)
 
 
@@ -454,7 +486,7 @@ for i,u in enumerate(["ANG1","ANG2","CCR1","CCR2"]):
 # ── Función gráfico por unidad ────────────────────────────────
 BG = "#FFFFFF"; GR = "#F1F5F9"
 
-def chart_unidad(unidad: str, mostrar_desviacion: bool = False):
+def chart_unidad(unidad: str, mostrar_desviacion: bool = False, nodo_label: str = "Crucero 220kV"):
     df_u  = df_r[df_r["unidad"]==unidad].sort_values("fecha_hora")
     df_up = df_p[df_p["unidad"]==unidad].sort_values("fecha_hora") if not df_p.empty else pd.DataFrame()
     c     = COLORES[unidad]
@@ -516,7 +548,7 @@ def chart_unidad(unidad: str, mostrar_desviacion: bool = False):
     if tiene_cmg:
         fig.add_trace(go.Scatter(
             x=df_c["fecha_hora"], y=df_c["cmg_usd_mwh"],
-            name="CMG Crucero", mode="lines",
+            name=f"CMG {nodo_label}", mode="lines",
             line=dict(color=COLORES["CMG"]["line"], width=3),
             hovertemplate="<b>CMG</b> %{x|%d/%m %H:%M}<br>%{y:.1f} USD/MWh<extra></extra>",
         ), row=2, col=1)
@@ -571,11 +603,11 @@ def chart_unidad(unidad: str, mostrar_desviacion: bool = False):
     st.plotly_chart(fig, use_container_width=True, config={"displayModeBar": False})
 
     if mostrar_prog and df_up.empty:
-        st.caption("💡 Sin datos de programada — ingresa valores en la sección inferior.")
+        st.caption("💡 Sin datos de programada — se importan automáticamente desde CEN PCP cada hora. El ingreso manual está disponible más abajo.")
 
 
 # ── Tabs por unidad ───────────────────────────────────────────
-st.markdown('<div class="sec">POTENCIA REAL vs PROGRAMADA + CMG CRUCERO · POR UNIDAD</div>', unsafe_allow_html=True)
+st.markdown(f'<div class="sec">POTENCIA REAL vs PROGRAMADA + CMG {NOMBRES_NODO.get(nodo_cmg,"Crucero 220kV").upper()} · POR UNIDAD</div>', unsafe_allow_html=True)
 
 # Checkbox desviación — solo si hay programada
 hay_prog_general = not df_p.empty
@@ -589,8 +621,9 @@ tabs = st.tabs([
 for tab, u in zip(tabs, ["ANG1","ANG2","CCR1","CCR2"]):
     with tab:
         c = COLORES[u]
-        st.markdown(f'<p style="color:{c["text"]};font-weight:600;font-size:0.9rem;margin-bottom:0.5rem">{LABELS[u]} · Real vs Programada (MW) + CMG Nodo Crucero (USD/MWh)</p>', unsafe_allow_html=True)
-        chart_unidad(u, mostrar_desviacion=mostrar_desv)
+        nl = NOMBRES_NODO.get(nodo_cmg, "Crucero 220kV")
+        st.markdown(f'<p style="color:{c["text"]};font-weight:600;font-size:0.9rem;margin-bottom:0.5rem">{LABELS[u]} · Real vs Programada (MW) + CMG {nl} (USD/MWh)</p>', unsafe_allow_html=True)
+        chart_unidad(u, mostrar_desviacion=mostrar_desv, nodo_label=nl)
 
 
 # ── Análisis de costo ─────────────────────────────────────────
@@ -709,7 +742,12 @@ else:
 
 
 # ── Potencia programada ───────────────────────────────────────
-st.markdown('<div class="sec">POTENCIA PROGRAMADA · INGRESO MANUAL</div>', unsafe_allow_html=True)
+st.markdown('<div class="sec">POTENCIA PROGRAMADA · CEN PCP + INGRESO MANUAL</div>', unsafe_allow_html=True)
+st.info(
+    "Los datos de programación se importan automáticamente desde la API CEN (PCP) cada hora. "
+    "El ingreso manual permite agregar o corregir valores de respaldo cuando no hay datos PCP disponibles.",
+    icon="ℹ️",
+)
 tab_p1, tab_p2 = st.tabs(["Por hora", "24 horas de una vez"])
 
 with tab_p1:
@@ -755,13 +793,14 @@ df_pv2 = load_prog(s,e)
 if not df_pv2.empty:
     df_show = df_pv2.copy()
     df_show["fecha_hora"] = pd.to_datetime(df_show["fecha_hora"]).dt.strftime("%Y-%m-%d %H:%M")
-    st.dataframe(df_show[["unidad","fecha_hora","hora","gen_programada_mw"]].rename(
-        columns={"gen_programada_mw":"MW Programado"}), use_container_width=True, hide_index=True)
+    cols_show = ["unidad","fecha_hora","hora","gen_programada_mw","fuente"] if "fuente" in df_show.columns else ["unidad","fecha_hora","hora","gen_programada_mw"]
+    st.dataframe(df_show[cols_show].rename(
+        columns={"gen_programada_mw":"MW Programado","fuente":"Fuente"}), use_container_width=True, hide_index=True)
 
     st.markdown("---")
     st.markdown("**Modificar o eliminar registro programada:**")
     # Necesitamos id — hacer query con id
-    df_prog_crud = qry("SELECT id,unidad,gen_programada_mw,fecha_hora,hora FROM generacion_programada WHERE fecha_hora::date BETWEEN %s AND %s ORDER BY unidad,fecha_hora",(s,e))
+    df_prog_crud = qry("SELECT id,unidad,gen_programada_mw,fecha_hora,hora FROM generacion_programada WHERE fecha_hora::date BETWEEN %s AND %s AND fuente='MANUAL' ORDER BY unidad,fecha_hora",(s,e))
     if not df_prog_crud.empty:
         df_prog_crud["fecha_hora"] = pd.to_datetime(df_prog_crud["fecha_hora"])
         opc_p = df_prog_crud.apply(lambda r: f"[{r['unidad']}] {r['fecha_hora'].strftime('%d/%m %H:%M')} — {r['gen_programada_mw']:.1f} MW", axis=1).tolist()

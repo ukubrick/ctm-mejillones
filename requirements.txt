@@ -6,5 +6,3 @@ pandas
 plotly
 matplotlib
 reportlab
-reportlab
-matplotlib
