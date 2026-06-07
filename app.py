@@ -75,10 +75,12 @@ span[class*="instruction"]{display:none!important;}
 span[class*="material"]{font-size:0!important;color:transparent!important;width:0!important;}
 [data-testid="stWidgetLabel"] span{font-size:0!important;}
 [data-testid="stWidgetLabel"] span[data-testid="stWidgetLabelHelpInline"]{display:none!important;}
-/* Ocultar botón collapse/expand del sidebar */
+/* Forzar sidebar siempre visible y ocultar botón collapse */
+[data-testid="stSidebar"]{display:block!important;visibility:visible!important;transform:none!important;left:0!important;min-width:244px!important;}
 [data-testid="collapsedControl"]{display:none!important;}
-button[kind="header"]{display:none!important;}
 [data-testid="stSidebarCollapseButton"]{display:none!important;}
+button[aria-label="Close sidebar"]{display:none!important;}
+button[aria-label="Open sidebar"]{display:none!important;}
 section[data-testid="stSidebar"] > div:first-child > div:first-child > button{display:none!important;}
 .kpi{background:var(--surf);border:1px solid var(--bord);border-radius:12px;padding:1.2rem 1.4rem;box-shadow:0 1px 3px rgba(0,0,0,0.06);}
 .kpi-badge{display:inline-block;font-size:0.65rem;font-weight:700;letter-spacing:0.08em;text-transform:uppercase;padding:3px 10px;border-radius:20px;margin-bottom:0.7rem;}
@@ -99,19 +101,24 @@ section[data-testid="stSidebar"] > div:first-child > div:first-child > button{di
 .stButton>button:hover{opacity:.88!important;}
 .stTabs [data-baseweb="tab-list"]{gap:4px;}
 .stTabs [data-baseweb="tab"]{border-radius:8px 8px 0 0;font-weight:600;font-family:'Inter',sans-serif;}
-/* Selectbox valor seleccionado — área principal */
-[data-testid="stSelectbox"] *{color:#0F172A!important;}
-[data-testid="stSelectbox"] [data-baseweb="select"]{background:#FFFFFF!important;}
-/* Selectbox en sidebar — mantener texto claro */
-[data-testid="stSidebar"] [data-testid="stSelectbox"] *{color:#E2E8F0!important;}
-[data-testid="stSidebar"] [data-testid="stSelectbox"] [data-baseweb="select"]{background:#0F172A!important;}
-/* Lista desplegable — portal fuera del DOM, aplica globalmente */
-[data-baseweb="popover"],[data-baseweb="popover"] *{color:#0F172A!important;background:#FFFFFF!important;}
-[data-baseweb="popover"] [role="option"]:hover,
-[data-baseweb="popover"] li:hover{background:#EFF6FF!important;color:#1E40AF!important;}
-[data-baseweb="popover"] [aria-selected="true"]{background:#DBEAFE!important;color:#1E40AF!important;}
-[data-baseweb="menu"],[data-baseweb="menu"] *{color:#0F172A!important;}
-ul[role="listbox"] li,ul[role="listbox"] *{color:#0F172A!important;background:#FFFFFF!important;}
+/* ── Selectbox: valor mostrado ── */
+[data-testid="stSelectbox"] div[data-baseweb="select"] > div{color:#0F172A!important;background:#FFFFFF!important;}
+[data-testid="stSelectbox"] div[data-baseweb="select"] span{color:#0F172A!important;}
+[data-testid="stSelectbox"] div[data-baseweb="select"] input{color:#0F172A!important;}
+/* Sidebar selectbox — texto claro sobre fondo oscuro */
+[data-testid="stSidebar"] [data-testid="stSelectbox"] div[data-baseweb="select"] > div{color:#E2E8F0!important;background:#1E293B!important;}
+[data-testid="stSidebar"] [data-testid="stSelectbox"] div[data-baseweb="select"] span{color:#E2E8F0!important;}
+/* ── Lista desplegable (portal baseweb, fuera del sidebar DOM) ── */
+[data-baseweb="popover"] ul li div,
+[data-baseweb="popover"] ul li span,
+[data-baseweb="popover"] [role="option"] div,
+[data-baseweb="popover"] [role="option"] span{color:#0F172A!important;}
+[data-baseweb="popover"] ul{background:#FFFFFF!important;}
+[data-baseweb="popover"] [role="option"]{background:#FFFFFF!important;}
+[data-baseweb="popover"] [role="option"]:hover{background:#EFF6FF!important;}
+[data-baseweb="popover"] [aria-selected="true"]{background:#DBEAFE!important;}
+/* ── Select nativo (bitácora "Ver registros" filtro) ── */
+select,select option{color:#0F172A!important;background:#FFFFFF!important;}
 </style>
 <script>
 function hideKeyboardHints() {
@@ -121,23 +128,34 @@ function hideKeyboardHints() {
 hideKeyboardHints();
 setInterval(hideKeyboardHints, 500);
 
-// Limpiar localStorage de Streamlit para forzar sidebar expandido
+// Limpiar estado colapsado de sidebar en localStorage y sessionStorage
 (function() {
     try {
-        var keys = Object.keys(localStorage);
-        keys.forEach(function(k) {
-            if (k.indexOf('sidebar') !== -1 || k.indexOf('Sidebar') !== -1) {
-                localStorage.removeItem(k);
-            }
+        [localStorage, sessionStorage].forEach(function(store) {
+            Object.keys(store).forEach(function(k) {
+                if (/sidebar|Sidebar|collapsed/i.test(k)) store.removeItem(k);
+            });
         });
-        // Forzar sidebar expandido si está colapsado
-        var sidebar = document.querySelector('[data-testid="stSidebar"]');
-        if (sidebar) {
-            sidebar.style.display = '';
-            sidebar.style.visibility = 'visible';
-            sidebar.style.width = '';
-        }
     } catch(e) {}
+})();
+
+// MutationObserver: revertir cualquier intento de Streamlit de colapsar el sidebar
+(function() {
+    function forceSidebar() {
+        var sb = document.querySelector('[data-testid="stSidebar"]');
+        if (!sb) return;
+        sb.style.setProperty('display','block','important');
+        sb.style.setProperty('visibility','visible','important');
+        sb.style.setProperty('transform','none','important');
+        sb.style.setProperty('left','0','important');
+        // Si Streamlit agrega clase de colapsado, limpiarla
+        if (sb.getAttribute('data-collapsed') === 'true') {
+            sb.setAttribute('data-collapsed','false');
+        }
+    }
+    forceSidebar();
+    var obs = new MutationObserver(forceSidebar);
+    obs.observe(document.body, {subtree:true, attributes:true, childList:true});
 })();
 </script>
 """, unsafe_allow_html=True)
