@@ -148,7 +148,6 @@ setInterval(hideKeyboardHints, 500);
         sb.style.setProperty('visibility','visible','important');
         sb.style.setProperty('transform','none','important');
         sb.style.setProperty('left','0','important');
-        // Si Streamlit agrega clase de colapsado, limpiarla
         if (sb.getAttribute('data-collapsed') === 'true') {
             sb.setAttribute('data-collapsed','false');
         }
@@ -156,6 +155,37 @@ setInterval(hideKeyboardHints, 500);
     forceSidebar();
     var obs = new MutationObserver(forceSidebar);
     obs.observe(document.body, {subtree:true, attributes:true, childList:true});
+})();
+
+// Inyectar CSS en <head> para dropdown options (mayor especificidad que variables Streamlit)
+(function injectDropdownCSS() {
+    var style = document.createElement('style');
+    style.innerHTML = [
+        '[data-baseweb="popover"] [role="option"] { color: #0F172A !important; background-color: #ffffff !important; }',
+        '[data-baseweb="popover"] [role="option"]:hover { background-color: #EFF6FF !important; color: #1E40AF !important; }',
+        '[data-baseweb="popover"] [role="option"] * { color: #0F172A !important; }',
+        '[data-baseweb="popover"] [aria-selected="true"] { background-color: #DBEAFE !important; }',
+        '[data-baseweb="popover"] [aria-selected="true"] * { color: #1E40AF !important; }',
+        '[data-baseweb="list"] { background-color: #ffffff !important; }',
+        '[data-baseweb="list"] * { color: #0F172A !important; }',
+        'ul[data-baseweb="menu"] li { color: #0F172A !important; background-color: #ffffff !important; }',
+        'ul[data-baseweb="menu"] li * { color: #0F172A !important; }',
+    ].join('\n');
+    document.head.appendChild(style);
+    // Re-aplicar cuando Streamlit monta nuevos portales
+    var obs2 = new MutationObserver(function(muts) {
+        muts.forEach(function(m) {
+            m.addedNodes.forEach(function(node) {
+                if (node.nodeType !== 1) return;
+                var opts = node.querySelectorAll ? node.querySelectorAll('[role="option"]') : [];
+                opts.forEach(function(el) {
+                    el.style.setProperty('color','#0F172A','important');
+                    el.style.setProperty('background-color','#ffffff','important');
+                });
+            });
+        });
+    });
+    obs2.observe(document.body, {childList:true, subtree:true});
 })();
 </script>
 """, unsafe_allow_html=True)
