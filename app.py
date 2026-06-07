@@ -64,7 +64,7 @@ p,span,div,label{font-family:'Inter',sans-serif!important;}
 [data-testid="stToolbar"]{display:none;}
 [data-testid="InputInstructions"]{display:none!important;}
 kbd{display:none!important;}
-/* keyboard_double fix */
+/* keyboard_double / sidebar collapse button fix */
 [role="tooltip"]{display:none!important;}
 [data-baseweb="tooltip"]{display:none!important;}
 .material-symbols-rounded{font-size:0!important;width:0!important;height:0!important;overflow:hidden!important;display:inline-block!important;}
@@ -75,6 +75,11 @@ span[class*="instruction"]{display:none!important;}
 span[class*="material"]{font-size:0!important;color:transparent!important;width:0!important;}
 [data-testid="stWidgetLabel"] span{font-size:0!important;}
 [data-testid="stWidgetLabel"] span[data-testid="stWidgetLabelHelpInline"]{display:none!important;}
+/* Ocultar botón collapse/expand del sidebar */
+[data-testid="collapsedControl"]{display:none!important;}
+button[kind="header"]{display:none!important;}
+[data-testid="stSidebarCollapseButton"]{display:none!important;}
+section[data-testid="stSidebar"] > div:first-child > div:first-child > button{display:none!important;}
 .kpi{background:var(--surf);border:1px solid var(--bord);border-radius:12px;padding:1.2rem 1.4rem;box-shadow:0 1px 3px rgba(0,0,0,0.06);}
 .kpi-badge{display:inline-block;font-size:0.65rem;font-weight:700;letter-spacing:0.08em;text-transform:uppercase;padding:3px 10px;border-radius:20px;margin-bottom:0.7rem;}
 .kpi-val{font-family:'IBM Plex Mono',monospace;font-size:2rem;font-weight:600;color:var(--txt);line-height:1;}
@@ -518,10 +523,15 @@ def chart_unidad(unidad: str, mostrar_desviacion: bool = False, nodo_label: str 
 
     # ── Programada ──
     if tiene_prog:
+        # Color oscurecido de la unidad para que la línea punteada sea legible
+        r_d = min(255, int(c["line"][1:3],16) + 40)
+        g_d = min(255, int(c["line"][3:5],16) + 30)
+        b_d = min(255, int(c["line"][5:7],16) + 50)
+        color_prog_dark = f"rgba({r_d},{g_d},{b_d},0.85)"
         fig.add_trace(go.Scatter(
             x=df_up["fecha_hora"], y=df_up["gen_programada_mw"],
             name="Programada", mode="lines",
-            line=dict(color=c["prog"], width=2.5, dash="dash"),
+            line=dict(color=color_prog_dark, width=2.2, dash="dash"),
             hovertemplate="<b>Programada</b> %{x|%d/%m %H:%M}<br>%{y:.1f} MW<extra></extra>",
         ), row=1, col=1)
 
@@ -530,16 +540,17 @@ def chart_unidad(unidad: str, mostrar_desviacion: bool = False, nodo_label: str 
             df_merge = pd.merge_asof(
                 df_u[["fecha_hora","gen_real_mw"]].sort_values("fecha_hora"),
                 df_up[["fecha_hora","gen_programada_mw"]].sort_values("fecha_hora"),
-                on="fecha_hora", direction="nearest", tolerance=pd.Timedelta("1h")
+                on="fecha_hora", direction="nearest", tolerance=pd.Timedelta("90min")
             ).dropna()
             if not df_merge.empty:
-                r_hex = c["line"][1:3]; g_hex = c["line"][3:5]; b_hex = c["line"][5:7]
-                r_int = int(r_hex,16); g_int = int(g_hex,16); b_int = int(b_hex,16)
+                r_int = int(c["line"][1:3],16)
+                g_int = int(c["line"][3:5],16)
+                b_int = int(c["line"][5:7],16)
                 fig.add_trace(go.Scatter(
                     x=pd.concat([df_merge["fecha_hora"], df_merge["fecha_hora"][::-1]]),
                     y=pd.concat([df_merge["gen_real_mw"], df_merge["gen_programada_mw"][::-1]]),
                     fill="toself",
-                    fillcolor=f"rgba({r_int},{g_int},{b_int},0.12)",
+                    fillcolor=f"rgba({r_int},{g_int},{b_int},0.15)",
                     line=dict(color="rgba(0,0,0,0)"),
                     hoverinfo="skip", showlegend=True, name="Desviación",
                 ), row=1, col=1)
@@ -691,7 +702,7 @@ if not df_c.empty:
         fig3.add_trace(go.Scatter(
             x=df_c["fecha_hora"], y=df_c["cmg_usd_mwh"],
             mode="lines", line=dict(color=COLORES["CMG"]["line"],width=2),
-            fill="tozeroy", fillcolor="rgba(124,58,237,0.06)",
+            fill="tozeroy", fillcolor="rgba(109,40,217,0.12)",
             showlegend=False,
             hovertemplate="%{x|%d/%m %H:%M}<br><b>%{y:.1f} USD/MWh</b><extra></extra>",
         ))
@@ -791,11 +802,13 @@ with tab_p2:
 
 df_pv2 = load_prog(s,e)
 if not df_pv2.empty:
-    df_show = df_pv2.copy()
-    df_show["fecha_hora"] = pd.to_datetime(df_show["fecha_hora"]).dt.strftime("%Y-%m-%d %H:%M")
-    cols_show = ["unidad","fecha_hora","hora","gen_programada_mw","fuente"] if "fuente" in df_show.columns else ["unidad","fecha_hora","hora","gen_programada_mw"]
-    st.dataframe(df_show[cols_show].rename(
-        columns={"gen_programada_mw":"MW Programado","fuente":"Fuente"}), use_container_width=True, hide_index=True)
+    show_prog_table = st.checkbox("Ver tabla de datos programados", value=False, key="show_prog_tbl")
+    if show_prog_table:
+        df_show = df_pv2.copy()
+        df_show["fecha_hora"] = pd.to_datetime(df_show["fecha_hora"]).dt.strftime("%Y-%m-%d %H:%M")
+        cols_show = ["unidad","fecha_hora","hora","gen_programada_mw","fuente"] if "fuente" in df_show.columns else ["unidad","fecha_hora","hora","gen_programada_mw"]
+        st.dataframe(df_show[cols_show].rename(
+            columns={"gen_programada_mw":"MW Programado","fuente":"Fuente"}), use_container_width=True, hide_index=True)
 
     st.markdown("---")
     st.markdown("**Modificar o eliminar registro programada:**")
