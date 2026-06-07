@@ -846,8 +846,8 @@ st.info(
 tab_p1, tab_p2 = st.tabs(["Por hora", "24 horas de una vez"])
 
 with tab_p1:
-    pc1,pc2,pc3,pc4 = st.columns(4)
-    with pc1: u_prog  = st.selectbox("Unidad",["ANG1","ANG2","CCR1","CCR2"],key="up")
+    u_prog = st.radio("Unidad", ["ANG1","ANG2","CCR1","CCR2"], key="up", horizontal=True)
+    pc2,pc3,pc4 = st.columns(3)
     with pc2: f_prog  = st.date_input("Fecha",value=hoy,max_value=hoy,key="fp")
     with pc3: h_prog  = st.number_input("Hora (1-24)",1,24,datetime.now().hour+1,key="hp")
     with pc4: mw_prog = st.number_input("MW programados",0.0,400.0,step=0.5,key="mwp")
@@ -861,9 +861,9 @@ with tab_p1:
 
 with tab_p2:
     st.caption("Selecciona unidad y fecha, luego pega los 24 valores MW separados por salto de línea (hora 1 → hora 24).")
+    u_masa = st.radio("Unidad", ["ANG1","ANG2","CCR1","CCR2"], key="um", horizontal=True)
     mc1,mc2 = st.columns([1,2])
     with mc1:
-        u_masa = st.selectbox("Unidad",["ANG1","ANG2","CCR1","CCR2"],key="um")
         f_masa = st.date_input("Fecha",value=hoy,max_value=hoy,key="fm")
         st.caption("Ejemplo formato:\n280.5\n275.3\n271.0\n...")
     with mc2:
@@ -935,7 +935,7 @@ if show_table:
 st.markdown('<div class="sec">BITÁCORA DE NOVEDADES OPERACIONALES</div>', unsafe_allow_html=True)
 tab_b1,tab_b2 = st.tabs(["Ver registros","Nueva novedad"])
 with tab_b1:
-    fu   = st.selectbox("Filtrar","Todas ANG1 ANG2 CCR1 CCR2".split(),label_visibility="collapsed")
+    fu   = st.radio("Filtrar", "Todas ANG1 ANG2 CCR1 CCR2".split(), horizontal=True, label_visibility="collapsed")
     df_b = load_bit(s,e,fu)
     if not df_b.empty:
         df_b2 = df_b.copy()
@@ -963,8 +963,8 @@ with tab_b1:
     else:
         st.info("Sin novedades para el período seleccionado.")
 with tab_b2:
-    b1,b2,b3,b4 = st.columns([1,1,1,1])
-    with b1: ub = st.selectbox("Unidad",["ANG1","ANG2","CCR1","CCR2"],key="ub")
+    ub = st.radio("Unidad", ["ANG1","ANG2","CCR1","CCR2"], key="ub", horizontal=True)
+    b2,b3,b4 = st.columns([1,1,1])
     with b2: ab = st.text_input("Autor / Turno",key="ab")
     with b3: fb = st.date_input("Fecha del evento",value=date.today(),key="fb")
     with b4: hb = st.time_input("Hora evento",value=datetime.now().time(),step=60,key="hb")
