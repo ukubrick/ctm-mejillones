@@ -920,6 +920,92 @@ if not df_pv2.empty:
                 if ok: st.success("✅ Eliminado."); st.cache_data.clear(); st.rerun()
 
 
+# ── Generación real manual (respaldo) ────────────────────────
+st.markdown('<div class="sec">GENERACIÓN REAL · INGRESO MANUAL DE RESPALDO</div>', unsafe_allow_html=True)
+st.info(
+    "Los datos de generación real se importan automáticamente desde la API CEN (SIPUB) cada hora. "
+    "El ingreso manual permite agregar o corregir valores cuando la adquisición falla. "
+    "Si ya existe un registro para esa unidad/hora, el valor se sobreescribe.",
+    icon="ℹ️",
+)
+tab_r1, tab_r2 = st.tabs(["Por hora", "24 horas de una vez"])
+
+with tab_r1:
+    u_real = st.radio("Unidad", ["ANG1","ANG2","CCR1","CCR2"], key="ur", horizontal=True)
+    rc2, rc3, rc4 = st.columns(3)
+    with rc2: f_real = st.date_input("Fecha", value=hoy, max_value=hoy, key="fr")
+    with rc3: h_real = st.number_input("Hora (1-24)", 1, 24, datetime.now().hour+1, key="hr")
+    with rc4: mw_real = st.number_input("MW reales", 0.0, 400.0, step=0.5, key="mwr")
+    if st.button("Guardar hora real", key="btn_hr"):
+        fh_r = f"{f_real} {int(h_real)-1:02d}:00:00"
+        ok = exe("""INSERT INTO generacion_real (unidad, gen_real_mw, fecha_hora, hora)
+                    VALUES (%s, %s, %s, %s)
+                    ON CONFLICT (unidad, fecha_hora) DO UPDATE SET gen_real_mw=EXCLUDED.gen_real_mw""",
+                 (u_real, mw_real, fh_r, int(h_real)))
+        if ok: st.success(f"Guardado: {LABELS[u_real]} H{h_real} → {mw_real} MW"); st.cache_data.clear(); st.rerun()
+
+with tab_r2:
+    st.caption("Selecciona unidad y fecha, luego pega los 24 valores MW separados por salto de línea (hora 1 → hora 24).")
+    u_rmasa = st.radio("Unidad", ["ANG1","ANG2","CCR1","CCR2"], key="urm", horizontal=True)
+    rm1, rm2 = st.columns([1, 2])
+    with rm1:
+        f_rmasa = st.date_input("Fecha", value=hoy, max_value=hoy, key="frm")
+        st.caption("Ejemplo formato:\n280.5\n275.3\n271.0\n...")
+    with rm2:
+        mw_rmasa = st.text_area("24 valores MW (uno por línea):", height=220, key="mwrm",
+                                placeholder="280.5\n275.3\n271.0\n268.5\n...")
+    if st.button("Guardar las 24 horas reales", key="btn_rm"):
+        try:
+            valores_r = [float(v.strip().replace(",", ".")) for v in mw_rmasa.strip().split("\n") if v.strip()]
+            if len(valores_r) != 24:
+                st.error(f"Se esperan 24 valores, se ingresaron {len(valores_r)}.")
+            else:
+                params_r = [(u_rmasa, mw, f"{f_rmasa} {h-1:02d}:00:00", h) for h, mw in enumerate(valores_r, 1)]
+                ok = exe_many("""INSERT INTO generacion_real (unidad, gen_real_mw, fecha_hora, hora)
+                                 VALUES (%s, %s, %s, %s)
+                                 ON CONFLICT (unidad, fecha_hora) DO UPDATE SET gen_real_mw=EXCLUDED.gen_real_mw""",
+                              params_r)
+                if ok: st.success(f"24 horas guardadas: {LABELS[u_rmasa]} · {f_rmasa}"); st.cache_data.clear(); st.rerun()
+        except ValueError:
+            st.error("Formato inválido. Solo números, uno por línea.")
+
+df_rv2 = load_real(s, e)
+if not df_rv2.empty:
+    show_real_table = st.checkbox("Ver tabla de datos reales", value=False, key="show_real_tbl")
+    if show_real_table:
+        df_rshow = df_rv2.copy()
+        df_rshow["fecha_hora"] = pd.to_datetime(df_rshow["fecha_hora"]).dt.strftime("%Y-%m-%d %H:%M")
+        st.dataframe(df_rshow[["unidad","fecha_hora","hora","gen_real_mw"]].rename(
+            columns={"gen_real_mw":"MW Real"}), use_container_width=True, hide_index=True)
+
+    st.markdown("---")
+    st.markdown("**Modificar o eliminar registro real:**")
+    df_real_crud = qry(
+        "SELECT id, unidad, gen_real_mw, fecha_hora, hora FROM generacion_real "
+        "WHERE fecha_hora::date BETWEEN %s AND %s ORDER BY unidad, fecha_hora", (s, e))
+    if not df_real_crud.empty:
+        df_real_crud["fecha_hora"] = pd.to_datetime(df_real_crud["fecha_hora"])
+        opc_r = df_real_crud.apply(
+            lambda r: f"[{r['unidad']}] {r['fecha_hora'].strftime('%d/%m %H:%M')} — {r['gen_real_mw']:.1f} MW",
+            axis=1).tolist()
+        idx_r = st.selectbox("Seleccionar registro real", range(len(opc_r)),
+                             format_func=lambda i: opc_r[i], key="sel_real")
+        reg_r = df_real_crud.iloc[idx_r]
+        col_er, col_dr = st.columns([2, 1])
+        with col_er:
+            new_mw_r = st.number_input("Nuevo valor MW:", value=float(reg_r["gen_real_mw"]),
+                                       min_value=0.0, max_value=400.0, step=0.5, key="edit_mw_r")
+            if st.button("Actualizar MW real", key="upd_real"):
+                ok = exe("UPDATE generacion_real SET gen_real_mw=%s WHERE id=%s",
+                         (new_mw_r, int(reg_r["id"])))
+                if ok: st.success("✅ Actualizado."); st.cache_data.clear(); st.rerun()
+        with col_dr:
+            st.markdown("<br>", unsafe_allow_html=True)
+            if st.button("Eliminar", key="del_real", type="primary"):
+                ok = exe("DELETE FROM generacion_real WHERE id=%s", (int(reg_r["id"]),))
+                if ok: st.success("✅ Eliminado."); st.cache_data.clear(); st.rerun()
+
+
 # ── Datos horarios ────────────────────────────────────────────
 st.markdown('<div class="sec">DATOS HORARIOS</div>', unsafe_allow_html=True)
 show_table = st.checkbox("Ver tabla completa", value=False)
