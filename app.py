@@ -99,19 +99,19 @@ section[data-testid="stSidebar"] > div:first-child > div:first-child > button{di
 .stButton>button:hover{opacity:.88!important;}
 .stTabs [data-baseweb="tab-list"]{gap:4px;}
 .stTabs [data-baseweb="tab"]{border-radius:8px 8px 0 0;font-weight:600;font-family:'Inter',sans-serif;}
-/* Selectbox — texto legible en área principal y sidebar */
-[data-testid="stSelectbox"] [data-baseweb="select"] div,
-[data-testid="stSelectbox"] [data-baseweb="select"] span,
-[data-testid="stSelectbox"] [data-baseweb="select"] input{color:#0F172A!important;}
-[data-testid="stSidebar"] [data-testid="stSelectbox"] [data-baseweb="select"] div,
-[data-testid="stSidebar"] [data-testid="stSelectbox"] [data-baseweb="select"] span{color:#E2E8F0!important;}
-/* Dropdown list (se renderiza fuera del sidebar en un portal) */
-[data-baseweb="popover"] li,
-[data-baseweb="popover"] [role="option"],
-[data-baseweb="menu"] li,
-[data-baseweb="menu"] [role="option"]{color:#0F172A!important;background:#FFFFFF!important;}
-[data-baseweb="popover"] li:hover,
-[data-baseweb="popover"] [role="option"]:hover{background:#EFF6FF!important;}
+/* Selectbox valor seleccionado — área principal */
+[data-testid="stSelectbox"] *{color:#0F172A!important;}
+[data-testid="stSelectbox"] [data-baseweb="select"]{background:#FFFFFF!important;}
+/* Selectbox en sidebar — mantener texto claro */
+[data-testid="stSidebar"] [data-testid="stSelectbox"] *{color:#E2E8F0!important;}
+[data-testid="stSidebar"] [data-testid="stSelectbox"] [data-baseweb="select"]{background:#0F172A!important;}
+/* Lista desplegable — portal fuera del DOM, aplica globalmente */
+[data-baseweb="popover"],[data-baseweb="popover"] *{color:#0F172A!important;background:#FFFFFF!important;}
+[data-baseweb="popover"] [role="option"]:hover,
+[data-baseweb="popover"] li:hover{background:#EFF6FF!important;color:#1E40AF!important;}
+[data-baseweb="popover"] [aria-selected="true"]{background:#DBEAFE!important;color:#1E40AF!important;}
+[data-baseweb="menu"],[data-baseweb="menu"] *{color:#0F172A!important;}
+ul[role="listbox"] li,ul[role="listbox"] *{color:#0F172A!important;background:#FFFFFF!important;}
 </style>
 <script>
 function hideKeyboardHints() {
@@ -120,6 +120,25 @@ function hideKeyboardHints() {
 }
 hideKeyboardHints();
 setInterval(hideKeyboardHints, 500);
+
+// Limpiar localStorage de Streamlit para forzar sidebar expandido
+(function() {
+    try {
+        var keys = Object.keys(localStorage);
+        keys.forEach(function(k) {
+            if (k.indexOf('sidebar') !== -1 || k.indexOf('Sidebar') !== -1) {
+                localStorage.removeItem(k);
+            }
+        });
+        // Forzar sidebar expandido si está colapsado
+        var sidebar = document.querySelector('[data-testid="stSidebar"]');
+        if (sidebar) {
+            sidebar.style.display = '';
+            sidebar.style.visibility = 'visible';
+            sidebar.style.width = '';
+        }
+    } catch(e) {}
+})();
 </script>
 """, unsafe_allow_html=True)
 
