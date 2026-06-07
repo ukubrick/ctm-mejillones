@@ -99,6 +99,19 @@ section[data-testid="stSidebar"] > div:first-child > div:first-child > button{di
 .stButton>button:hover{opacity:.88!important;}
 .stTabs [data-baseweb="tab-list"]{gap:4px;}
 .stTabs [data-baseweb="tab"]{border-radius:8px 8px 0 0;font-weight:600;font-family:'Inter',sans-serif;}
+/* Selectbox — texto legible en área principal y sidebar */
+[data-testid="stSelectbox"] [data-baseweb="select"] div,
+[data-testid="stSelectbox"] [data-baseweb="select"] span,
+[data-testid="stSelectbox"] [data-baseweb="select"] input{color:#0F172A!important;}
+[data-testid="stSidebar"] [data-testid="stSelectbox"] [data-baseweb="select"] div,
+[data-testid="stSidebar"] [data-testid="stSelectbox"] [data-baseweb="select"] span{color:#E2E8F0!important;}
+/* Dropdown list (se renderiza fuera del sidebar en un portal) */
+[data-baseweb="popover"] li,
+[data-baseweb="popover"] [role="option"],
+[data-baseweb="menu"] li,
+[data-baseweb="menu"] [role="option"]{color:#0F172A!important;background:#FFFFFF!important;}
+[data-baseweb="popover"] li:hover,
+[data-baseweb="popover"] [role="option"]:hover{background:#EFF6FF!important;}
 </style>
 <script>
 function hideKeyboardHints() {
@@ -537,18 +550,21 @@ def chart_unidad(unidad: str, mostrar_desviacion: bool = False, nodo_label: str 
 
         # ── Área de desviación ──
         if mostrar_desviacion:
-            df_merge = pd.merge_asof(
-                df_u[["fecha_hora","gen_real_mw"]].sort_values("fecha_hora"),
-                df_up[["fecha_hora","gen_programada_mw"]].sort_values("fecha_hora"),
-                on="fecha_hora", direction="nearest", tolerance=pd.Timedelta("90min")
-            ).dropna()
+            # Reindexar ambas series al mismo índice horario para evitar huecos
+            idx_real = df_u.set_index("fecha_hora")["gen_real_mw"]
+            idx_prog = df_up.set_index("fecha_hora")["gen_programada_mw"]
+            idx_com  = idx_real.index.union(idx_prog.index)
+            real_ri  = idx_real.reindex(idx_com).interpolate("time")
+            prog_ri  = idx_prog.reindex(idx_com).interpolate("time")
+            df_merge = pd.DataFrame({"real": real_ri, "prog": prog_ri}).dropna()
             if not df_merge.empty:
                 r_int = int(c["line"][1:3],16)
                 g_int = int(c["line"][3:5],16)
                 b_int = int(c["line"][5:7],16)
+                ts = df_merge.index.tolist()
                 fig.add_trace(go.Scatter(
-                    x=pd.concat([df_merge["fecha_hora"], df_merge["fecha_hora"][::-1]]),
-                    y=pd.concat([df_merge["gen_real_mw"], df_merge["gen_programada_mw"][::-1]]),
+                    x=ts + ts[::-1],
+                    y=df_merge["real"].tolist() + df_merge["prog"].tolist()[::-1],
                     fill="toself",
                     fillcolor=f"rgba({r_int},{g_int},{b_int},0.15)",
                     line=dict(color="rgba(0,0,0,0)"),
@@ -560,7 +576,8 @@ def chart_unidad(unidad: str, mostrar_desviacion: bool = False, nodo_label: str 
         fig.add_trace(go.Scatter(
             x=df_c["fecha_hora"], y=df_c["cmg_usd_mwh"],
             name=f"CMG {nodo_label}", mode="lines",
-            line=dict(color=COLORES["CMG"]["line"], width=3),
+            line=dict(color=COLORES["CMG"]["line"], width=2),
+            fill="tozeroy", fillcolor="rgba(109,40,217,0.10)",
             hovertemplate="<b>CMG</b> %{x|%d/%m %H:%M}<br>%{y:.1f} USD/MWh<extra></extra>",
         ), row=2, col=1)
         prom_cmg = df_c["cmg_usd_mwh"].mean()
