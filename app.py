@@ -482,12 +482,13 @@ with st.sidebar:
     mostrar_cmg  = st.checkbox("Mostrar CMG en gráficos", value=True)
     nodo_cmg = "CRUCERO_______220"
     if mostrar_cmg:
-        nodo_cmg = st.selectbox(
+        nodo_sel = st.radio(
             "Nodo CMG",
             list(NOMBRES_NODO.keys()),
             format_func=lambda x: NOMBRES_NODO[x],
             key="nodo_cmg_sel",
         )
+        nodo_cmg = nodo_sel
     st.markdown("---")
     if st.button("Actualizar datos"):
         st.cache_data.clear(); st.rerun()
