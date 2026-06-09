@@ -5,9 +5,11 @@ Fuentes de datos:
   · Generación real        → API CEN SIPUB /generacion-real/v3
   · Generación programada  → API CEN SIPUB /generacion-programada-pcp/v4
   · CMG nodos CTM          → JSON S3 público del portal CEN (~15 min)
+  · SSCC instrucciones     → API CEN Operaciones /servicios-complementarios/v1
 
 Variables de entorno (.env o GitHub Secrets):
   CEN_USER_KEY   → portal.api.coordinador.cl (plan SIP)
+  CEN_OPS_KEY    → operacion.api.coordinador.cl (plan Operaciones)
   DATABASE_URL   → postgresql://... (Supabase)
 ────────────────────────────────────────────────────────────────
 """
@@ -21,11 +23,13 @@ from dotenv import load_dotenv
 load_dotenv()
 
 CEN_USER_KEY = os.getenv("CEN_USER_KEY", "")
+CEN_OPS_KEY  = os.getenv("CEN_OPS_KEY", "")
 DATABASE_URL = os.getenv("DATABASE_URL", "")
 TZ_CHILE     = ZoneInfo("America/Santiago")
 
-# ── Constantes API CEN SIP ────────────────────────────────────
+# ── Constantes API CEN ────────────────────────────────────────
 API_BASE_SIP = "https://sipub.api.coordinador.cl"
+API_BASE_OPS = "https://operacion.api.coordinador.cl"
 ID_ANGAMOS   = 377
 ID_COCHRANE  = 379
 
@@ -63,6 +67,14 @@ CMG_S3_HEADERS = {
 CMG_NODOS = {
     "CRUCERO_______220": "crucero",
     "TARAPACA______220": "tarapaca",
+}
+
+# Mapeo centralUnidad → código interno (confirmado en API Operaciones 2026-06-09)
+LLAVES_SSCC = {
+    "ANGAMOS-ANG1": "ANG1",
+    "ANGAMOS-ANG2": "ANG2",
+    "COCHRANE-CCH1": "CCR1",
+    "COCHRANE-CCH2": "CCR2",
 }
 
 DIAS_VENTANA = 2   # días hacia atrás para gen. real y programada
@@ -416,6 +428,99 @@ def upsert_cmg(registros: list[dict]) -> tuple[int, int]:
     return nuevos, actualizados
 
 
+def fetch_sscc(fecha: str) -> list[dict]:
+    """
+    Trae instrucciones SSCC de ANG1/2 CCR1/2 desde la API CEN Operaciones.
+    Endpoint: /servicios-complementarios/v1 (pageSize=-1 para traer todo en una sola llamada).
+    """
+    if not CEN_OPS_KEY:
+        log.warning("  CEN_OPS_KEY no configurada — saltando SSCC")
+        return []
+
+    registros = []
+    try:
+        r = _get_with_retry(
+            f"{API_BASE_OPS}/servicios-complementarios/v1",
+            params={"user_key": CEN_OPS_KEY, "initDate": fecha, "endDate": fecha,
+                    "page": 0, "pageSize": -1},
+            timeout=30,
+        )
+        content = r.json().get("content", [])
+        log.info(f"  SSCC: {len(content)} registros totales del sistema")
+
+        for rec in content:
+            unidad_api = rec.get("centralUnidad", "") or ""
+            unidad = LLAVES_SSCC.get(unidad_api)
+            if unidad is None:
+                continue
+            registros.append({
+                "fecha":               rec.get("fecha"),
+                "inicio_periodo":      rec.get("inicioPeriodo"),
+                "fin_periodo":         rec.get("finPeriodo"),
+                "instruccion_sscc":    rec.get("instruccionSscc"),
+                "id_configuracion":    rec.get("idConfiguracion"),
+                "central_subestacion": rec.get("centralSubestacion"),
+                "central_unidad":      unidad_api,
+                "unidad":              unidad,
+                "configuracion_panio": rec.get("configuracionPanio"),
+                "barra_ct":            rec.get("barraCt"),
+                "disponibilidad":      rec.get("disponibilidad"),
+                "baja":                rec.get("baja"),
+                "sube":                rec.get("sube"),
+                "unidad_medida":       rec.get("unidadMedida"),
+                "motivo":              rec.get("motivo"),
+                "comentario":          rec.get("comentario"),
+                "estado_sabana":       rec.get("estadoSabana"),
+                "sabana":              rec.get("sabana"),
+                "fecha_accion":        rec.get("fechaAccion"),
+                "usuario":             rec.get("usuario"),
+            })
+
+        log.info(f"  SSCC ANG/CCR ({fecha}): {len(registros)} registros")
+    except Exception as e:
+        log.error(f"  Error SSCC: {e}")
+
+    return registros
+
+
+def upsert_sscc(registros: list[dict]) -> tuple[int, int]:
+    if not registros:
+        return 0, 0
+    sql = """
+        INSERT INTO sscc_instrucciones
+            (fecha, inicio_periodo, fin_periodo, instruccion_sscc, id_configuracion,
+             central_subestacion, central_unidad, unidad, configuracion_panio, barra_ct,
+             disponibilidad, baja, sube, unidad_medida, motivo, comentario,
+             estado_sabana, sabana, fecha_accion, usuario)
+        VALUES
+            (%(fecha)s, %(inicio_periodo)s, %(fin_periodo)s, %(instruccion_sscc)s,
+             %(id_configuracion)s, %(central_subestacion)s, %(central_unidad)s, %(unidad)s,
+             %(configuracion_panio)s, %(barra_ct)s, %(disponibilidad)s, %(baja)s, %(sube)s,
+             %(unidad_medida)s, %(motivo)s, %(comentario)s, %(estado_sabana)s, %(sabana)s,
+             %(fecha_accion)s, %(usuario)s)
+        ON CONFLICT (fecha, id_configuracion, instruccion_sscc, inicio_periodo)
+        DO UPDATE SET
+            fin_periodo        = EXCLUDED.fin_periodo,
+            disponibilidad     = EXCLUDED.disponibilidad,
+            estado_sabana      = EXCLUDED.estado_sabana,
+            comentario         = EXCLUDED.comentario,
+            fecha_accion       = EXCLUDED.fecha_accion,
+            usuario            = EXCLUDED.usuario
+    """
+    nuevos = actualizados = 0
+    try:
+        with get_conn() as conn:
+            with conn.cursor() as cur:
+                for rec in registros:
+                    cur.execute(sql, rec)
+                    if cur.rowcount == 1: nuevos      += 1
+                    else:                actualizados += 1
+            conn.commit()
+    except Exception as e:
+        log.error(f"  Error upsert SSCC: {e}")
+    return nuevos, actualizados
+
+
 def log_adquisicion(endpoint, fecha, nuevos, dupes, duracion_ms, error=None):
     sql = """
         INSERT INTO log_adquisicion
@@ -495,6 +600,20 @@ def run():
         err_str = str(e); log.error(f"  ❌ CMG: {e}"); nuevos = actualizados = 0
     log_adquisicion("cmg_nodos_s3", hoy.strftime("%Y-%m-%d"), nuevos, actualizados,
                     int((time.time() - t0) * 1000), err_str)
+
+    # ── SSCC instrucciones (ventana de días) ──────────────────
+    for fecha in fechas:
+        log.info(f"\n  ── SSCC instrucciones {fecha}")
+        t0 = time.time()
+        err_str = None
+        try:
+            regs_sscc            = fetch_sscc(fecha)
+            nuevos, actualizados = upsert_sscc(regs_sscc)
+            log.info(f"  ✅ SSCC: {nuevos} nuevos, {actualizados} actualizados")
+        except Exception as e:
+            err_str = str(e); log.error(f"  ❌ SSCC: {e}"); nuevos = actualizados = 0
+        log_adquisicion("sscc_instrucciones", fecha, nuevos, actualizados,
+                        int((time.time() - t0) * 1000), err_str)
 
     log.info(f"\n  Fin adquisición\n")
 

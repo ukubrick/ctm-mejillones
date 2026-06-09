@@ -439,6 +439,17 @@ def load_cmg(s, e, nodo="CRUCERO_______220"):
     if not df.empty: df["fecha_hora"]=pd.to_datetime(df["fecha_hora"])
     return df
 
+@st.cache_data(ttl=300)
+def load_sscc(s, e):
+    return qry(
+        "SELECT unidad, instruccion_sscc, fecha, inicio_periodo, fin_periodo, "
+        "disponibilidad, motivo, comentario, estado_sabana "
+        "FROM sscc_instrucciones "
+        "WHERE fecha BETWEEN %s AND %s "
+        "ORDER BY fecha DESC, unidad, inicio_periodo",
+        (s, e),
+    )
+
 @st.cache_data(ttl=60)
 def load_bit(s,e,u=None):
     if u and u!="Todas":
@@ -1062,3 +1073,83 @@ with tab_b2:
                      (ub,ab.strip(),cb.strip(),str(fb),str(hb)))
             if ok: st.success("Novedad guardada."); st.cache_data.clear(); st.rerun()
         else: st.warning("Completa autor y comentario.")
+
+
+# ── Servicios Complementarios (SSCC) ─────────────────────────
+st.markdown('<div class="sec">SERVICIOS COMPLEMENTARIOS (SSCC)</div>', unsafe_allow_html=True)
+
+COLORES_SSCC = {
+    "CSF(+)": "#16A34A", "CSF(-)": "#0891B2",
+    "CPF(+)": "#6D28D9", "CPF(-)": "#D97706",
+    "CT":     "#64748B",
+}
+BADGE_SSCC = {
+    "CSF(+)": "#DCFCE7", "CSF(-)": "#CFFAFE",
+    "CPF(+)": "#EDE9FE", "CPF(-)": "#FEF3C7",
+    "CT":     "#F1F5F9",
+}
+
+df_sscc = load_sscc(s, e)
+
+if df_sscc.empty:
+    st.info("Sin datos SSCC para el período seleccionado. Los datos se adquieren automáticamente cada hora.", icon="ℹ️")
+else:
+    # KPIs resumen
+    total_instr  = len(df_sscc)
+    unidades_act = df_sscc["unidad"].nunique()
+    tipos_act    = df_sscc["instruccion_sscc"].nunique()
+    dias_con_dat = df_sscc["fecha"].nunique()
+
+    k1, k2, k3, k4 = st.columns(4)
+    k1.metric("Instrucciones totales", total_instr)
+    k2.metric("Unidades con SSCC",     f"{unidades_act} / 4")
+    k3.metric("Tipos de servicio",     tipos_act)
+    k4.metric("Días con datos",        dias_con_dat)
+
+    st.markdown("")
+
+    # Tabla de instrucciones por unidad
+    tab_s1, tab_s2 = st.tabs(["Por unidad", "Tabla completa"])
+
+    with tab_s1:
+        cols_unit = st.columns(4)
+        for col, unidad in zip(cols_unit, ["ANG1","ANG2","CCR1","CCR2"]):
+            df_u = df_sscc[df_sscc["unidad"] == unidad]
+            with col:
+                st.markdown(f"**{LABELS[unidad]}**")
+                if df_u.empty:
+                    st.caption("Sin instrucciones")
+                else:
+                    for _, row in df_u.iterrows():
+                        tipo  = str(row["instruccion_sscc"])
+                        color = COLORES_SSCC.get(tipo, "#64748B")
+                        bg    = BADGE_SSCC.get(tipo, "#F1F5F9")
+                        ini   = str(row["inicio_periodo"])[:5] if row["inicio_periodo"] else "—"
+                        fin   = str(row["fin_periodo"])[:5]    if row["fin_periodo"]    else "—"
+                        fecha = str(row["fecha"])
+                        st.markdown(
+                            f'<div style="border:1px solid {color}33;border-left:3px solid {color};'
+                            f'background:{bg};border-radius:6px;padding:6px 10px;margin-bottom:6px;">'
+                            f'<span style="font-weight:700;color:{color};font-size:0.8rem">{tipo}</span>'
+                            f'<span style="color:#64748B;font-size:0.72rem;float:right">{fecha}</span><br>'
+                            f'<span style="color:#475569;font-size:0.72rem">{ini} → {fin}</span>'
+                            f'</div>',
+                            unsafe_allow_html=True,
+                        )
+
+    with tab_s2:
+        df_show_sscc = df_sscc.copy()
+        df_show_sscc["inicio"] = df_show_sscc["inicio_periodo"].astype(str).str[:5]
+        df_show_sscc["fin"]    = df_show_sscc["fin_periodo"].astype(str).str[:5]
+        df_show_sscc["motivo"] = df_show_sscc["motivo"].fillna("").str[:80]
+        st.dataframe(
+            df_show_sscc[["fecha","unidad","instruccion_sscc","inicio","fin","disponibilidad","motivo","estado_sabana"]].rename(columns={
+                "instruccion_sscc": "Instrucción",
+                "inicio":           "Inicio",
+                "fin":              "Fin",
+                "disponibilidad":   "Disp. MW",
+                "motivo":           "Motivo",
+                "estado_sabana":    "Estado",
+            }),
+            use_container_width=True, hide_index=True,
+        )

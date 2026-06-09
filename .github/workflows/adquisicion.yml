@@ -27,6 +27,7 @@ jobs:
       - name: Ejecutar adquisicion.py
         env:
           CEN_USER_KEY: ${{ secrets.CEN_USER_KEY }}
+          CEN_OPS_KEY:  ${{ secrets.CEN_OPS_KEY }}
           DATABASE_URL:  ${{ secrets.DATABASE_URL }}
         run: python3 Adquisicion.py
 
