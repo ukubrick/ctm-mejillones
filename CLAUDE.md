@@ -26,9 +26,9 @@ Adquisición automática vía GitHub Actions cada hora (minuto 5 UTC).
 
 ## Archivos principales
 
-- `app.py` — Dashboard Streamlit v5 (~1050 líneas)
+- `app.py` — Dashboard Streamlit v5 (~1300 líneas)
 - `Adquisicion.py` — Script de adquisición (~620 líneas)
-- `requirements.txt` — requests, psycopg2-binary, python-dotenv, streamlit, pandas, plotly, matplotlib, reportlab
+- `requirements.txt` — requests, psycopg2-binary, python-dotenv, streamlit, pandas, plotly, matplotlib, reportlab, **streamlit-autorefresh**
 - `.github/workflows/adquisicion.yml` — cron "5 * * * *", timeout 35 min
 - `backfill_programada.py` — script de recuperación manual de gen. programada (uso: `python3 backfill_programada.py YYYY-MM-DD YYYY-MM-DD`)
 
@@ -162,6 +162,10 @@ Todo implementado y funcionando en producción:
 - ✅ Timezone Chile en Adquisicion.py
 - ✅ DISTINCT ON para programada priorizando CEN_PCP sobre MANUAL
 - ✅ Workflow timeout 35 min (PCP tarda ~12 min/día)
+- ✅ Auto-refresh horario (`streamlit-autorefresh`, 3600000 ms) — recarga automática y previene sleep de Streamlit Cloud
+- ✅ Sección SSCC ubicada después de CMG, con guía desplegable (`<details>/<summary>` HTML nativo), KPIs, tabs Por unidad / Estadísticas / Tabla completa
+- ✅ Footer: "Dashboard creado por Erick Herrera"
+- ✅ Backfill gen. programada 05–09 junio 2026 completado (3115 registros recuperados)
 
 ---
 
@@ -171,3 +175,4 @@ Todo implementado y funcionando en producción:
 - **Instrucciones operacionales SSCC** (`/instrucciones-operacionales-sscc/v4/findByDate`, SIP) — mismo estado, 502 ese día.
 - **Stock combustible** (`/stock-combustible/v4/findByDate`, SIP) — retorna 404 consistente, posible endpoint inactivo o requiere parámetros distintos.
 - **Optimización PCP:** actualmente se hacen 2 consultas separadas (una por día en DIAS_VENTANA). Podría hacerse una sola con rango de 2 días para reducir tiempo de ~24 min a ~12 min.
+- **Limitaciones/estado operativo unidades:** `/operativos/v1/estados` (Operaciones) sólo retorna catálogo de 21 tipos de estado (LP, LF, LC, DLP, etc.), no el estado actual por unidad. Los módulos referenciados (`desconexion_intervencion`, `informe_fallas`, `limitaciones`) tienen rutas propias aún no identificadas. Angamos ID=377, Cochrane ID=379.

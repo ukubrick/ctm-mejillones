@@ -1287,3 +1287,11 @@ with tab_b2:
                      (ub,ab.strip(),cb.strip(),str(fb),str(hb)))
             if ok: st.success("Novedad guardada."); st.cache_data.clear(); st.rerun()
         else: st.warning("Completa autor y comentario.")
+
+# ── Footer ───────────────────────────────────────────────────────
+st.markdown("""
+<div style="margin-top:3rem;padding-top:1rem;border-top:1px solid #E2E8F0;
+            text-align:center;font-size:0.78rem;color:#94A3B8;">
+    Dashboard creado por <strong style="color:#64748B;">Erick Herrera</strong>
+</div>
+""", unsafe_allow_html=True)
