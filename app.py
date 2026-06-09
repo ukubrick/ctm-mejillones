@@ -861,7 +861,7 @@ BADGE_SSCC = {
     "CPF(+)": "#EDE9FE", "CPF(-)": "#FEF3C7",
     "CT":     "#F1F5F9",
 }
-with st.expander("ℹ️ Guía de instrucciones SSCC (CSF, CPF, CT)", expanded=False):
+with st.expander("Guía de instrucciones SSCC — CSF, CPF, CT", expanded=False):
     st.markdown("""
 Los **Servicios Complementarios (SSCC)** son prestaciones que el Coordinador Eléctrico Nacional instruye
 a las unidades generadoras para mantener la seguridad y calidad del Sistema Eléctrico Nacional,
