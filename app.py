@@ -861,15 +861,7 @@ BADGE_SSCC = {
     "CPF(+)": "#EDE9FE", "CPF(-)": "#FEF3C7",
     "CT":     "#F1F5F9",
 }
-DESC_SSCC = {
-    "CSF(+)": "Control Secundario de Frecuencia — subida (aumentar potencia para regular frecuencia)",
-    "CSF(-)": "Control Secundario de Frecuencia — bajada (reducir potencia para regular frecuencia)",
-    "CPF(+)": "Control Primario de Frecuencia — subida (respuesta rápida ante caída de frecuencia)",
-    "CPF(-)": "Control Primario de Frecuencia — bajada (respuesta rápida ante alza de frecuencia)",
-    "CT":     "Control de Tensión (regulación de tensión en barra)",
-}
-
-with st.expander("¿Qué son los SSCC y cómo leer estas instrucciones?", expanded=False):
+with st.expander("ℹ️ Guía de instrucciones SSCC (CSF, CPF, CT)", expanded=False):
     st.markdown("""
 Los **Servicios Complementarios (SSCC)** son prestaciones que el Coordinador Eléctrico Nacional instruye
 a las unidades generadoras para mantener la seguridad y calidad del Sistema Eléctrico Nacional,
