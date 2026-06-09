@@ -5,6 +5,7 @@ eje X visible, títulos separados, programada visible
 """
 
 import streamlit as st
+from streamlit_autorefresh import st_autorefresh
 import pandas as pd
 import psycopg2
 import plotly.graph_objects as go
@@ -27,6 +28,9 @@ st.set_page_config(
     page_icon="⚡",
     initial_sidebar_state="expanded",
 )
+
+# Auto-refresh cada 60 minutos (3600000 ms) — mantiene la app despierta y datos frescos
+st_autorefresh(interval=3_600_000, limit=None, key="autorefresh_horario")
 
 # Paleta AES: púrpura → azul → cyan → verde (logo AES)
 COLORES = {
@@ -861,24 +865,32 @@ BADGE_SSCC = {
     "CPF(+)": "#EDE9FE", "CPF(-)": "#FEF3C7",
     "CT":     "#F1F5F9",
 }
-with st.expander("Guía de instrucciones SSCC — CSF, CPF, CT", expanded=False):
-    st.markdown("""
-Los **Servicios Complementarios (SSCC)** son prestaciones que el Coordinador Eléctrico Nacional instruye
+st.markdown("""
+<details style="background:#F8FAFC;border:1px solid #E2E8F0;border-radius:8px;padding:0.7rem 1rem;margin-bottom:1rem;">
+<summary style="cursor:pointer;font-weight:600;color:#334155;font-size:0.9rem;">Guía de instrucciones SSCC — CSF, CPF, CT</summary>
+<div style="margin-top:0.8rem;font-size:0.88rem;color:#475569;line-height:1.6;">
+<p>Los <strong>Servicios Complementarios (SSCC)</strong> son prestaciones que el Coordinador Eléctrico Nacional instruye
 a las unidades generadoras para mantener la seguridad y calidad del Sistema Eléctrico Nacional,
-más allá de su generación de energía.
-
-| Instrucción | Significado |
-|-------------|-------------|
-| **CSF(+)** | Control Secundario de Frecuencia en **subida** — la unidad debe estar disponible para aumentar potencia y corregir la frecuencia del sistema |
-| **CSF(−)** | Control Secundario de Frecuencia en **bajada** — la unidad debe estar disponible para reducir potencia |
-| **CPF(+)** | Control Primario de Frecuencia en **subida** — respuesta automática e inmediata ante caída de frecuencia |
-| **CPF(−)** | Control Primario de Frecuencia en **bajada** — respuesta automática ante alza de frecuencia |
-| **CT**     | Control de **Tensión** — regulación de tensión reactiva en la barra de conexión |
-
-Cada instrucción indica un **período de prestación** (inicio → fin) durante el cual la unidad debe
-mantener una reserva de potencia disponible para activación. El campo **Disp. MW** indica la capacidad
-comprometida cuando está declarada.
-""")
+más allá de su generación de energía.</p>
+<table style="width:100%;border-collapse:collapse;margin:0.5rem 0;">
+<thead><tr style="background:#E2E8F0;">
+<th style="padding:6px 12px;text-align:left;font-size:0.82rem;">Instrucción</th>
+<th style="padding:6px 12px;text-align:left;font-size:0.82rem;">Significado</th>
+</tr></thead>
+<tbody>
+<tr><td style="padding:5px 12px;border-top:1px solid #E2E8F0;"><strong>CSF(+)</strong></td><td style="padding:5px 12px;border-top:1px solid #E2E8F0;">Control Secundario de Frecuencia en <strong>subida</strong> — la unidad debe estar disponible para aumentar potencia y corregir la frecuencia del sistema</td></tr>
+<tr><td style="padding:5px 12px;border-top:1px solid #E2E8F0;"><strong>CSF(−)</strong></td><td style="padding:5px 12px;border-top:1px solid #E2E8F0;">Control Secundario de Frecuencia en <strong>bajada</strong> — la unidad debe estar disponible para reducir potencia</td></tr>
+<tr><td style="padding:5px 12px;border-top:1px solid #E2E8F0;"><strong>CPF(+)</strong></td><td style="padding:5px 12px;border-top:1px solid #E2E8F0;">Control Primario de Frecuencia en <strong>subida</strong> — respuesta automática e inmediata ante caída de frecuencia</td></tr>
+<tr><td style="padding:5px 12px;border-top:1px solid #E2E8F0;"><strong>CPF(−)</strong></td><td style="padding:5px 12px;border-top:1px solid #E2E8F0;">Control Primario de Frecuencia en <strong>bajada</strong> — respuesta automática ante alza de frecuencia</td></tr>
+<tr><td style="padding:5px 12px;border-top:1px solid #E2E8F0;"><strong>CT</strong></td><td style="padding:5px 12px;border-top:1px solid #E2E8F0;">Control de <strong>Tensión</strong> — regulación de tensión reactiva en la barra de conexión</td></tr>
+</tbody>
+</table>
+<p>Cada instrucción indica un <strong>período de prestación</strong> (inicio → fin) durante el cual la unidad debe
+mantener una reserva de potencia disponible para activación. El campo <strong>Disp. MW</strong> indica la capacidad
+comprometida cuando está declarada.</p>
+</div>
+</details>
+""", unsafe_allow_html=True)
 
 df_sscc = load_sscc(s, e)
 
