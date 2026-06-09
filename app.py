@@ -848,6 +848,216 @@ else:
     st.info("Sin datos de CMG para calcular estadísticos de costo.")
 
 
+# ── Servicios Complementarios (SSCC) ─────────────────────────
+st.markdown('<div class="sec">SERVICIOS COMPLEMENTARIOS (SSCC)</div>', unsafe_allow_html=True)
+
+COLORES_SSCC = {
+    "CSF(+)": "#16A34A", "CSF(-)": "#0891B2",
+    "CPF(+)": "#6D28D9", "CPF(-)": "#D97706",
+    "CT":     "#64748B",
+}
+BADGE_SSCC = {
+    "CSF(+)": "#DCFCE7", "CSF(-)": "#CFFAFE",
+    "CPF(+)": "#EDE9FE", "CPF(-)": "#FEF3C7",
+    "CT":     "#F1F5F9",
+}
+DESC_SSCC = {
+    "CSF(+)": "Control Secundario de Frecuencia — subida (aumentar potencia para regular frecuencia)",
+    "CSF(-)": "Control Secundario de Frecuencia — bajada (reducir potencia para regular frecuencia)",
+    "CPF(+)": "Control Primario de Frecuencia — subida (respuesta rápida ante caída de frecuencia)",
+    "CPF(-)": "Control Primario de Frecuencia — bajada (respuesta rápida ante alza de frecuencia)",
+    "CT":     "Control de Tensión (regulación de tensión en barra)",
+}
+
+with st.expander("¿Qué son los SSCC y cómo leer estas instrucciones?", expanded=False):
+    st.markdown("""
+Los **Servicios Complementarios (SSCC)** son prestaciones que el Coordinador Eléctrico Nacional instruye
+a las unidades generadoras para mantener la seguridad y calidad del Sistema Eléctrico Nacional,
+más allá de su generación de energía.
+
+| Instrucción | Significado |
+|-------------|-------------|
+| **CSF(+)** | Control Secundario de Frecuencia en **subida** — la unidad debe estar disponible para aumentar potencia y corregir la frecuencia del sistema |
+| **CSF(−)** | Control Secundario de Frecuencia en **bajada** — la unidad debe estar disponible para reducir potencia |
+| **CPF(+)** | Control Primario de Frecuencia en **subida** — respuesta automática e inmediata ante caída de frecuencia |
+| **CPF(−)** | Control Primario de Frecuencia en **bajada** — respuesta automática ante alza de frecuencia |
+| **CT**     | Control de **Tensión** — regulación de tensión reactiva en la barra de conexión |
+
+Cada instrucción indica un **período de prestación** (inicio → fin) durante el cual la unidad debe
+mantener una reserva de potencia disponible para activación. El campo **Disp. MW** indica la capacidad
+comprometida cuando está declarada.
+""")
+
+df_sscc = load_sscc(s, e)
+
+if df_sscc.empty:
+    st.info("Sin datos SSCC para el período seleccionado. Los datos se adquieren automáticamente cada hora.", icon="ℹ️")
+else:
+    total_instr  = len(df_sscc)
+    unidades_act = df_sscc["unidad"].nunique()
+    tipos_act    = df_sscc["instruccion_sscc"].nunique()
+    dias_con_dat = df_sscc["fecha"].nunique()
+
+    k1, k2, k3, k4 = st.columns(4)
+    k1.metric("Instrucciones totales", total_instr)
+    k2.metric("Unidades con SSCC",     f"{unidades_act} / 4")
+    k3.metric("Tipos de servicio",     tipos_act)
+    k4.metric("Días con datos",        dias_con_dat)
+
+    st.markdown("")
+
+    tab_s1, tab_s2, tab_s3 = st.tabs(["Por unidad", "Estadísticas", "Tabla completa"])
+
+    with tab_s1:
+        cols_unit = st.columns(4)
+        for col, unidad in zip(cols_unit, ["ANG1","ANG2","CCR1","CCR2"]):
+            df_u = df_sscc[df_sscc["unidad"] == unidad]
+            with col:
+                st.markdown(f"**{LABELS[unidad]}**")
+                if df_u.empty:
+                    st.caption("Sin instrucciones")
+                else:
+                    for _, row in df_u.iterrows():
+                        tipo  = str(row["instruccion_sscc"])
+                        color = COLORES_SSCC.get(tipo, "#64748B")
+                        bg    = BADGE_SSCC.get(tipo, "#F1F5F9")
+                        ini   = str(row["inicio_periodo"])[:5] if row["inicio_periodo"] else "—"
+                        fin   = str(row["fin_periodo"])[:5]    if row["fin_periodo"]    else "—"
+                        fecha = str(row["fecha"])
+                        st.markdown(
+                            f'<div style="border:1px solid {color}33;border-left:3px solid {color};'
+                            f'background:{bg};border-radius:6px;padding:6px 10px;margin-bottom:6px;">'
+                            f'<span style="font-weight:700;color:{color};font-size:0.8rem">{tipo}</span>'
+                            f'<span style="color:#64748B;font-size:0.72rem;float:right">{fecha}</span><br>'
+                            f'<span style="color:#475569;font-size:0.72rem">{ini} → {fin}</span>'
+                            f'</div>',
+                            unsafe_allow_html=True,
+                        )
+
+    with tab_s2:
+        BG = "rgba(0,0,0,0)"; GR = "#E2E8F0"
+
+        # Gráfico 1: instrucciones por tipo (barras)
+        conteo_tipo = df_sscc.groupby("instruccion_sscc").size().reset_index(name="count")
+        conteo_tipo = conteo_tipo.sort_values("count", ascending=False)
+        fig_tipos = go.Figure(go.Bar(
+            x=conteo_tipo["instruccion_sscc"],
+            y=conteo_tipo["count"],
+            marker_color=[COLORES_SSCC.get(t, "#64748B") for t in conteo_tipo["instruccion_sscc"]],
+            text=conteo_tipo["count"], textposition="outside",
+        ))
+        fig_tipos.update_layout(
+            title=dict(text="Instrucciones por tipo de SSCC", font=dict(size=13, color="#0F172A"), x=0),
+            height=280, margin=dict(l=10, r=10, t=50, b=10),
+            plot_bgcolor=BG, paper_bgcolor=BG,
+            xaxis=dict(tickfont=dict(color="#94A3B8", size=11), showgrid=False),
+            yaxis=dict(gridcolor=GR, tickfont=dict(color="#94A3B8", size=10), title="N° instrucciones"),
+        )
+
+        # Gráfico 2: instrucciones por unidad (barras apiladas por tipo)
+        pivot_unidad = df_sscc.groupby(["unidad","instruccion_sscc"]).size().reset_index(name="count")
+        fig_unidad = go.Figure()
+        for tipo in df_sscc["instruccion_sscc"].unique():
+            df_t = pivot_unidad[pivot_unidad["instruccion_sscc"] == tipo]
+            fig_unidad.add_trace(go.Bar(
+                name=tipo,
+                x=df_t["unidad"],
+                y=df_t["count"],
+                marker_color=COLORES_SSCC.get(tipo, "#64748B"),
+            ))
+        fig_unidad.update_layout(
+            barmode="stack",
+            title=dict(text="Instrucciones por unidad", font=dict(size=13, color="#0F172A"), x=0),
+            height=280, margin=dict(l=10, r=10, t=50, b=10),
+            plot_bgcolor=BG, paper_bgcolor=BG,
+            xaxis=dict(tickfont=dict(color="#94A3B8", size=11), showgrid=False),
+            yaxis=dict(gridcolor=GR, tickfont=dict(color="#94A3B8", size=10), title="N° instrucciones"),
+            legend=dict(orientation="h", y=-0.2, font=dict(size=10)),
+        )
+
+        col_g1, col_g2 = st.columns(2)
+        with col_g1:
+            st.plotly_chart(fig_tipos, use_container_width=True, config={"displayModeBar": False})
+        with col_g2:
+            st.plotly_chart(fig_unidad, use_container_width=True, config={"displayModeBar": False})
+
+        # Gráfico 3: duración promedio por tipo (horas)
+        df_dur = df_sscc.copy()
+        def parse_hhmm(t):
+            try:
+                h, m, *_ = str(t).split(":")
+                return int(h) + int(m) / 60
+            except:
+                return None
+        df_dur["h_ini"] = df_dur["inicio_periodo"].apply(parse_hhmm)
+        df_dur["h_fin"] = df_dur["fin_periodo"].apply(parse_hhmm)
+        df_dur["duracion_h"] = (df_dur["h_fin"] - df_dur["h_ini"]).clip(lower=0)
+        dur_tipo = df_dur.groupby("instruccion_sscc")["duracion_h"].mean().reset_index()
+        dur_tipo = dur_tipo.sort_values("duracion_h", ascending=False)
+
+        fig_dur = go.Figure(go.Bar(
+            x=dur_tipo["instruccion_sscc"],
+            y=dur_tipo["duracion_h"].round(1),
+            marker_color=[COLORES_SSCC.get(t, "#64748B") for t in dur_tipo["instruccion_sscc"]],
+            text=dur_tipo["duracion_h"].round(1).astype(str) + " h",
+            textposition="outside",
+        ))
+        fig_dur.update_layout(
+            title=dict(text="Duración promedio por tipo (horas)", font=dict(size=13, color="#0F172A"), x=0),
+            height=280, margin=dict(l=10, r=10, t=50, b=10),
+            plot_bgcolor=BG, paper_bgcolor=BG,
+            xaxis=dict(tickfont=dict(color="#94A3B8", size=11), showgrid=False),
+            yaxis=dict(gridcolor=GR, tickfont=dict(color="#94A3B8", size=10), title="Horas promedio"),
+        )
+
+        # Gráfico 4: evolución diaria de instrucciones
+        if dias_con_dat > 1:
+            evol = df_sscc.groupby(["fecha","instruccion_sscc"]).size().reset_index(name="count")
+            evol["fecha"] = pd.to_datetime(evol["fecha"])
+            fig_evol = go.Figure()
+            for tipo in sorted(df_sscc["instruccion_sscc"].unique()):
+                df_e = evol[evol["instruccion_sscc"] == tipo]
+                fig_evol.add_trace(go.Scatter(
+                    x=df_e["fecha"], y=df_e["count"], name=tipo,
+                    mode="lines+markers",
+                    line=dict(color=COLORES_SSCC.get(tipo, "#64748B"), width=2),
+                    marker=dict(size=6),
+                ))
+            fig_evol.update_layout(
+                title=dict(text="Evolución diaria de instrucciones SSCC", font=dict(size=13, color="#0F172A"), x=0),
+                height=280, margin=dict(l=10, r=10, t=50, b=10),
+                plot_bgcolor=BG, paper_bgcolor=BG,
+                xaxis=dict(tickfont=dict(color="#94A3B8", size=10), showgrid=False, tickformat="%d/%m"),
+                yaxis=dict(gridcolor=GR, tickfont=dict(color="#94A3B8", size=10), title="N° instrucciones"),
+                legend=dict(orientation="h", y=-0.2, font=dict(size=10)),
+                hovermode="x unified",
+            )
+            col_g3, col_g4 = st.columns(2)
+            with col_g3:
+                st.plotly_chart(fig_dur, use_container_width=True, config={"displayModeBar": False})
+            with col_g4:
+                st.plotly_chart(fig_evol, use_container_width=True, config={"displayModeBar": False})
+        else:
+            st.plotly_chart(fig_dur, use_container_width=True, config={"displayModeBar": False})
+
+    with tab_s3:
+        df_show_sscc = df_sscc.copy()
+        df_show_sscc["inicio"] = df_show_sscc["inicio_periodo"].astype(str).str[:5]
+        df_show_sscc["fin"]    = df_show_sscc["fin_periodo"].astype(str).str[:5]
+        df_show_sscc["motivo"] = df_show_sscc["motivo"].fillna("").str[:80]
+        st.dataframe(
+            df_show_sscc[["fecha","unidad","instruccion_sscc","inicio","fin","disponibilidad","motivo","estado_sabana"]].rename(columns={
+                "instruccion_sscc": "Instrucción",
+                "inicio":           "Inicio",
+                "fin":              "Fin",
+                "disponibilidad":   "Disp. MW",
+                "motivo":           "Motivo",
+                "estado_sabana":    "Estado",
+            }),
+            use_container_width=True, hide_index=True,
+        )
+
+
 # ── Potencia programada ───────────────────────────────────────
 st.markdown('<div class="sec">POTENCIA PROGRAMADA · CEN PCP + INGRESO MANUAL</div>', unsafe_allow_html=True)
 st.info(
@@ -1073,83 +1283,3 @@ with tab_b2:
                      (ub,ab.strip(),cb.strip(),str(fb),str(hb)))
             if ok: st.success("Novedad guardada."); st.cache_data.clear(); st.rerun()
         else: st.warning("Completa autor y comentario.")
-
-
-# ── Servicios Complementarios (SSCC) ─────────────────────────
-st.markdown('<div class="sec">SERVICIOS COMPLEMENTARIOS (SSCC)</div>', unsafe_allow_html=True)
-
-COLORES_SSCC = {
-    "CSF(+)": "#16A34A", "CSF(-)": "#0891B2",
-    "CPF(+)": "#6D28D9", "CPF(-)": "#D97706",
-    "CT":     "#64748B",
-}
-BADGE_SSCC = {
-    "CSF(+)": "#DCFCE7", "CSF(-)": "#CFFAFE",
-    "CPF(+)": "#EDE9FE", "CPF(-)": "#FEF3C7",
-    "CT":     "#F1F5F9",
-}
-
-df_sscc = load_sscc(s, e)
-
-if df_sscc.empty:
-    st.info("Sin datos SSCC para el período seleccionado. Los datos se adquieren automáticamente cada hora.", icon="ℹ️")
-else:
-    # KPIs resumen
-    total_instr  = len(df_sscc)
-    unidades_act = df_sscc["unidad"].nunique()
-    tipos_act    = df_sscc["instruccion_sscc"].nunique()
-    dias_con_dat = df_sscc["fecha"].nunique()
-
-    k1, k2, k3, k4 = st.columns(4)
-    k1.metric("Instrucciones totales", total_instr)
-    k2.metric("Unidades con SSCC",     f"{unidades_act} / 4")
-    k3.metric("Tipos de servicio",     tipos_act)
-    k4.metric("Días con datos",        dias_con_dat)
-
-    st.markdown("")
-
-    # Tabla de instrucciones por unidad
-    tab_s1, tab_s2 = st.tabs(["Por unidad", "Tabla completa"])
-
-    with tab_s1:
-        cols_unit = st.columns(4)
-        for col, unidad in zip(cols_unit, ["ANG1","ANG2","CCR1","CCR2"]):
-            df_u = df_sscc[df_sscc["unidad"] == unidad]
-            with col:
-                st.markdown(f"**{LABELS[unidad]}**")
-                if df_u.empty:
-                    st.caption("Sin instrucciones")
-                else:
-                    for _, row in df_u.iterrows():
-                        tipo  = str(row["instruccion_sscc"])
-                        color = COLORES_SSCC.get(tipo, "#64748B")
-                        bg    = BADGE_SSCC.get(tipo, "#F1F5F9")
-                        ini   = str(row["inicio_periodo"])[:5] if row["inicio_periodo"] else "—"
-                        fin   = str(row["fin_periodo"])[:5]    if row["fin_periodo"]    else "—"
-                        fecha = str(row["fecha"])
-                        st.markdown(
-                            f'<div style="border:1px solid {color}33;border-left:3px solid {color};'
-                            f'background:{bg};border-radius:6px;padding:6px 10px;margin-bottom:6px;">'
-                            f'<span style="font-weight:700;color:{color};font-size:0.8rem">{tipo}</span>'
-                            f'<span style="color:#64748B;font-size:0.72rem;float:right">{fecha}</span><br>'
-                            f'<span style="color:#475569;font-size:0.72rem">{ini} → {fin}</span>'
-                            f'</div>',
-                            unsafe_allow_html=True,
-                        )
-
-    with tab_s2:
-        df_show_sscc = df_sscc.copy()
-        df_show_sscc["inicio"] = df_show_sscc["inicio_periodo"].astype(str).str[:5]
-        df_show_sscc["fin"]    = df_show_sscc["fin_periodo"].astype(str).str[:5]
-        df_show_sscc["motivo"] = df_show_sscc["motivo"].fillna("").str[:80]
-        st.dataframe(
-            df_show_sscc[["fecha","unidad","instruccion_sscc","inicio","fin","disponibilidad","motivo","estado_sabana"]].rename(columns={
-                "instruccion_sscc": "Instrucción",
-                "inicio":           "Inicio",
-                "fin":              "Fin",
-                "disponibilidad":   "Disp. MW",
-                "motivo":           "Motivo",
-                "estado_sabana":    "Estado",
-            }),
-            use_container_width=True, hide_index=True,
-        )
