@@ -90,13 +90,11 @@ def fetch_generacion_real(start: str, end: str) -> list[dict]:
     for id_c in [ID_ANGAMOS, ID_COCHRANE]:
         nombre = "Angamos" if id_c == ID_ANGAMOS else "Cochrane"
         try:
-            r = requests.get(
+            r = _get_with_retry(
                 f"{API_BASE_SIP}/generacion-real/v3/findByDate",
                 params={"user_key": CEN_USER_KEY, "startDate": start,
                         "endDate": end, "idCentral": id_c, "pageSize": 5000},
-                timeout=25,
             )
-            r.raise_for_status()
             raw = r.json().get("data", [])
             antes = len(registros)
             for rec in raw:
@@ -133,6 +131,22 @@ def _map_llave_gen_prog(texto: str) -> str | None:
     return None
 
 
+def _get_with_retry(url: str, params: dict, timeout: int = 30,
+                    max_retries: int = 3) -> requests.Response:
+    """GET con retry exponencial ante 429/5xx."""
+    for intento in range(max_retries):
+        r = requests.get(url, params=params, timeout=timeout)
+        if r.status_code in (429, 500, 502, 503, 504):
+            espera = 10 * 2 ** intento          # 10s, 20s, 40s
+            log.warning(f"  HTTP {r.status_code} — reintento {intento+1}/{max_retries} en {espera}s")
+            time.sleep(espera)
+            continue
+        r.raise_for_status()
+        return r
+    r.raise_for_status()   # lanza el último error si agotó reintentos
+    return r
+
+
 def fetch_generacion_programada(start: str, end: str) -> list[dict]:
     """
     Trae generación programada PCP de ANG1/2 CCR1/2 desde la API CEN SIP.
@@ -140,30 +154,27 @@ def fetch_generacion_programada(start: str, end: str) -> list[dict]:
     Endpoint: /generacion-programada-pcp/v4/findByDate
     No soporta filtro por central en el servidor, por lo que se pagina
     todo el resultado y se filtra localmente por id_central.
+    Usa limit=5000 (estable) en vez de 50000 que provoca 504 en el servidor.
     """
     registros    = []
     ids_objetivo = {ID_ANGAMOS, ID_COCHRANE, str(ID_ANGAMOS), str(ID_COCHRANE)}
     page         = 0
-    limit        = 50000   # máximo posible para minimizar llamadas API (~61 págs con 5k → ~7 con 50k)
+    limit        = 5000
     llaves_no_mapeadas: set[str] = set()
 
     try:
         while True:
-            r = requests.get(
+            r    = _get_with_retry(
                 f"{API_BASE_SIP}/generacion-programada-pcp/v4/findByDate",
                 params={"user_key": CEN_USER_KEY, "startDate": start,
                         "endDate": end, "page": page, "limit": limit},
-                timeout=30,
             )
-            r.raise_for_status()
             body = r.json()
             data = body.get("data", [])
 
             if not data:
                 break
 
-            # En la primera página logueamos un registro de ejemplo para
-            # diagnosticar el formato real de llave_gen en producción.
             if page == 0:
                 muestra = [d for d in data if d.get("id_central") in ids_objetivo]
                 if muestra:
@@ -187,9 +198,7 @@ def fetch_generacion_programada(start: str, end: str) -> list[dict]:
 
                 llave_gen = rec.get("llave_gen", "")
                 config    = rec.get("configuracion", "")
-
-                # Intentar mapear por llave_gen primero; luego por configuracion
-                unidad = _map_llave_gen_prog(llave_gen) or _map_llave_gen_prog(config)
+                unidad    = _map_llave_gen_prog(llave_gen) or _map_llave_gen_prog(config)
 
                 if unidad is None:
                     clave_log = f"{llave_gen}|{config}"
@@ -207,10 +216,8 @@ def fetch_generacion_programada(start: str, end: str) -> list[dict]:
                 if not fecha_hora_str:
                     continue
 
-                # Normalizar fecha_hora (puede venir como ISO "T" o con espacio)
                 fecha_hora_norm = fecha_hora_str.replace("T", " ")[:19]
 
-                # hora: el campo puede no existir; derivar de fecha_hora si falta
                 hora_raw = rec.get("hora")
                 if hora_raw is not None:
                     hora = int(hora_raw)
@@ -233,7 +240,7 @@ def fetch_generacion_programada(start: str, end: str) -> list[dict]:
                 break
 
             page += 1
-            time.sleep(0.1)
+            time.sleep(0.3)
 
     except Exception as e:
         log.error(f"  Error gen. programada PCP: {e}")
