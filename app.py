@@ -36,7 +36,7 @@ st_autorefresh(interval=3_600_000, limit=None, key="autorefresh_horario")
 COLORES = {
     "ANG1": {"line":"#6D28D9","prog":"#C4B5FD","badge":"#EDE9FE","text":"#6D28D9","dot":"🟣"},
     "ANG2": {"line":"#2563EB","prog":"#93C5FD","badge":"#DBEAFE","text":"#2563EB","dot":"🔵"},
-    "CCR1": {"line":"#0891B2","prog":"#67E8F9","badge":"#CFFAFE","text":"#0891B2","dot":"🩵"},
+    "CCR1": {"line":"#0891B2","prog":"#67E8F9","badge":"#CFFAFE","text":"#0891B2","dot":"🟡"},
     "CCR2": {"line":"#16A34A","prog":"#86EFAC","badge":"#DCFCE7","text":"#16A34A","dot":"🟢"},
     "CMG":  {"line":"#6D28D9"},
 }
