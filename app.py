@@ -915,13 +915,17 @@ else:
     with tab_s1:
         cols_unit = st.columns(4)
         for col, unidad in zip(cols_unit, ["ANG1","ANG2","CCR1","CCR2"]):
-            df_u = df_sscc[df_sscc["unidad"] == unidad]
+            df_u = df_sscc[df_sscc["unidad"] == unidad].sort_values(
+                ["fecha", "inicio_periodo"], ascending=[False, False]
+            )
+            total_u = len(df_u)
+            df_u_show = df_u.head(5)
             with col:
                 st.markdown(f"**{LABELS[unidad]}**")
                 if df_u.empty:
                     st.caption("Sin instrucciones")
                 else:
-                    for _, row in df_u.iterrows():
+                    for _, row in df_u_show.iterrows():
                         tipo  = str(row["instruccion_sscc"])
                         color = COLORES_SSCC.get(tipo, "#64748B")
                         bg    = BADGE_SSCC.get(tipo, "#F1F5F9")
@@ -937,6 +941,8 @@ else:
                             f'</div>',
                             unsafe_allow_html=True,
                         )
+                    if total_u > 5:
+                        st.caption(f"+{total_u - 5} más en «Tabla completa»")
 
     with tab_s2:
         BG = "rgba(0,0,0,0)"; GR = "#E2E8F0"
