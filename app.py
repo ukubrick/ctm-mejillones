@@ -36,7 +36,7 @@ st_autorefresh(interval=3_600_000, limit=None, key="autorefresh_horario")
 COLORES = {
     "ANG1": {"line":"#6D28D9","prog":"#C4B5FD","badge":"#EDE9FE","text":"#6D28D9","dot":"🟣"},
     "ANG2": {"line":"#2563EB","prog":"#93C5FD","badge":"#DBEAFE","text":"#2563EB","dot":"🔵"},
-    "CCR1": {"line":"#0891B2","prog":"#67E8F9","badge":"#CFFAFE","text":"#0891B2","dot":"🔷"},
+    "CCR1": {"line":"#0891B2","prog":"#67E8F9","badge":"#CFFAFE","text":"#0891B2","dot":"🩵"},
     "CCR2": {"line":"#16A34A","prog":"#86EFAC","badge":"#DCFCE7","text":"#16A34A","dot":"🟢"},
     "CMG":  {"line":"#6D28D9"},
 }
@@ -469,19 +469,37 @@ with st.sidebar:
     # Estado de conexión y fuentes
     db_ok, db_err = test_conn()
     dot_db = "dot-g" if db_ok else "dot-r"
-    txt_db = "Supabase conectado" if db_ok else f"Error DB"
+    txt_db = "Conectado · Supabase / PostgreSQL" if db_ok else "Error de conexión DB"
+
+    # Última adquisición por fuente
+    _ult_r   = qry("SELECT MAX(fecha_hora) AS t FROM generacion_real")
+    _ult_p   = qry("SELECT MAX(fecha_hora) AS t FROM generacion_programada WHERE fuente='CEN_PCP'")
+    _ult_cmg = qry("SELECT MAX(fecha_hora) AS t FROM costo_marginal")
+    _ult_s   = qry("SELECT MAX(fecha_accion) AS t FROM sscc_instrucciones")
+
+    def _fmt(df, fmt="%d/%m %H:%M"):
+        v = df.iloc[0]["t"] if not df.empty else None
+        if v is None or pd.isna(v): return "—"
+        if hasattr(v, "strftime"): return v.strftime(fmt)
+        return str(v)[:16]
+
+    str_r   = _fmt(_ult_r)
+    str_p   = _fmt(_ult_p)
+    str_cmg = _fmt(_ult_cmg)
+    str_s   = _fmt(_ult_s, "%d/%m/%Y")
 
     st.markdown(f"""
     <div class="status-box">
-        <div style="margin-bottom:4px">
+        <div style="margin-bottom:6px">
             <span class="dot-status {dot_db}"></span>
-            <span style="font-size:0.72rem;font-weight:600;color:#0F172A">{txt_db}</span>
+            <span style="font-size:0.72rem;font-weight:600">{txt_db}</span>
         </div>
-        <div style="color:#64748B;font-size:0.68rem;line-height:1.6">
-            📡 Gen. real → API CEN SIPUB<br>
-            📡 Gen. programada → CEN PCP (auto)<br>
-            📡 CMG → Portal CEN S3 (15min)<br>
-            🔄 Adquisición → GitHub Actions /hora
+        <div style="font-size:0.68rem;line-height:2">
+            <span class="dot-status dot-g"></span>Gen. real → <b>{str_r}</b><br>
+            <span class="dot-status dot-g"></span>Gen. programada → <b>{str_p}</b><br>
+            <span class="dot-status dot-g"></span>CMG S3 → <b>{str_cmg}</b><br>
+            <span class="dot-status dot-g"></span>SSCC → <b>{str_s}</b><br>
+            <span class="dot-status dot-g"></span>Adquisición GitHub Actions · /hora
         </div>
     </div>
     """, unsafe_allow_html=True)
@@ -550,13 +568,22 @@ with ch1:
     st.markdown(f'<p style="color:#64748B;font-size:0.85rem;margin-top:-0.5rem">Período {s} → {e} · Generación real + Programada PCP + CMG {NOMBRES_NODO.get(nodo_cmg, "Crucero 220kV")}</p>', unsafe_allow_html=True)
 with ch2:
     ult_real = df_r["fecha_hora"].max()
+    ult_prog = df_p["fecha_hora"].max() if not df_p.empty else None
     ult_cmg  = df_c["fecha_hora"].max() if not df_c.empty else None
-    diff = (datetime.now()-ult_real.to_pydatetime()).seconds
-    cls  = "dot-g" if diff<7200 else "dot-y"
-    cmg_str  = ult_cmg.strftime("%d/%m %H:%M") if ult_cmg is not None else "—"
-    st.markdown(f'''<div style="text-align:right;padding-top:1rem;line-height:1.8">
-        <div><span class="dot-status {cls}"></span><span style="font-size:0.72rem;color:#64748B">Gen. real: <b>{ult_real.strftime("%d/%m %H:%M")}</b></span></div>
-        <div><span style="font-size:0.72rem;color:#64748B">CMG {NOMBRES_NODO.get(nodo_cmg,"Crucero 220kV")}: <b>{cmg_str}</b></span></div>
+    df_sscc_hdr = load_sscc(s, e)
+    ult_sscc = df_sscc_hdr["fecha"].max() if not df_sscc_hdr.empty else None
+
+    diff = (datetime.now() - ult_real.to_pydatetime()).seconds
+    cls_r = "dot-g" if diff < 7200 else "dot-y"
+    prog_str = ult_prog.strftime("%d/%m %H:%M") if ult_prog is not None else "—"
+    cmg_str  = ult_cmg.strftime("%d/%m %H:%M")  if ult_cmg  is not None else "—"
+    sscc_str = str(ult_sscc) if ult_sscc is not None else "—"
+
+    st.markdown(f'''<div style="text-align:right;padding-top:1rem;line-height:2">
+        <div><span class="dot-status {cls_r}"></span><span style="font-size:0.72rem;color:#64748B">Gen. real: <b>{ult_real.strftime("%d/%m %H:%M")}</b></span></div>
+        <div><span class="dot-status dot-g"></span><span style="font-size:0.72rem;color:#64748B">Gen. programada: <b>{prog_str}</b></span></div>
+        <div><span class="dot-status dot-g"></span><span style="font-size:0.72rem;color:#64748B">CMG {NOMBRES_NODO.get(nodo_cmg,"Crucero 220kV")}: <b>{cmg_str}</b></span></div>
+        <div><span class="dot-status dot-g"></span><span style="font-size:0.72rem;color:#64748B">SSCC: <b>{sscc_str}</b></span></div>
     </div>''', unsafe_allow_html=True)
 
 
@@ -724,7 +751,7 @@ st.markdown(f'<div class="sec">POTENCIA REAL vs PROGRAMADA + CMG {NOMBRES_NODO.g
 hay_prog_general = not df_p.empty
 mostrar_desv = False
 if hay_prog_general and mostrar_prog:
-    mostrar_desv = st.checkbox("Mostrar área de desviación (Real vs Programada)", value=False)
+    mostrar_desv = st.checkbox("Mostrar área de desviación (Real vs Programada)", value=True)
 
 tabs = st.tabs([
     f"{COLORES[u]['dot']} {LABELS[u]}" for u in ["ANG1","ANG2","CCR1","CCR2"]
