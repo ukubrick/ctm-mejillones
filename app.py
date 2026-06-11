@@ -459,7 +459,7 @@ def load_limitaciones(s, e):
     # Muestra limitaciones cuya perturbación cae en el período
     # o que siguen activas (sin retorno efectivo) durante el período
     return qry(
-        "SELECT id, instalacion_nombre, status, fecha_perturbacion, "
+        "SELECT id, correlativo, instalacion_nombre, status, fecha_perturbacion, "
         "fecha_retorno_estimada, fecha_efectiva_retorno, potencia, "
         "unidad_medida_potencia, afecta_sscc, observacion, id_central, id_unidad "
         "FROM limitaciones_transmision "
@@ -942,39 +942,46 @@ else:
         unidad_lbl  = ID_UNIDAD_LABEL.get(id_u, "")
         central_lbl = ID_CENTRAL_LABEL.get(id_c, str(row.get("instalacion_nombre", "")).split(" - ")[0])
         fecha_pert  = str(row.get("fecha_perturbacion") or "")[:16]
-        retorno     = row.get("fecha_efectiva_retorno") or row.get("fecha_retorno_estimada")
-        fecha_ret   = str(retorno)[:16] if retorno and str(retorno) != "NaT" else "—"
+        ret_ef      = row.get("fecha_efectiva_retorno")
+        ret_est     = row.get("fecha_retorno_estimada")
+        retorno_val = ret_ef if (ret_ef and str(ret_ef) not in ("NaT", "None", "nan")) else ret_est
+        fecha_ret   = str(retorno_val)[:16] if (retorno_val and str(retorno_val) not in ("NaT", "None", "nan")) else "—"
+        es_efectivo = ret_ef and str(ret_ef) not in ("NaT", "None", "nan")
+        ret_label   = "cierre real" if es_efectivo else "retorno est."
         potencia    = row.get("potencia")
         pot_val     = f'{float(potencia):.0f} {row.get("unidad_medida_potencia","MW")}' if pd.notna(potencia) and float(potencia) > 0 else ""
+        correlativo = row.get("correlativo")
+        corr_str    = f'N° {int(float(correlativo))}' if pd.notna(correlativo) else ""
         obs         = str(row.get("observacion") or "").strip()[:220]
 
-        badge_status = f'<span style="background:{c_bg};color:{c_txt};padding:2px 9px;border-radius:5px;font-size:0.72rem;font-weight:700;text-transform:uppercase">{row.get("status","")}</span>'
-        badge_central = f'<span style="font-weight:600;font-size:0.85rem">{central_lbl}</span>'
-        badge_unidad  = f'<span style="background:#EDE9FE;color:#6D28D9;padding:1px 7px;border-radius:4px;font-size:0.72rem;font-weight:600">{unidad_lbl}</span>' if unidad_lbl else ""
-        badge_sscc    = '<span style="background:#FEF3C7;color:#D97706;padding:1px 6px;border-radius:4px;font-size:0.68rem">&#9889; Afecta SSCC</span>' if row.get("afecta_sscc") else ""
-        badge_fechas  = f'<span style="font-size:0.72rem;color:#64748B">&#128197; {fecha_pert} &#8594; {fecha_ret}</span>'
-        badge_pot     = f'<span style="font-size:0.78rem;font-weight:600;color:#DC2626">{pot_val}</span>' if pot_val else ""
-        div_obs       = f'<div style="font-size:0.72rem;color:#64748B;margin-top:4px">{obs}</div>' if obs else ""
+        b_status  = f'<span style="background:{c_bg};color:{c_txt};padding:2px 9px;border-radius:5px;font-size:0.72rem;font-weight:700;text-transform:uppercase">{row.get("status","")}</span>'
+        b_central = f'<span style="font-weight:600;font-size:0.85rem">{central_lbl}</span>'
+        b_unidad  = f'<span style="background:#EDE9FE;color:#6D28D9;padding:1px 7px;border-radius:4px;font-size:0.72rem;font-weight:600">{unidad_lbl}</span>' if unidad_lbl else ""
+        b_sscc    = '<span style="background:#FEF3C7;color:#D97706;padding:1px 6px;border-radius:4px;font-size:0.68rem">&#9889; Afecta SSCC</span>' if row.get("afecta_sscc") else ""
+        b_corr    = f'<span style="font-size:0.68rem;color:#94A3B8">{corr_str}</span>' if corr_str else ""
+        b_fechas  = (f'<span style="font-size:0.72rem;color:#64748B">'
+                     f'Apertura: <b>{fecha_pert}</b> &nbsp;&#8594;&nbsp; '
+                     f'{ret_label}: <b>{fecha_ret}</b></span>')
+        b_pot     = f'<span style="font-size:0.78rem;font-weight:600;color:#DC2626">{pot_val}</span>' if pot_val else ""
+        d_obs     = f'<div style="font-size:0.72rem;color:#64748B;margin-top:4px">{obs}</div>' if obs else ""
 
-        partes = " ".join(filter(None, [badge_status, badge_central, badge_unidad, badge_sscc,
-                                        '<span style="flex:1"></span>', badge_fechas, badge_pot]))
+        fila1 = " ".join(filter(None, [b_status, b_central, b_unidad, b_sscc, b_corr]))
+        fila2 = " ".join(filter(None, [b_fechas, f'<span style="flex:1"></span>', b_pot]))
         st.markdown(
-            f'<div style="border:1px solid #E2E8F0;border-radius:8px;padding:10px 14px;'
-            f'margin-bottom:8px;background:#FAFAFA">'
-            f'<div style="display:flex;align-items:center;gap:8px;flex-wrap:wrap">{partes}</div>'
-            f'{div_obs}</div>',
+            f'<div style="border:1px solid #E2E8F0;border-radius:8px;padding:10px 14px;margin-bottom:8px;background:#FAFAFA">'
+            f'<div style="display:flex;align-items:center;gap:8px;flex-wrap:wrap;margin-bottom:4px">{fila1}</div>'
+            f'<div style="display:flex;align-items:center;gap:8px;flex-wrap:wrap">{fila2}</div>'
+            f'{d_obs}</div>',
             unsafe_allow_html=True,
         )
 
-    # Tabs por unidad
-    tabs_lim = st.tabs(["ANG1", "ANG2", "CCR1", "CCR2", "Todas"])
-    unidades_lim = ["ANG1", "ANG2", "CCR1", "CCR2"]
-    # Construir columna unidad a partir de id_unidad
+    # Construir columna _unidad a partir de id_unidad
     df_lim["_unidad"] = df_lim["id_unidad"].apply(
         lambda x: ID_UNIDAD_LABEL.get(int(float(x)), "") if pd.notna(x) else ""
     )
     MAX_CARDS = 5
-    for tab, unidad in zip(tabs_lim[:4], unidades_lim):
+    tabs_lim = st.tabs(["ANG1", "ANG2", "CCR1", "CCR2", "Todas"])
+    for tab, unidad in zip(tabs_lim[:4], ["ANG1", "ANG2", "CCR1", "CCR2"]):
         with tab:
             df_u = df_lim[df_lim["_unidad"] == unidad].sort_values("fecha_perturbacion", ascending=False)
             if df_u.empty:
@@ -985,16 +992,14 @@ else:
                 if len(df_u) > MAX_CARDS:
                     st.caption(f"+{len(df_u) - MAX_CARDS} más en «Todas»")
     with tabs_lim[4]:
-        df_todas = df_lim.sort_values("fecha_perturbacion", ascending=False)
-        for _, row in df_todas.iterrows():
+        for _, row in df_lim.sort_values("fecha_perturbacion", ascending=False).iterrows():
             _render_lim_card(row)
-
-    with st.expander("Ver tabla completa de limitaciones"):
-        cols_show = ["status", "instalacion_nombre", "fecha_perturbacion",
-                     "fecha_retorno_estimada", "fecha_efectiva_retorno",
-                     "potencia", "afecta_sscc", "observacion"]
-        st.dataframe(df_lim[[c for c in cols_show if c in df_lim.columns]],
-                     use_container_width=True, hide_index=True)
+        with st.expander("Ver tabla completa"):
+            cols_show = ["correlativo", "status", "instalacion_nombre", "fecha_perturbacion",
+                         "fecha_retorno_estimada", "fecha_efectiva_retorno",
+                         "potencia", "afecta_sscc", "observacion"]
+            st.dataframe(df_lim[[c for c in cols_show if c in df_lim.columns]],
+                         use_container_width=True, hide_index=True)
 
 
 # ── Servicios Complementarios (SSCC) ─────────────────────────
