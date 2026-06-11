@@ -934,34 +934,60 @@ else:
     kl3.metric("Afectan SSCC",           n_sscc)
     kl4.metric("Mayor limitación activa", pot_str)
 
-    # Tabla de limitaciones
-    for _, row in df_lim.iterrows():
-        st_key   = str(row.get("status", "")).lower()
+    def _render_lim_card(row):
+        st_key      = str(row.get("status", "")).lower()
         c_txt, c_bg = STATUS_COLOR_LIM.get(st_key, ("#475569", "#F8FAFC"))
-        unidad_lbl = ID_UNIDAD_LABEL.get(int(row["id_unidad"]) if pd.notna(row.get("id_unidad")) else -1, "")
-        central_lbl = ID_CENTRAL_LABEL.get(int(row["id_central"]) if pd.notna(row.get("id_central")) else -1,
-                                            str(row.get("instalacion_nombre", "")).split(" - ")[0])
-        unidad_badge = f'<span style="background:#EDE9FE;color:#6D28D9;padding:1px 7px;border-radius:4px;font-size:0.72rem;font-weight:600;margin-left:6px">{unidad_lbl}</span>' if unidad_lbl else ""
-        fecha_pert = str(row.get("fecha_perturbacion", ""))[:16]
-        fecha_ret  = str(row.get("fecha_efectiva_retorno") or row.get("fecha_retorno_estimada") or "—")[:16]
-        pot_val    = f'{row["potencia"]:.0f} {row.get("unidad_medida_potencia","MW")}' if pd.notna(row.get("potencia")) and row.get("potencia", 0) > 0 else "—"
-        sscc_tag   = '<span style="background:#FEF3C7;color:#D97706;padding:1px 6px;border-radius:4px;font-size:0.68rem">⚡ Afecta SSCC</span>' if row.get("afecta_sscc") else ""
-        obs        = str(row.get("observacion") or "").strip()[:200]
-        obs_html   = f'<div style="font-size:0.72rem;color:#64748B;margin-top:4px">{obs}</div>' if obs else ""
+        id_u        = int(float(row["id_unidad"])) if pd.notna(row.get("id_unidad")) else -1
+        id_c        = int(float(row["id_central"])) if pd.notna(row.get("id_central")) else -1
+        unidad_lbl  = ID_UNIDAD_LABEL.get(id_u, "")
+        central_lbl = ID_CENTRAL_LABEL.get(id_c, str(row.get("instalacion_nombre", "")).split(" - ")[0])
+        fecha_pert  = str(row.get("fecha_perturbacion") or "")[:16]
+        retorno     = row.get("fecha_efectiva_retorno") or row.get("fecha_retorno_estimada")
+        fecha_ret   = str(retorno)[:16] if retorno and str(retorno) != "NaT" else "—"
+        potencia    = row.get("potencia")
+        pot_val     = f'{float(potencia):.0f} {row.get("unidad_medida_potencia","MW")}' if pd.notna(potencia) and float(potencia) > 0 else ""
+        obs         = str(row.get("observacion") or "").strip()[:220]
 
-        st.markdown(f"""
-        <div style="border:1px solid #E2E8F0;border-radius:8px;padding:10px 14px;margin-bottom:8px;background:#FAFAFA">
-            <div style="display:flex;align-items:center;gap:8px;flex-wrap:wrap">
-                <span style="background:{c_bg};color:{c_txt};padding:2px 9px;border-radius:5px;font-size:0.72rem;font-weight:700;text-transform:uppercase">{row.get("status","")}</span>
-                <span style="font-weight:600;font-size:0.85rem">{central_lbl}</span>
-                {unidad_badge}
-                {sscc_tag}
-                <span style="margin-left:auto;font-size:0.72rem;color:#64748B">🗓 {fecha_pert} → {fecha_ret}</span>
-                <span style="font-size:0.78rem;font-weight:600;color:#DC2626">{pot_val}</span>
-            </div>
-            {obs_html}
-        </div>
-        """, unsafe_allow_html=True)
+        badge_status = f'<span style="background:{c_bg};color:{c_txt};padding:2px 9px;border-radius:5px;font-size:0.72rem;font-weight:700;text-transform:uppercase">{row.get("status","")}</span>'
+        badge_central = f'<span style="font-weight:600;font-size:0.85rem">{central_lbl}</span>'
+        badge_unidad  = f'<span style="background:#EDE9FE;color:#6D28D9;padding:1px 7px;border-radius:4px;font-size:0.72rem;font-weight:600">{unidad_lbl}</span>' if unidad_lbl else ""
+        badge_sscc    = '<span style="background:#FEF3C7;color:#D97706;padding:1px 6px;border-radius:4px;font-size:0.68rem">&#9889; Afecta SSCC</span>' if row.get("afecta_sscc") else ""
+        badge_fechas  = f'<span style="font-size:0.72rem;color:#64748B">&#128197; {fecha_pert} &#8594; {fecha_ret}</span>'
+        badge_pot     = f'<span style="font-size:0.78rem;font-weight:600;color:#DC2626">{pot_val}</span>' if pot_val else ""
+        div_obs       = f'<div style="font-size:0.72rem;color:#64748B;margin-top:4px">{obs}</div>' if obs else ""
+
+        partes = " ".join(filter(None, [badge_status, badge_central, badge_unidad, badge_sscc,
+                                        '<span style="flex:1"></span>', badge_fechas, badge_pot]))
+        st.markdown(
+            f'<div style="border:1px solid #E2E8F0;border-radius:8px;padding:10px 14px;'
+            f'margin-bottom:8px;background:#FAFAFA">'
+            f'<div style="display:flex;align-items:center;gap:8px;flex-wrap:wrap">{partes}</div>'
+            f'{div_obs}</div>',
+            unsafe_allow_html=True,
+        )
+
+    # Tabs por unidad
+    tabs_lim = st.tabs(["ANG1", "ANG2", "CCR1", "CCR2", "Todas"])
+    unidades_lim = ["ANG1", "ANG2", "CCR1", "CCR2"]
+    # Construir columna unidad a partir de id_unidad
+    df_lim["_unidad"] = df_lim["id_unidad"].apply(
+        lambda x: ID_UNIDAD_LABEL.get(int(float(x)), "") if pd.notna(x) else ""
+    )
+    MAX_CARDS = 5
+    for tab, unidad in zip(tabs_lim[:4], unidades_lim):
+        with tab:
+            df_u = df_lim[df_lim["_unidad"] == unidad].sort_values("fecha_perturbacion", ascending=False)
+            if df_u.empty:
+                st.info(f"Sin limitaciones para {unidad} en el período.")
+            else:
+                for _, row in df_u.head(MAX_CARDS).iterrows():
+                    _render_lim_card(row)
+                if len(df_u) > MAX_CARDS:
+                    st.caption(f"+{len(df_u) - MAX_CARDS} más en «Todas»")
+    with tabs_lim[4]:
+        df_todas = df_lim.sort_values("fecha_perturbacion", ascending=False)
+        for _, row in df_todas.iterrows():
+            _render_lim_card(row)
 
     with st.expander("Ver tabla completa de limitaciones"):
         cols_show = ["status", "instalacion_nombre", "fecha_perturbacion",
