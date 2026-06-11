@@ -980,7 +980,7 @@ else:
     df_lim["_unidad"] = df_lim["id_unidad"].apply(
         lambda x: ID_UNIDAD_LABEL.get(int(float(x)), "") if pd.notna(x) else ""
     )
-    df_lim_sorted = df_lim.sort_values("fecha_perturbacion", ascending=False)
+    df_lim_sorted = df_lim.sort_values("fecha_perturbacion", ascending=True)
     MAX_CARDS = 5
 
     tabs_lim = st.tabs(["ANG1", "ANG2", "CCR1", "CCR2", "Todas"])
@@ -990,10 +990,11 @@ else:
             if df_u.empty:
                 st.info(f"Sin limitaciones para {unidad} en el período.")
             else:
-                cards_html = "".join(_lim_card_html(row) for _, row in df_u.head(MAX_CARDS).iterrows())
+                df_u_show = df_u.tail(MAX_CARDS)
+                cards_html = "".join(_lim_card_html(row) for _, row in df_u_show.iterrows())
                 st.markdown(cards_html, unsafe_allow_html=True)
                 if len(df_u) > MAX_CARDS:
-                    st.caption(f"+{len(df_u) - MAX_CARDS} más en «Todas»")
+                    st.caption(f"+{len(df_u) - MAX_CARDS} anteriores en «Todas»")
     with tabs_lim[4]:
         cards_html = "".join(_lim_card_html(row) for _, row in df_lim_sorted.iterrows())
         st.markdown(cards_html, unsafe_allow_html=True)
