@@ -917,10 +917,47 @@ STATUS_COLOR_LIM = {
 
 df_lim = load_limitaciones(s, e)
 
+def _render_lim_card(row):
+    st_key      = str(row.get("status", "")).lower()
+    c_txt, c_bg = STATUS_COLOR_LIM.get(st_key, ("#475569", "#F8FAFC"))
+    id_u        = int(float(row["id_unidad"])) if pd.notna(row.get("id_unidad")) else -1
+    id_c        = int(float(row["id_central"])) if pd.notna(row.get("id_central")) else -1
+    unidad_lbl  = ID_UNIDAD_LABEL.get(id_u, "")
+    central_lbl = ID_CENTRAL_LABEL.get(id_c, str(row.get("instalacion_nombre", "")).split(" - ")[0])
+    fecha_pert  = str(row.get("fecha_perturbacion") or "")[:16]
+    ret_ef      = row.get("fecha_efectiva_retorno")
+    ret_est     = row.get("fecha_retorno_estimada")
+    retorno_val = ret_ef if (ret_ef and str(ret_ef) not in ("NaT", "None", "nan")) else ret_est
+    fecha_ret   = str(retorno_val)[:16] if (retorno_val and str(retorno_val) not in ("NaT", "None", "nan")) else "—"
+    ret_label   = "cierre real" if (ret_ef and str(ret_ef) not in ("NaT", "None", "nan")) else "retorno est."
+    potencia    = row.get("potencia")
+    pot_val     = f'{float(potencia):.0f} {row.get("unidad_medida_potencia","MW")}' if pd.notna(potencia) and float(potencia) > 0 else ""
+    correlativo = row.get("correlativo")
+    corr_str    = f'N.{int(float(correlativo))}' if pd.notna(correlativo) else ""
+    obs         = str(row.get("observacion") or "").strip()[:220]
+
+    b_status  = f'<span style="background:{c_bg};color:{c_txt};padding:2px 9px;border-radius:5px;font-size:0.72rem;font-weight:700;text-transform:uppercase">{row.get("status","")}</span>'
+    b_central = f'<span style="font-weight:600;font-size:0.85rem">{central_lbl}</span>'
+    b_unidad  = f'<span style="background:#EDE9FE;color:#6D28D9;padding:1px 7px;border-radius:4px;font-size:0.72rem;font-weight:600">{unidad_lbl}</span>' if unidad_lbl else ""
+    b_sscc    = '<span style="background:#FEF3C7;color:#D97706;padding:1px 6px;border-radius:4px;font-size:0.68rem">Afecta SSCC</span>' if row.get("afecta_sscc") else ""
+    b_corr    = f'<span style="font-size:0.68rem;color:#94A3B8">{corr_str}</span>' if corr_str else ""
+    b_fechas  = f'<span style="font-size:0.72rem;color:#64748B">Apertura: <b>{fecha_pert}</b> &rarr; {ret_label}: <b>{fecha_ret}</b></span>'
+    b_pot     = f'<span style="font-size:0.78rem;font-weight:600;color:#DC2626">{pot_val}</span>' if pot_val else ""
+    d_obs     = f'<p style="font-size:0.72rem;color:#64748B;margin:4px 0 0 0">{obs}</p>' if obs else ""
+
+    fila1 = " &nbsp; ".join(filter(None, [b_status, b_central, b_unidad, b_sscc, b_corr]))
+    fila2 = b_fechas + (f' &nbsp; {b_pot}' if b_pot else "")
+    st.markdown(
+        f'<div style="border:1px solid #E2E8F0;border-radius:8px;padding:10px 14px;margin-bottom:8px;background:#FAFAFA">'
+        f'<div style="margin-bottom:4px">{fila1}</div>'
+        f'<div>{fila2}</div>'
+        f'{d_obs}</div>',
+        unsafe_allow_html=True,
+    )
+
 if df_lim.empty:
     st.info("Sin limitaciones registradas para el período seleccionado.", icon="ℹ️")
 else:
-    # KPIs rápidos
     activas   = df_lim[df_lim["status"] == "pendiente"]
     n_activas = len(activas)
     n_total   = len(df_lim)
@@ -934,48 +971,6 @@ else:
     kl3.metric("Afectan SSCC",           n_sscc)
     kl4.metric("Mayor limitación activa", pot_str)
 
-    def _render_lim_card(row):
-        st_key      = str(row.get("status", "")).lower()
-        c_txt, c_bg = STATUS_COLOR_LIM.get(st_key, ("#475569", "#F8FAFC"))
-        id_u        = int(float(row["id_unidad"])) if pd.notna(row.get("id_unidad")) else -1
-        id_c        = int(float(row["id_central"])) if pd.notna(row.get("id_central")) else -1
-        unidad_lbl  = ID_UNIDAD_LABEL.get(id_u, "")
-        central_lbl = ID_CENTRAL_LABEL.get(id_c, str(row.get("instalacion_nombre", "")).split(" - ")[0])
-        fecha_pert  = str(row.get("fecha_perturbacion") or "")[:16]
-        ret_ef      = row.get("fecha_efectiva_retorno")
-        ret_est     = row.get("fecha_retorno_estimada")
-        retorno_val = ret_ef if (ret_ef and str(ret_ef) not in ("NaT", "None", "nan")) else ret_est
-        fecha_ret   = str(retorno_val)[:16] if (retorno_val and str(retorno_val) not in ("NaT", "None", "nan")) else "—"
-        es_efectivo = ret_ef and str(ret_ef) not in ("NaT", "None", "nan")
-        ret_label   = "cierre real" if es_efectivo else "retorno est."
-        potencia    = row.get("potencia")
-        pot_val     = f'{float(potencia):.0f} {row.get("unidad_medida_potencia","MW")}' if pd.notna(potencia) and float(potencia) > 0 else ""
-        correlativo = row.get("correlativo")
-        corr_str    = f'N&#176; {int(float(correlativo))}' if pd.notna(correlativo) else ""
-        obs         = str(row.get("observacion") or "").strip()[:220]
-
-        b_status  = f'<span style="background:{c_bg};color:{c_txt};padding:2px 9px;border-radius:5px;font-size:0.72rem;font-weight:700;text-transform:uppercase">{row.get("status","")}</span>'
-        b_central = f'<span style="font-weight:600;font-size:0.85rem">{central_lbl}</span>'
-        b_unidad  = f'<span style="background:#EDE9FE;color:#6D28D9;padding:1px 7px;border-radius:4px;font-size:0.72rem;font-weight:600">{unidad_lbl}</span>' if unidad_lbl else ""
-        b_sscc    = '<span style="background:#FEF3C7;color:#D97706;padding:1px 6px;border-radius:4px;font-size:0.68rem">&#9889; Afecta SSCC</span>' if row.get("afecta_sscc") else ""
-        b_corr    = f'<span style="font-size:0.68rem;color:#94A3B8">{corr_str}</span>' if corr_str else ""
-        b_fechas  = (f'<span style="font-size:0.72rem;color:#64748B">'
-                     f'Apertura: <b>{fecha_pert}</b> &nbsp;&#8594;&nbsp; '
-                     f'{ret_label}: <b>{fecha_ret}</b></span>')
-        b_pot     = f'<span style="font-size:0.78rem;font-weight:600;color:#DC2626">{pot_val}</span>' if pot_val else ""
-        d_obs     = f'<div style="font-size:0.72rem;color:#64748B;margin-top:4px">{obs}</div>' if obs else ""
-
-        fila1 = " ".join(filter(None, [b_status, b_central, b_unidad, b_sscc, b_corr]))
-        fila2 = " ".join(filter(None, [b_fechas, f'<span style="flex:1"></span>', b_pot]))
-        st.markdown(
-            f'<div style="border:1px solid #E2E8F0;border-radius:8px;padding:10px 14px;margin-bottom:8px;background:#FAFAFA">'
-            f'<div style="display:flex;align-items:center;gap:8px;flex-wrap:wrap;margin-bottom:4px">{fila1}</div>'
-            f'<div style="display:flex;align-items:center;gap:8px;flex-wrap:wrap">{fila2}</div>'
-            f'{d_obs}</div>',
-            unsafe_allow_html=True,
-        )
-
-    # Construir columna _unidad a partir de id_unidad
     df_lim["_unidad"] = df_lim["id_unidad"].apply(
         lambda x: ID_UNIDAD_LABEL.get(int(float(x)), "") if pd.notna(x) else ""
     )
@@ -996,16 +991,21 @@ else:
         for _, row in df_lim_sorted.iterrows():
             _render_lim_card(row)
 
-    with st.expander("Ver tabla completa de limitaciones"):
+df_tabla_lim = df_lim if not df_lim.empty else pd.DataFrame()
+with st.expander("Ver tabla completa de limitaciones"):
+    if df_tabla_lim.empty:
+        st.info("Sin datos.")
+    else:
         cols_show = ["correlativo", "status", "instalacion_nombre", "fecha_perturbacion",
                      "fecha_retorno_estimada", "fecha_efectiva_retorno",
                      "potencia", "afecta_sscc", "observacion"]
-        df_tabla = df_lim_sorted[[c for c in cols_show if c in df_lim_sorted.columns]].copy()
-        if "correlativo" in df_tabla.columns:
-            df_tabla["correlativo"] = df_tabla["correlativo"].apply(
-                lambda x: int(float(x)) if pd.notna(x) else None
-            )
-        st.dataframe(df_tabla, use_container_width=True, hide_index=True)
+        df_t = df_tabla_lim.sort_values("fecha_perturbacion", ascending=False)[
+            [c for c in cols_show if c in df_tabla_lim.columns]
+        ].copy()
+        df_t["correlativo"] = df_t["correlativo"].apply(
+            lambda x: int(float(x)) if pd.notna(x) else None
+        )
+        st.dataframe(df_t, use_container_width=True, hide_index=True)
 
 
 # ── Servicios Complementarios (SSCC) ─────────────────────────
