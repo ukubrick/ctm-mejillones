@@ -157,6 +157,26 @@ Todos los endpoints usan `_get_with_retry()` con backoff exponencial:
 
 **Importante:** ambas usan `user_key` como query param (plataforma 3scale). El host de Operaciones requiere la key del plan "Operación", no la del SIP.
 
+### Endpoints confirmados en producción
+
+| Endpoint | Host | Ruta exacta | Params clave | Notas |
+|----------|------|-------------|--------------|-------|
+| Generación real | SIP | `/generacion-real/v3/findByDate` | `startDate`, `endDate`, `idCentral`, `pageSize=5000` | Filtra por central en servidor |
+| Generación programada PCP | SIP | `/generacion-programada-pcp/v4/findByDate` | `startDate`, `endDate`, `page`, `limit=5000` | NO filtra por central → paginar todo (~61 págs) y filtrar local por `id_central ∈ {377,379}` |
+| CMG online | S3 público | `https://cen-template-graph-pweb-prod.s3.us-east-1.amazonaws.com/CMG-online/costo-marginal-online.json` | — | JSON estático, se actualiza ~15 min. Requiere `Referer` header. Solo 8 nodos fijos, NO incluye Mejillones/Angamos/Cochrane |
+| SSCC instrucciones | Operaciones | `/servicios-complementarios/v1` | `initDate`, `endDate`, `page=0`, `pageSize=-1` | `-1` trae todo en una llamada (~350 registros sistema, ~10 ANG/CCR) |
+| Limitaciones transmisión | SIP | `/limitaciones-transmision/v4/findByDate` | `startDate`, `endDate`, `page`, `limit=100` | **SIN** prefijo `/sipub/api/rest/v4/` — ruta directa. Filtrar local por `id_central` o nombre |
+
+### Endpoints explorados — no disponibles o pendientes
+
+| Endpoint | Host | Ruta | Estado | Notas |
+|----------|------|------|--------|-------|
+| SSCC programados PCP | SIP | `/servicios-complementarios-programados-pcp/v4/findByDate` | 502 (2026-06-09) | Caída servidor CEN, probar después |
+| Instrucciones operacionales SSCC | SIP | `/instrucciones-operacionales-sscc/v4/findByDate` | 502 (2026-06-09) | Mismo estado |
+| Stock combustible | SIP | `/stock-combustible/v4/findByDate` | 404 consistente | Posible endpoint inactivo |
+| Estado operativo unidades | Operaciones | `/operativos/v1/estados` | Retorna catálogo (21 tipos) | Solo devuelve tipos LP/LF/LC/DLP etc., no estado actual por unidad |
+| Solicitudes | SIP | Por confirmar | Pendiente explorar | Próximo a integrar |
+
 ---
 
 ## Estado actual del código (2026-06-11 — actualizado)
