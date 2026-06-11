@@ -180,7 +180,7 @@ Todo implementado y funcionando en producción:
 - ✅ Header superior derecho: 4 indicadores con dot verde palpitante — Gen. real, Gen. programada, CMG (con nodo), SSCC — cada uno con fecha/hora del último dato en DB
 - ✅ Checkbox "Mostrar área de desviación (Real vs Programada)" activado por defecto
 - ✅ Dots de unidades en tabs: ANG1 🟣, ANG2 🔵, CCR1 🟡, CCR2 🟢
-- ✅ Limitaciones de transmisión (API CEN SIP `/limitaciones-transmision/v4/findByDate`) — tabla en DB, adquisición automática ventana 30 días, sección visual sobre SSCC con KPIs (activas, total, afecta SSCC, mayor potencia), cards por limitación con status/colores, expander tabla completa
+- ✅ Limitaciones de transmisión (API CEN SIP `/limitaciones-transmision/v4/findByDate`) — tabla en DB, adquisición automática ventana 30 días, sección visual sobre SSCC con KPIs (activas, total, afecta SSCC, mayor potencia), tabs por unidad (ANG1/ANG2/CCR1/CCR2/Todas), cards con status/colores/correlativo N°/fechas apertura→cierre, tabla completa via `<details>/<summary>` HTML nativo, orden cronológico descendente (más reciente primero), máx 5 por tab
 - ✅ Header y sidebar actualizados con indicador de limitaciones activas (dot amarillo si hay pendientes)
 
 ---
@@ -192,4 +192,5 @@ Todo implementado y funcionando en producción:
 - **Stock combustible** (`/stock-combustible/v4/findByDate`, SIP) — retorna 404 consistente, posible endpoint inactivo o requiere parámetros distintos.
 - **Optimización PCP:** actualmente se hacen 2 consultas separadas (una por día en DIAS_VENTANA). Podría hacerse una sola con rango de 2 días para reducir tiempo de ~24 min a ~12 min.
 - **Limitaciones/estado operativo unidades:** `/operativos/v1/estados` (Operaciones) sólo retorna catálogo de 21 tipos de estado (LP, LF, LC, DLP, etc.), no el estado actual por unidad. Los módulos referenciados (`desconexion_intervencion`, `informe_fallas`, `limitaciones`) tienen rutas propias aún no identificadas. Angamos ID=377, Cochrane ID=379.
+- **Solicitudes CEN** — explorar endpoint de solicitudes (plan SIP) para integrar al dashboard. Pendiente identificar ruta exacta y parámetros.
 - **Limpieza de archivos obsoletos:** eliminar scripts de prueba/exploración que ya cumplieron su propósito: `check_cmg.py`, `probe_sscc.py`, `test_api_cen.py`, `test_cmg_crucero.py`, `test_scraping_cmg.py`, `resumen_endpoints_sscc_sen.md`. También evaluar si conservar `backfill_programada.py` (backfill jun 5–9 ya completado).
