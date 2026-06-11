@@ -983,7 +983,7 @@ else:
     df_lim_sorted = df_lim.sort_values("fecha_perturbacion", ascending=False)
     MAX_CARDS = 5
 
-    tabs_lim = st.tabs(["ANG1", "ANG2", "CCR1", "CCR2", "Todas"])
+    tabs_lim = st.tabs(["ANG1", "ANG2", "CCR1", "CCR2", "Todas", "Estadísticas"])
     for tab, unidad in zip(tabs_lim[:4], ["ANG1", "ANG2", "CCR1", "CCR2"]):
         with tab:
             df_u = df_lim_sorted[df_lim_sorted["_unidad"] == unidad]
@@ -998,6 +998,117 @@ else:
     with tabs_lim[4]:
         cards_html = "".join(_lim_card_html(row) for _, row in df_lim_sorted.iterrows())
         st.markdown(cards_html, unsafe_allow_html=True)
+
+    with tabs_lim[5]:
+        df_stat = df_lim.copy()
+        df_stat["fecha_perturbacion"] = pd.to_datetime(df_stat["fecha_perturbacion"])
+
+        # ── Fila 1: barras por mes + donut por unidad ─────────────
+        gc1, gc2 = st.columns([3, 2])
+
+        with gc1:
+            df_mes = df_stat.copy()
+            df_mes["mes"] = df_mes["fecha_perturbacion"].dt.to_period("M").astype(str)
+            pivot_mes = (
+                df_mes.groupby(["mes", "status"])
+                .size()
+                .reset_index(name="n")
+            )
+            COLOR_STATUS = {"pendiente": "#D97706", "finalizado": "#16A34A", "anulado": "#94A3B8"}
+            fig_mes = go.Figure()
+            for st_val in ["pendiente", "finalizado", "anulado"]:
+                d = pivot_mes[pivot_mes["status"] == st_val]
+                if not d.empty:
+                    fig_mes.add_trace(go.Bar(
+                        x=d["mes"], y=d["n"],
+                        name=st_val.capitalize(),
+                        marker_color=COLOR_STATUS[st_val],
+                    ))
+            fig_mes.update_layout(
+                title="Limitaciones por mes",
+                barmode="stack",
+                height=300,
+                margin=dict(t=40, b=30, l=30, r=10),
+                legend=dict(orientation="h", y=-0.25),
+                plot_bgcolor="white",
+                yaxis=dict(gridcolor="#F1F5F9"),
+            )
+            fig_mes.update_xaxes(tickangle=-30)
+            st.plotly_chart(fig_mes, use_container_width=True)
+
+        with gc2:
+            COLORES_UNIDAD = {"ANG1": "#7C3AED", "ANG2": "#2563EB", "CCR1": "#CA8A04", "CCR2": "#16A34A"}
+            conteo_u = df_stat["_unidad"].replace("", "Sin unidad").value_counts().reset_index()
+            conteo_u.columns = ["unidad", "n"]
+            colores_donut = [COLORES_UNIDAD.get(u, "#94A3B8") for u in conteo_u["unidad"]]
+            fig_donut = go.Figure(go.Pie(
+                labels=conteo_u["unidad"],
+                values=conteo_u["n"],
+                hole=0.55,
+                marker_colors=colores_donut,
+                textinfo="label+value",
+                textfont_size=12,
+            ))
+            fig_donut.update_layout(
+                title="Por unidad",
+                height=300,
+                margin=dict(t=40, b=10, l=10, r=10),
+                showlegend=False,
+            )
+            st.plotly_chart(fig_donut, use_container_width=True)
+
+        # ── Fila 2: histograma potencia + duración finalizadas ─────
+        gc3, gc4 = st.columns(2)
+
+        with gc3:
+            df_pot = df_stat[df_stat["potencia"].notna() & (df_stat["potencia"] > 0)].copy()
+            bins = [0, 50, 100, 150, 200, 300]
+            labels_pot = ["1–50", "51–100", "101–150", "151–200", ">200"]
+            df_pot["rango"] = pd.cut(df_pot["potencia"], bins=bins, labels=labels_pot, right=True)
+            conteo_pot = df_pot["rango"].value_counts().reindex(labels_pot, fill_value=0).reset_index()
+            conteo_pot.columns = ["rango", "n"]
+            fig_pot = go.Figure(go.Bar(
+                x=conteo_pot["rango"],
+                y=conteo_pot["n"],
+                marker_color="#3B82F6",
+                text=conteo_pot["n"],
+                textposition="outside",
+            ))
+            fig_pot.update_layout(
+                title="Distribución por potencia limitada (MW)",
+                height=300,
+                margin=dict(t=40, b=30, l=30, r=10),
+                plot_bgcolor="white",
+                yaxis=dict(gridcolor="#F1F5F9", title="Cantidad"),
+                xaxis=dict(title="Rango MW"),
+            )
+            st.plotly_chart(fig_pot, use_container_width=True)
+
+        with gc4:
+            df_fin = df_stat[df_stat["status"] == "finalizado"].copy()
+            df_fin["retorno"] = pd.to_datetime(df_fin["fecha_efectiva_retorno"].fillna(df_fin["fecha_retorno_estimada"]))
+            df_fin["duracion_dias"] = (df_fin["retorno"] - df_fin["fecha_perturbacion"]).dt.total_seconds() / 86400
+            df_fin = df_fin[df_fin["duracion_dias"].notna() & (df_fin["duracion_dias"] >= 0)].sort_values("fecha_perturbacion")
+            df_fin["label"] = df_fin["correlativo"].apply(lambda x: f"N.{int(float(x))}" if pd.notna(x) else "")
+            if df_fin.empty:
+                st.info("Sin limitaciones finalizadas en el período para calcular duración.")
+            else:
+                fig_dur = go.Figure(go.Bar(
+                    x=df_fin["label"],
+                    y=df_fin["duracion_dias"].round(1),
+                    marker_color="#16A34A",
+                    text=df_fin["duracion_dias"].round(1),
+                    textposition="outside",
+                ))
+                fig_dur.update_layout(
+                    title="Duración (días) — limitaciones finalizadas",
+                    height=300,
+                    margin=dict(t=40, b=30, l=30, r=10),
+                    plot_bgcolor="white",
+                    yaxis=dict(gridcolor="#F1F5F9", title="Días"),
+                    xaxis=dict(title="Correlativo"),
+                )
+                st.plotly_chart(fig_dur, use_container_width=True)
 
     # Tabla completa con <details>/<summary> HTML nativo (evita bug de st.expander post-tabs)
     df_lim_sorted2 = df_lim_sorted.copy()
