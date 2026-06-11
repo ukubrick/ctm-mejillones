@@ -951,7 +951,7 @@ else:
         potencia    = row.get("potencia")
         pot_val     = f'{float(potencia):.0f} {row.get("unidad_medida_potencia","MW")}' if pd.notna(potencia) and float(potencia) > 0 else ""
         correlativo = row.get("correlativo")
-        corr_str    = f'N° {int(float(correlativo))}' if pd.notna(correlativo) else ""
+        corr_str    = f'N&#176; {int(float(correlativo))}' if pd.notna(correlativo) else ""
         obs         = str(row.get("observacion") or "").strip()[:220]
 
         b_status  = f'<span style="background:{c_bg};color:{c_txt};padding:2px 9px;border-radius:5px;font-size:0.72rem;font-weight:700;text-transform:uppercase">{row.get("status","")}</span>'
@@ -979,11 +979,12 @@ else:
     df_lim["_unidad"] = df_lim["id_unidad"].apply(
         lambda x: ID_UNIDAD_LABEL.get(int(float(x)), "") if pd.notna(x) else ""
     )
+    df_lim_sorted = df_lim.sort_values("fecha_perturbacion", ascending=False)
     MAX_CARDS = 5
     tabs_lim = st.tabs(["ANG1", "ANG2", "CCR1", "CCR2", "Todas"])
     for tab, unidad in zip(tabs_lim[:4], ["ANG1", "ANG2", "CCR1", "CCR2"]):
         with tab:
-            df_u = df_lim[df_lim["_unidad"] == unidad].sort_values("fecha_perturbacion", ascending=False)
+            df_u = df_lim_sorted[df_lim_sorted["_unidad"] == unidad]
             if df_u.empty:
                 st.info(f"Sin limitaciones para {unidad} en el período.")
             else:
@@ -992,14 +993,19 @@ else:
                 if len(df_u) > MAX_CARDS:
                     st.caption(f"+{len(df_u) - MAX_CARDS} más en «Todas»")
     with tabs_lim[4]:
-        for _, row in df_lim.sort_values("fecha_perturbacion", ascending=False).iterrows():
+        for _, row in df_lim_sorted.iterrows():
             _render_lim_card(row)
-        with st.expander("Ver tabla completa"):
-            cols_show = ["correlativo", "status", "instalacion_nombre", "fecha_perturbacion",
-                         "fecha_retorno_estimada", "fecha_efectiva_retorno",
-                         "potencia", "afecta_sscc", "observacion"]
-            st.dataframe(df_lim[[c for c in cols_show if c in df_lim.columns]],
-                         use_container_width=True, hide_index=True)
+
+    with st.expander("Ver tabla completa de limitaciones"):
+        cols_show = ["correlativo", "status", "instalacion_nombre", "fecha_perturbacion",
+                     "fecha_retorno_estimada", "fecha_efectiva_retorno",
+                     "potencia", "afecta_sscc", "observacion"]
+        df_tabla = df_lim_sorted[[c for c in cols_show if c in df_lim_sorted.columns]].copy()
+        if "correlativo" in df_tabla.columns:
+            df_tabla["correlativo"] = df_tabla["correlativo"].apply(
+                lambda x: int(float(x)) if pd.notna(x) else None
+            )
+        st.dataframe(df_tabla, use_container_width=True, hide_index=True)
 
 
 # ── Servicios Complementarios (SSCC) ─────────────────────────
