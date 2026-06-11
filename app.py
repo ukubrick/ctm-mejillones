@@ -917,7 +917,8 @@ STATUS_COLOR_LIM = {
 
 df_lim = load_limitaciones(s, e)
 
-def _render_lim_card(row):
+def _lim_card_html(row):
+    """Devuelve el HTML de una card de limitación como string (sin llamar a st)."""
     st_key      = str(row.get("status", "")).lower()
     c_txt, c_bg = STATUS_COLOR_LIM.get(st_key, ("#475569", "#F8FAFC"))
     id_u        = int(float(row["id_unidad"])) if pd.notna(row.get("id_unidad")) else -1
@@ -927,32 +928,37 @@ def _render_lim_card(row):
     fecha_pert  = str(row.get("fecha_perturbacion") or "")[:16]
     ret_ef      = row.get("fecha_efectiva_retorno")
     ret_est     = row.get("fecha_retorno_estimada")
-    retorno_val = ret_ef if (ret_ef and str(ret_ef) not in ("NaT", "None", "nan")) else ret_est
-    fecha_ret   = str(retorno_val)[:16] if (retorno_val and str(retorno_val) not in ("NaT", "None", "nan")) else "—"
-    ret_label   = "cierre real" if (ret_ef and str(ret_ef) not in ("NaT", "None", "nan")) else "retorno est."
+    es_efectivo = ret_ef and str(ret_ef) not in ("NaT", "None", "nan", "")
+    retorno_val = ret_ef if es_efectivo else ret_est
+    fecha_ret   = str(retorno_val)[:16] if (retorno_val and str(retorno_val) not in ("NaT", "None", "nan", "")) else "—"
+    ret_label   = "Cierre real" if es_efectivo else "Retorno est."
     potencia    = row.get("potencia")
-    pot_val     = f'{float(potencia):.0f} {row.get("unidad_medida_potencia","MW")}' if pd.notna(potencia) and float(potencia) > 0 else ""
+    pot_str     = str(int(float(potencia))) + " " + str(row.get("unidad_medida_potencia") or "MW") if pd.notna(potencia) and float(potencia) > 0 else ""
     correlativo = row.get("correlativo")
-    corr_str    = f'N.{int(float(correlativo))}' if pd.notna(correlativo) else ""
+    corr_num    = str(int(float(correlativo))) if pd.notna(correlativo) else ""
     obs         = str(row.get("observacion") or "").strip()[:220]
+    afecta      = bool(row.get("afecta_sscc"))
 
-    b_status  = f'<span style="background:{c_bg};color:{c_txt};padding:2px 9px;border-radius:5px;font-size:0.72rem;font-weight:700;text-transform:uppercase">{row.get("status","")}</span>'
-    b_central = f'<span style="font-weight:600;font-size:0.85rem">{central_lbl}</span>'
-    b_unidad  = f'<span style="background:#EDE9FE;color:#6D28D9;padding:1px 7px;border-radius:4px;font-size:0.72rem;font-weight:600">{unidad_lbl}</span>' if unidad_lbl else ""
-    b_sscc    = '<span style="background:#FEF3C7;color:#D97706;padding:1px 6px;border-radius:4px;font-size:0.68rem">Afecta SSCC</span>' if row.get("afecta_sscc") else ""
-    b_corr    = f'<span style="font-size:0.68rem;color:#94A3B8">{corr_str}</span>' if corr_str else ""
-    b_fechas  = f'<span style="font-size:0.72rem;color:#64748B">Apertura: <b>{fecha_pert}</b> &rarr; {ret_label}: <b>{fecha_ret}</b></span>'
-    b_pot     = f'<span style="font-size:0.78rem;font-weight:600;color:#DC2626">{pot_val}</span>' if pot_val else ""
-    d_obs     = f'<p style="font-size:0.72rem;color:#64748B;margin:4px 0 0 0">{obs}</p>' if obs else ""
+    partes_f1 = []
+    partes_f1.append(f'<span style="background:{c_bg};color:{c_txt};padding:2px 8px;border-radius:4px;font-size:0.71rem;font-weight:700;text-transform:uppercase">{row.get("status","")}</span>')
+    partes_f1.append(f'<span style="font-weight:600;font-size:0.84rem">{central_lbl}</span>')
+    if unidad_lbl:
+        partes_f1.append(f'<span style="background:#EDE9FE;color:#6D28D9;padding:1px 7px;border-radius:4px;font-size:0.71rem;font-weight:600">{unidad_lbl}</span>')
+    if afecta:
+        partes_f1.append('<span style="background:#FEF3C7;color:#D97706;padding:1px 6px;border-radius:4px;font-size:0.67rem">Afecta SSCC</span>')
+    if corr_num:
+        partes_f1.append(f'<span style="font-size:0.67rem;color:#94A3B8">N. {corr_num}</span>')
 
-    fila1 = " &nbsp; ".join(filter(None, [b_status, b_central, b_unidad, b_sscc, b_corr]))
-    fila2 = b_fechas + (f' &nbsp; {b_pot}' if b_pot else "")
-    st.markdown(
+    f2_left  = f'<span style="font-size:0.71rem;color:#475569">Apertura: <b>{fecha_pert}</b> &rarr; {ret_label}: <b>{fecha_ret}</b></span>'
+    f2_right = f'<span style="font-size:0.77rem;font-weight:700;color:#DC2626">{pot_str}</span>' if pot_str else ""
+    fila2    = f'{f2_left}{("&nbsp;&nbsp;&nbsp;" + f2_right) if f2_right else ""}'
+    obs_div  = f'<div style="font-size:0.71rem;color:#64748B;margin-top:3px">{obs}</div>' if obs else ""
+
+    return (
         f'<div style="border:1px solid #E2E8F0;border-radius:8px;padding:10px 14px;margin-bottom:8px;background:#FAFAFA">'
-        f'<div style="margin-bottom:4px">{fila1}</div>'
+        f'<div style="display:flex;gap:6px;flex-wrap:wrap;align-items:center;margin-bottom:3px">{"".join(partes_f1)}</div>'
         f'<div>{fila2}</div>'
-        f'{d_obs}</div>',
-        unsafe_allow_html=True,
+        f'{obs_div}</div>'
     )
 
 if df_lim.empty:
@@ -976,6 +982,7 @@ else:
     )
     df_lim_sorted = df_lim.sort_values("fecha_perturbacion", ascending=False)
     MAX_CARDS = 5
+
     tabs_lim = st.tabs(["ANG1", "ANG2", "CCR1", "CCR2", "Todas"])
     for tab, unidad in zip(tabs_lim[:4], ["ANG1", "ANG2", "CCR1", "CCR2"]):
         with tab:
@@ -983,29 +990,34 @@ else:
             if df_u.empty:
                 st.info(f"Sin limitaciones para {unidad} en el período.")
             else:
-                for _, row in df_u.head(MAX_CARDS).iterrows():
-                    _render_lim_card(row)
+                cards_html = "".join(_lim_card_html(row) for _, row in df_u.head(MAX_CARDS).iterrows())
+                st.markdown(cards_html, unsafe_allow_html=True)
                 if len(df_u) > MAX_CARDS:
                     st.caption(f"+{len(df_u) - MAX_CARDS} más en «Todas»")
     with tabs_lim[4]:
-        for _, row in df_lim_sorted.iterrows():
-            _render_lim_card(row)
+        cards_html = "".join(_lim_card_html(row) for _, row in df_lim_sorted.iterrows())
+        st.markdown(cards_html, unsafe_allow_html=True)
 
-df_tabla_lim = df_lim if not df_lim.empty else pd.DataFrame()
-with st.expander("Ver tabla completa de limitaciones"):
-    if df_tabla_lim.empty:
-        st.info("Sin datos.")
-    else:
-        cols_show = ["correlativo", "status", "instalacion_nombre", "fecha_perturbacion",
-                     "fecha_retorno_estimada", "fecha_efectiva_retorno",
-                     "potencia", "afecta_sscc", "observacion"]
-        df_t = df_tabla_lim.sort_values("fecha_perturbacion", ascending=False)[
-            [c for c in cols_show if c in df_tabla_lim.columns]
-        ].copy()
-        df_t["correlativo"] = df_t["correlativo"].apply(
-            lambda x: int(float(x)) if pd.notna(x) else None
-        )
-        st.dataframe(df_t, use_container_width=True, hide_index=True)
+    # Tabla completa con <details>/<summary> HTML nativo (evita bug de st.expander post-tabs)
+    df_lim_sorted2 = df_lim_sorted.copy()
+    df_lim_sorted2["correlativo"] = df_lim_sorted2["correlativo"].apply(
+        lambda x: str(int(float(x))) if pd.notna(x) else ""
+    )
+    cols_tabla = ["correlativo", "status", "instalacion_nombre", "fecha_perturbacion",
+                  "fecha_retorno_estimada", "fecha_efectiva_retorno", "potencia", "afecta_sscc", "observacion"]
+    df_t = df_lim_sorted2[[c for c in cols_tabla if c in df_lim_sorted2.columns]]
+    hdrs = "".join(f'<th style="padding:6px 10px;text-align:left;font-size:0.72rem;color:#475569;border-bottom:1px solid #E2E8F0;white-space:nowrap">{c}</th>' for c in df_t.columns)
+    rows_html = ""
+    for _, r in df_t.iterrows():
+        cells = "".join(f'<td style="padding:5px 10px;font-size:0.72rem;border-bottom:1px solid #F1F5F9;white-space:nowrap">{str(r[c]) if pd.notna(r[c]) else ""}</td>' for c in df_t.columns)
+        rows_html += f"<tr>{cells}</tr>"
+    tabla_html = (
+        f'<details style="background:#F8FAFC;border:1px solid #E2E8F0;border-radius:8px;padding:0.6rem 1rem;margin-top:0.5rem">'
+        f'<summary style="cursor:pointer;font-weight:600;color:#334155;font-size:0.88rem">Ver tabla completa de limitaciones ({len(df_t)} registros)</summary>'
+        f'<div style="overflow-x:auto;margin-top:0.6rem"><table style="border-collapse:collapse;width:100%"><thead><tr>{hdrs}</tr></thead><tbody>{rows_html}</tbody></table></div>'
+        f'</details>'
+    )
+    st.markdown(tabla_html, unsafe_allow_html=True)
 
 
 # ── Servicios Complementarios (SSCC) ─────────────────────────
