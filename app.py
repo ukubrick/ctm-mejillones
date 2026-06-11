@@ -454,6 +454,22 @@ def load_sscc(s, e):
         (s, e),
     )
 
+@st.cache_data(ttl=300)
+def load_limitaciones(s, e):
+    # Muestra limitaciones cuya perturbación cae en el período
+    # o que siguen activas (sin retorno efectivo) durante el período
+    return qry(
+        "SELECT id, instalacion_nombre, status, fecha_perturbacion, "
+        "fecha_retorno_estimada, fecha_efectiva_retorno, potencia, "
+        "unidad_medida_potencia, afecta_sscc, observacion, id_central, id_unidad "
+        "FROM limitaciones_transmision "
+        "WHERE fecha_perturbacion::date BETWEEN %s AND %s "
+        "   OR (fecha_perturbacion::date < %s AND "
+        "       (fecha_efectiva_retorno IS NULL OR fecha_efectiva_retorno::date >= %s)) "
+        "ORDER BY fecha_perturbacion DESC",
+        (s, e, s, s),
+    )
+
 @st.cache_data(ttl=60)
 def load_bit(s,e,u=None):
     if u and u!="Todas":
@@ -476,6 +492,7 @@ with st.sidebar:
     _ult_p   = qry("SELECT MAX(fecha_hora) AS t FROM generacion_programada WHERE fuente='CEN_PCP'")
     _ult_cmg = qry("SELECT MAX(fecha_hora) AS t FROM costo_marginal")
     _ult_s   = qry("SELECT MAX(fecha_accion) AS t FROM sscc_instrucciones")
+    _ult_lim = qry("SELECT MAX(modified) AS t FROM limitaciones_transmision")
 
     def _fmt(df, fmt="%d/%m %H:%M"):
         v = df.iloc[0]["t"] if not df.empty else None
@@ -487,6 +504,7 @@ with st.sidebar:
     str_p   = _fmt(_ult_p)
     str_cmg = _fmt(_ult_cmg)
     str_s   = _fmt(_ult_s, "%d/%m/%Y")
+    str_lim = _fmt(_ult_lim, "%d/%m/%Y")
 
     st.markdown(f"""
     <div class="status-box">
@@ -499,6 +517,7 @@ with st.sidebar:
             <span class="dot-status dot-g"></span>Gen. programada → <b>{str_p}</b><br>
             <span class="dot-status dot-g"></span>CMG S3 → <b>{str_cmg}</b><br>
             <span class="dot-status dot-g"></span>SSCC → <b>{str_s}</b><br>
+            <span class="dot-status dot-g"></span>Limitaciones → <b>{str_lim}</b><br>
             <span class="dot-status dot-g"></span>Adquisición GitHub Actions · /hora
         </div>
     </div>
@@ -572,18 +591,23 @@ with ch2:
     ult_cmg  = df_c["fecha_hora"].max() if not df_c.empty else None
     df_sscc_hdr = load_sscc(s, e)
     ult_sscc = df_sscc_hdr["fecha"].max() if not df_sscc_hdr.empty else None
+    df_lim_hdr = load_limitaciones(s, e)
+    n_lim_activas = int((df_lim_hdr["status"] == "pendiente").sum()) if not df_lim_hdr.empty else 0
 
     diff = (datetime.now() - ult_real.to_pydatetime()).seconds
     cls_r = "dot-g" if diff < 7200 else "dot-y"
     prog_str = ult_prog.strftime("%d/%m %H:%M") if ult_prog is not None else "—"
     cmg_str  = ult_cmg.strftime("%d/%m %H:%M")  if ult_cmg  is not None else "—"
     sscc_str = str(ult_sscc) if ult_sscc is not None else "—"
+    lim_cls  = "dot-y" if n_lim_activas > 0 else "dot-g"
+    lim_str  = f"{n_lim_activas} activa{'s' if n_lim_activas != 1 else ''}" if n_lim_activas > 0 else "Sin activas"
 
     st.markdown(f'''<div style="text-align:right;padding-top:1rem;line-height:2">
         <div><span class="dot-status {cls_r}"></span><span style="font-size:0.72rem;color:#64748B">Gen. real: <b>{ult_real.strftime("%d/%m %H:%M")}</b></span></div>
         <div><span class="dot-status dot-g"></span><span style="font-size:0.72rem;color:#64748B">Gen. programada: <b>{prog_str}</b></span></div>
         <div><span class="dot-status dot-g"></span><span style="font-size:0.72rem;color:#64748B">CMG {NOMBRES_NODO.get(nodo_cmg,"Crucero 220kV")}: <b>{cmg_str}</b></span></div>
         <div><span class="dot-status dot-g"></span><span style="font-size:0.72rem;color:#64748B">SSCC: <b>{sscc_str}</b></span></div>
+        <div><span class="dot-status {lim_cls}"></span><span style="font-size:0.72rem;color:#64748B">Limitaciones: <b>{lim_str}</b></span></div>
     </div>''', unsafe_allow_html=True)
 
 
@@ -877,6 +901,74 @@ if not df_c.empty:
         col.metric(lbl, val, sub)
 else:
     st.info("Sin datos de CMG para calcular estadísticos de costo.")
+
+
+# ── Limitaciones de Transmisión ───────────────────────────────
+st.markdown('<div class="sec">LIMITACIONES DE TRANSMISIÓN — ANG / CCR</div>', unsafe_allow_html=True)
+
+ID_UNIDAD_LABEL = {1965: "ANG1", 1966: "ANG2", 1967: "CCR1", 1968: "CCR2"}
+ID_CENTRAL_LABEL = {377: "Angamos", 379: "Cochrane"}
+
+STATUS_COLOR_LIM = {
+    "pendiente":  ("#D97706", "#FEF3C7"),
+    "finalizado": ("#16A34A", "#DCFCE7"),
+    "anulado":    ("#94A3B8", "#F1F5F9"),
+}
+
+df_lim = load_limitaciones(s, e)
+
+if df_lim.empty:
+    st.info("Sin limitaciones registradas para el período seleccionado.", icon="ℹ️")
+else:
+    # KPIs rápidos
+    activas   = df_lim[df_lim["status"] == "pendiente"]
+    n_activas = len(activas)
+    n_total   = len(df_lim)
+    n_sscc    = int(df_lim["afecta_sscc"].fillna(False).sum())
+    pot_max   = df_lim[df_lim["status"] == "pendiente"]["potencia"].max()
+    pot_str   = f"{pot_max:.0f} MW" if pd.notna(pot_max) and pot_max > 0 else "—"
+
+    kl1, kl2, kl3, kl4 = st.columns(4)
+    kl1.metric("Activas (pendiente)",    n_activas)
+    kl2.metric("Total en período",        n_total)
+    kl3.metric("Afectan SSCC",           n_sscc)
+    kl4.metric("Mayor limitación activa", pot_str)
+
+    # Tabla de limitaciones
+    for _, row in df_lim.iterrows():
+        st_key   = str(row.get("status", "")).lower()
+        c_txt, c_bg = STATUS_COLOR_LIM.get(st_key, ("#475569", "#F8FAFC"))
+        unidad_lbl = ID_UNIDAD_LABEL.get(int(row["id_unidad"]) if pd.notna(row.get("id_unidad")) else -1, "")
+        central_lbl = ID_CENTRAL_LABEL.get(int(row["id_central"]) if pd.notna(row.get("id_central")) else -1,
+                                            str(row.get("instalacion_nombre", "")).split(" - ")[0])
+        unidad_badge = f'<span style="background:#EDE9FE;color:#6D28D9;padding:1px 7px;border-radius:4px;font-size:0.72rem;font-weight:600;margin-left:6px">{unidad_lbl}</span>' if unidad_lbl else ""
+        fecha_pert = str(row.get("fecha_perturbacion", ""))[:16]
+        fecha_ret  = str(row.get("fecha_efectiva_retorno") or row.get("fecha_retorno_estimada") or "—")[:16]
+        pot_val    = f'{row["potencia"]:.0f} {row.get("unidad_medida_potencia","MW")}' if pd.notna(row.get("potencia")) and row.get("potencia", 0) > 0 else "—"
+        sscc_tag   = '<span style="background:#FEF3C7;color:#D97706;padding:1px 6px;border-radius:4px;font-size:0.68rem">⚡ Afecta SSCC</span>' if row.get("afecta_sscc") else ""
+        obs        = str(row.get("observacion") or "").strip()[:200]
+        obs_html   = f'<div style="font-size:0.72rem;color:#64748B;margin-top:4px">{obs}</div>' if obs else ""
+
+        st.markdown(f"""
+        <div style="border:1px solid #E2E8F0;border-radius:8px;padding:10px 14px;margin-bottom:8px;background:#FAFAFA">
+            <div style="display:flex;align-items:center;gap:8px;flex-wrap:wrap">
+                <span style="background:{c_bg};color:{c_txt};padding:2px 9px;border-radius:5px;font-size:0.72rem;font-weight:700;text-transform:uppercase">{row.get("status","")}</span>
+                <span style="font-weight:600;font-size:0.85rem">{central_lbl}</span>
+                {unidad_badge}
+                {sscc_tag}
+                <span style="margin-left:auto;font-size:0.72rem;color:#64748B">🗓 {fecha_pert} → {fecha_ret}</span>
+                <span style="font-size:0.78rem;font-weight:600;color:#DC2626">{pot_val}</span>
+            </div>
+            {obs_html}
+        </div>
+        """, unsafe_allow_html=True)
+
+    with st.expander("Ver tabla completa de limitaciones"):
+        cols_show = ["status", "instalacion_nombre", "fecha_perturbacion",
+                     "fecha_retorno_estimada", "fecha_efectiva_retorno",
+                     "potencia", "afecta_sscc", "observacion"]
+        st.dataframe(df_lim[[c for c in cols_show if c in df_lim.columns]],
+                     use_container_width=True, hide_index=True)
 
 
 # ── Servicios Complementarios (SSCC) ─────────────────────────

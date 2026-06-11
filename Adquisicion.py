@@ -6,6 +6,7 @@ Fuentes de datos:
   · Generación programada  → API CEN SIPUB /generacion-programada-pcp/v4
   · CMG nodos CTM          → JSON S3 público del portal CEN (~15 min)
   · SSCC instrucciones     → API CEN Operaciones /servicios-complementarios/v1
+  · Limitaciones           → API CEN SIPUB /limitaciones-transmision/v4
 
 Variables de entorno (.env o GitHub Secrets):
   CEN_USER_KEY   → portal.api.coordinador.cl (plan SIP)
@@ -78,6 +79,12 @@ LLAVES_SSCC = {
 }
 
 DIAS_VENTANA = 2   # días hacia atrás para gen. real y programada
+
+# id_unidad → código interno (confirmado en exploración 2026-06-11)
+ID_UNIDAD_MAP = {1965: "ANG1", 1966: "ANG2", 1967: "CCR1", 1968: "CCR2"}
+IDS_CENTRALES_SET = {ID_ANGAMOS, ID_COCHRANE}
+# Ventana hacia atrás para limitaciones (más amplia: cambios pueden durar semanas)
+DIAS_VENTANA_LIM = 30
 
 # ── Logging ───────────────────────────────────────────────────
 logging.basicConfig(
@@ -521,6 +528,119 @@ def upsert_sscc(registros: list[dict]) -> tuple[int, int]:
     return nuevos, actualizados
 
 
+def fetch_limitaciones(start: str, end: str) -> list[dict]:
+    """
+    Trae limitaciones de transmisión de Angamos y Cochrane desde la API CEN SIP.
+    Endpoint: /limitaciones-transmision/v4/findByDate (plan SIP, sin prefijo sipub/api/rest).
+    Filtra por id_central ∈ {377, 379} o empresa_nombre/instalacion_nombre que contenga
+    ANGAMOS o COCHRANE. Pagina con limit=100 hasta agotar páginas.
+    """
+    if not CEN_USER_KEY:
+        log.warning("  CEN_USER_KEY no configurada — saltando limitaciones")
+        return []
+
+    registros = []
+    page = 1
+    base_url = f"{API_BASE_SIP}/limitaciones-transmision/v4/findByDate"
+
+    try:
+        while True:
+            r = _get_with_retry(
+                base_url,
+                params={"user_key": CEN_USER_KEY, "startDate": start,
+                        "endDate": end, "page": page, "limit": 100},
+            )
+            body  = r.json()
+            data  = body.get("data", [])
+            total = body.get("totalPages", 1)
+
+            if not data:
+                break
+
+            for rec in data:
+                id_c      = rec.get("id_central")
+                empresa   = (rec.get("empresa_nombre")   or "").upper()
+                instalac  = (rec.get("instalacion_nombre") or "").upper()
+                id_c_int  = int(float(id_c)) if id_c is not None else None
+
+                if (id_c_int in IDS_CENTRALES_SET or
+                        "ANGAMOS"  in empresa or "COCHRANE" in empresa or
+                        "ANGAMOS"  in instalac or "COCHRANE" in instalac):
+                    id_unidad     = rec.get("id_unidad")
+                    id_unidad_int = int(float(id_unidad)) if id_unidad is not None else None
+                    registros.append({
+                        "id":                       rec.get("id"),
+                        "correlativo":              rec.get("correlativo"),
+                        "empresa_nombre":           rec.get("empresa_nombre"),
+                        "instalacion_nombre":       rec.get("instalacion_nombre"),
+                        "status":                   rec.get("status"),
+                        "fecha_perturbacion":       rec.get("fecha_perturbacion"),
+                        "fecha_retorno_estimada":   rec.get("fecha_retorno_estimada"),
+                        "fecha_efectiva_retorno":   rec.get("fecha_efectiva_retorno"),
+                        "potencia":                 rec.get("potencia"),
+                        "unidad_medida_potencia":   rec.get("unidad_medida_potencia"),
+                        "produce_indisponibilidad": rec.get("produce_indisponibilidad"),
+                        "afecta_sscc":              rec.get("afecta_sscc"),
+                        "elemento_a_trabajar":      rec.get("elemento_a_trabajar"),
+                        "tipos_elementos":          rec.get("tipos_elementos"),
+                        "observacion":              rec.get("observacion"),
+                        "id_central":               id_c_int,
+                        "id_unidad":                id_unidad_int,
+                        "partition_date":           rec.get("partition_date"),
+                        "created":                  rec.get("created"),
+                        "modified":                 rec.get("modified"),
+                    })
+
+            log.info(f"  Limitaciones pág {page}/{total}")
+            if page >= total:
+                break
+            page += 1
+
+        log.info(f"  Limitaciones ANG/CCR ({start}→{end}): {len(registros)} registros")
+    except Exception as e:
+        log.error(f"  Error limitaciones: {e}")
+
+    return registros
+
+
+def upsert_limitaciones(registros: list[dict]) -> tuple[int, int]:
+    if not registros:
+        return 0, 0
+    sql = """
+        INSERT INTO limitaciones_transmision
+            (id, correlativo, empresa_nombre, instalacion_nombre, status,
+             fecha_perturbacion, fecha_retorno_estimada, fecha_efectiva_retorno,
+             potencia, unidad_medida_potencia, produce_indisponibilidad, afecta_sscc,
+             elemento_a_trabajar, tipos_elementos, observacion,
+             id_central, id_unidad, partition_date, created, modified)
+        VALUES
+            (%(id)s, %(correlativo)s, %(empresa_nombre)s, %(instalacion_nombre)s, %(status)s,
+             %(fecha_perturbacion)s, %(fecha_retorno_estimada)s, %(fecha_efectiva_retorno)s,
+             %(potencia)s, %(unidad_medida_potencia)s, %(produce_indisponibilidad)s, %(afecta_sscc)s,
+             %(elemento_a_trabajar)s, %(tipos_elementos)s, %(observacion)s,
+             %(id_central)s, %(id_unidad)s, %(partition_date)s, %(created)s, %(modified)s)
+        ON CONFLICT (id) DO UPDATE SET
+            status                   = EXCLUDED.status,
+            fecha_efectiva_retorno   = EXCLUDED.fecha_efectiva_retorno,
+            fecha_retorno_estimada   = EXCLUDED.fecha_retorno_estimada,
+            potencia                 = EXCLUDED.potencia,
+            observacion              = EXCLUDED.observacion,
+            modified                 = EXCLUDED.modified
+    """
+    nuevos = actualizados = 0
+    try:
+        with get_conn() as conn:
+            with conn.cursor() as cur:
+                for rec in registros:
+                    cur.execute(sql, rec)
+                    if cur.rowcount == 1: nuevos      += 1
+                    else:                actualizados += 1
+            conn.commit()
+    except Exception as e:
+        log.error(f"  Error upsert limitaciones: {e}")
+    return nuevos, actualizados
+
+
 def log_adquisicion(endpoint, fecha, nuevos, dupes, duracion_ms, error=None):
     sql = """
         INSERT INTO log_adquisicion
@@ -614,6 +734,21 @@ def run():
             err_str = str(e); log.error(f"  ❌ SSCC: {e}"); nuevos = actualizados = 0
         log_adquisicion("sscc_instrucciones", fecha, nuevos, actualizados,
                         int((time.time() - t0) * 1000), err_str)
+
+    # ── Limitaciones transmisión ANG/CCR (ventana amplia) ────────
+    lim_start = (hoy - timedelta(days=DIAS_VENTANA_LIM)).strftime("%Y-%m-%d")
+    lim_end   = hoy.strftime("%Y-%m-%d")
+    log.info(f"\n  ── Limitaciones transmisión {lim_start} → {lim_end}")
+    t0 = time.time()
+    err_str = None
+    try:
+        regs_lim             = fetch_limitaciones(lim_start, lim_end)
+        nuevos, actualizados = upsert_limitaciones(regs_lim)
+        log.info(f"  ✅ Limitaciones: {nuevos} nuevos, {actualizados} actualizados")
+    except Exception as e:
+        err_str = str(e); log.error(f"  ❌ Limitaciones: {e}"); nuevos = actualizados = 0
+    log_adquisicion("limitaciones_transmision", lim_end, nuevos, actualizados,
+                    int((time.time() - t0) * 1000), err_str)
 
     log.info(f"\n  Fin adquisición\n")
 

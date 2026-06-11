@@ -66,6 +66,14 @@ Adquisición automática vía GitHub Actions cada hora (minuto 5 UTC).
 - PK conflict: `(fecha, id_configuracion, instruccion_sscc, inicio_periodo)` → DO UPDATE fin_periodo, disponibilidad, estado_sabana, comentario, fecha_accion, usuario
 - Campos: id, fecha, inicio_periodo, fin_periodo, instruccion_sscc, id_configuracion, central_subestacion, central_unidad, unidad, configuracion_panio, barra_ct, disponibilidad, baja, sube, unidad_medida, motivo, comentario, estado_sabana, sabana, fecha_accion, usuario
 
+**limitaciones_transmision**
+- PK: `id` (string hex de la API CEN) → DO UPDATE status, fecha_efectiva_retorno, fecha_retorno_estimada, potencia, observacion, modified
+- Campos: id, correlativo, empresa_nombre, instalacion_nombre, status (pendiente/finalizado/anulado), fecha_perturbacion, fecha_retorno_estimada, fecha_efectiva_retorno, potencia, unidad_medida_potencia, produce_indisponibilidad, afecta_sscc, elemento_a_trabajar, tipos_elementos, observacion, id_central, id_unidad, partition_date, created, modified
+- Mapeo id_unidad → unidad: 1965=ANG1, 1966=ANG2, 1967=CCR1, 1968=CCR2
+- Ventana adquisición: 30 días hacia atrás (`DIAS_VENTANA_LIM=30`) para capturar limitaciones de larga duración
+- Endpoint: `https://sipub.api.coordinador.cl/limitaciones-transmision/v4/findByDate` (SIN prefijo `/sipub/api/rest/v4/`)
+- Filtro: id_central ∈ {377,379} OR empresa_nombre/instalacion_nombre contiene ANGAMOS o COCHRANE
+
 **bitacora**
 - Campos: id, unidad, autor, comentario, fecha, hora
 
@@ -82,7 +90,8 @@ API_BASE_OPS = "https://operacion.api.coordinador.cl"
 ID_ANGAMOS   = 377
 ID_COCHRANE  = 379
 TZ_CHILE     = ZoneInfo("America/Santiago")
-DIAS_VENTANA = 2   # días hacia atrás — gen. real, programada y SSCC
+DIAS_VENTANA     = 2   # días hacia atrás — gen. real, programada y SSCC
+DIAS_VENTANA_LIM = 30  # días hacia atrás — limitaciones (duración larga)
 
 # Mapeo gen. real
 LLAVES_OPREAL = {
@@ -150,7 +159,7 @@ Todos los endpoints usan `_get_with_retry()` con backoff exponencial:
 
 ---
 
-## Estado actual del código (2026-06-11)
+## Estado actual del código (2026-06-11 — actualizado)
 
 Todo implementado y funcionando en producción:
 - ✅ Generación real automática (API CEN SIPUB) — ventana 2 días
@@ -171,6 +180,8 @@ Todo implementado y funcionando en producción:
 - ✅ Header superior derecho: 4 indicadores con dot verde palpitante — Gen. real, Gen. programada, CMG (con nodo), SSCC — cada uno con fecha/hora del último dato en DB
 - ✅ Checkbox "Mostrar área de desviación (Real vs Programada)" activado por defecto
 - ✅ Dots de unidades en tabs: ANG1 🟣, ANG2 🔵, CCR1 🟡, CCR2 🟢
+- ✅ Limitaciones de transmisión (API CEN SIP `/limitaciones-transmision/v4/findByDate`) — tabla en DB, adquisición automática ventana 30 días, sección visual sobre SSCC con KPIs (activas, total, afecta SSCC, mayor potencia), cards por limitación con status/colores, expander tabla completa
+- ✅ Header y sidebar actualizados con indicador de limitaciones activas (dot amarillo si hay pendientes)
 
 ---
 
@@ -181,3 +192,4 @@ Todo implementado y funcionando en producción:
 - **Stock combustible** (`/stock-combustible/v4/findByDate`, SIP) — retorna 404 consistente, posible endpoint inactivo o requiere parámetros distintos.
 - **Optimización PCP:** actualmente se hacen 2 consultas separadas (una por día en DIAS_VENTANA). Podría hacerse una sola con rango de 2 días para reducir tiempo de ~24 min a ~12 min.
 - **Limitaciones/estado operativo unidades:** `/operativos/v1/estados` (Operaciones) sólo retorna catálogo de 21 tipos de estado (LP, LF, LC, DLP, etc.), no el estado actual por unidad. Los módulos referenciados (`desconexion_intervencion`, `informe_fallas`, `limitaciones`) tienen rutas propias aún no identificadas. Angamos ID=377, Cochrane ID=379.
+- **Limpieza de archivos obsoletos:** eliminar scripts de prueba/exploración que ya cumplieron su propósito: `check_cmg.py`, `probe_sscc.py`, `test_api_cen.py`, `test_cmg_crucero.py`, `test_scraping_cmg.py`, `resumen_endpoints_sscc_sen.md`. También evaluar si conservar `backfill_programada.py` (backfill jun 5–9 ya completado).
