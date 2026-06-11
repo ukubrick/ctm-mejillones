@@ -150,7 +150,7 @@ Todos los endpoints usan `_get_with_retry()` con backoff exponencial:
 
 ---
 
-## Estado actual del código (2026-06-09)
+## Estado actual del código (2026-06-11)
 
 Todo implementado y funcionando en producción:
 - ✅ Generación real automática (API CEN SIPUB) — ventana 2 días
@@ -164,8 +164,13 @@ Todo implementado y funcionando en producción:
 - ✅ Workflow timeout 35 min (PCP tarda ~12 min/día)
 - ✅ Auto-refresh horario (`streamlit-autorefresh`, 3600000 ms) — recarga automática y previene sleep de Streamlit Cloud
 - ✅ Sección SSCC ubicada después de CMG, con guía desplegable (`<details>/<summary>` HTML nativo), KPIs, tabs Por unidad / Estadísticas / Tabla completa
+- ✅ Tab "Por unidad" SSCC muestra máximo 5 instrucciones recientes por unidad (ordenadas fecha desc); si hay más aparece caption "+N más en «Tabla completa»"
 - ✅ Footer: "Dashboard creado por Erick Herrera"
 - ✅ Backfill gen. programada 05–09 junio 2026 completado (3115 registros recuperados)
+- ✅ Sidebar: dot verde palpitante en todas las fuentes, texto "Conectado · Supabase / PostgreSQL", última fecha adquirida por cada fuente (Gen. real, Gen. programada, CMG S3, SSCC)
+- ✅ Header superior derecho: 4 indicadores con dot verde palpitante — Gen. real, Gen. programada, CMG (con nodo), SSCC — cada uno con fecha/hora del último dato en DB
+- ✅ Checkbox "Mostrar área de desviación (Real vs Programada)" activado por defecto
+- ✅ Dots de unidades en tabs: ANG1 🟣, ANG2 🔵, CCR1 🟡, CCR2 🟢
 
 ---
 
