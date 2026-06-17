@@ -901,6 +901,19 @@ def load_limitaciones(s, e):
         (s, e, s, s),
     )
 
+@st.cache_data(ttl=300)
+def load_solicitudes(s, e):
+    return qry(
+        "SELECT id, correlativo, empresa_nombre, instalacion_nombre, status, "
+        "tipo_solicitud, type, tipo_programacion, descripcion_nivel_riesgo, "
+        "fecha_inicio, fecha_fin, modified "
+        "FROM solicitudes_trabajo "
+        "WHERE fecha_inicio::date <= %s AND fecha_fin::date >= %s "
+        "   OR partition_date::date BETWEEN %s AND %s "
+        "ORDER BY fecha_inicio DESC",
+        (e, s, s, e),
+    )
+
 @st.cache_data(ttl=60)
 def load_bit(s,e,u=None):
     if u and u!="Todas":
@@ -924,6 +937,7 @@ with st.sidebar:
     _ult_cmg = qry("SELECT MAX(fecha_hora) AS t FROM costo_marginal")
     _ult_s   = qry("SELECT MAX(fecha_accion) AS t FROM sscc_instrucciones")
     _ult_lim = qry("SELECT MAX(modified) AS t FROM limitaciones_transmision")
+    _ult_sol = qry("SELECT MAX(modified) AS t FROM solicitudes_trabajo")
 
     def _fmt(df, fmt="%d/%m %H:%M"):
         v = df.iloc[0]["t"] if not df.empty else None
@@ -936,6 +950,7 @@ with st.sidebar:
     str_cmg = _fmt(_ult_cmg)
     str_s   = _fmt(_ult_s, "%d/%m/%Y")
     str_lim = _fmt(_ult_lim, "%d/%m/%Y")
+    str_sol = _fmt(_ult_sol, "%d/%m/%Y")
 
     st.markdown(f"""
     <div class="status-box">
@@ -949,6 +964,7 @@ with st.sidebar:
             <span class="dot-status dot-g"></span>CMG S3 → <b>{str_cmg}</b><br>
             <span class="dot-status dot-g"></span>SSCC → <b>{str_s}</b><br>
             <span class="dot-status dot-g"></span>Limitaciones → <b>{str_lim}</b><br>
+            <span class="dot-status dot-g"></span>Solicitudes → <b>{str_sol}</b><br>
             <span class="dot-status dot-g"></span>Adquisición GitHub Actions · /hora
         </div>
     </div>
@@ -1556,6 +1572,97 @@ else:
         f'</details>'
     )
     st.markdown(tabla_html, unsafe_allow_html=True)
+
+
+# ── Solicitudes de Trabajo ────────────────────────────────────
+st.markdown('<div class="sec">SOLICITUDES DE TRABAJO — AES ANDES / ANG / CCR</div>', unsafe_allow_html=True)
+
+STATUS_COLOR_SOL = {
+    "pendiente":          ("#D97706", "#FEF3C7"),
+    "ejecucion_exitosa":  ("#16A34A", "#DCFCE7"),
+    "anulado":            ("#94A3B8", "#F1F5F9"),
+    "borrador":           ("#6366F1", "#EEF2FF"),
+}
+TIPO_LABEL = {"desconexion": "Desconexión", "intervencion": "Intervención"}
+TYPE_LABEL = {"central_generadora": "Central", "subestacion": "Subestación", "linea": "Línea"}
+
+df_sol = load_solicitudes(s, e)
+
+if df_sol.empty:
+    st.info("Sin solicitudes de trabajo registradas para el período seleccionado.", icon="ℹ️")
+else:
+    # KPIs
+    n_total    = len(df_sol)
+    n_pend     = (df_sol["status"] == "pendiente").sum()
+    n_ejec     = (df_sol["status"] == "ejecucion_exitosa").sum()
+    n_desc     = (df_sol["tipo_solicitud"] == "desconexion").sum()
+
+    kc1, kc2, kc3, kc4 = st.columns(4)
+    kc1.metric("Total solicitudes", n_total)
+    kc2.metric("Pendientes", int(n_pend))
+    kc3.metric("Ejecutadas", int(n_ejec))
+    kc4.metric("Desconexiones", int(n_desc))
+
+    # Tabs
+    tab_s_todas, tab_s_pend, tab_s_tabla = st.tabs(["Todas", "Pendientes", "Tabla completa"])
+
+    def _sol_cards(df_view):
+        if df_view.empty:
+            st.info("Sin registros.", icon="ℹ️"); return
+        for _, row in df_view.head(10).iterrows():
+            st_key      = str(row.get("status", "")).lower()
+            c_txt, c_bg = STATUS_COLOR_SOL.get(st_key, ("#475569", "#F8FAFC"))
+            tipo_lbl    = TIPO_LABEL.get(str(row.get("tipo_solicitud","")), str(row.get("tipo_solicitud","")))
+            type_lbl    = TYPE_LABEL.get(str(row.get("type","")), str(row.get("type","")))
+            inst        = str(row.get("instalacion_nombre") or "—")
+            f_ini       = str(row.get("fecha_inicio") or "—")[:16]
+            f_fin       = str(row.get("fecha_fin")    or "—")[:16]
+            corr        = int(row["correlativo"]) if pd.notna(row.get("correlativo")) else "—"
+            riesgo      = str(row.get("descripcion_nivel_riesgo") or "—")
+            st.markdown(f"""
+            <div style="background:{c_bg};border-left:4px solid {c_txt};border-radius:6px;
+                        padding:0.6rem 0.9rem;margin-bottom:0.5rem;font-size:0.82rem">
+                <div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:0.3rem">
+                    <span style="font-weight:700;color:#1E293B">N° {corr} — {inst}</span>
+                    <span style="background:{c_txt};color:#fff;border-radius:4px;
+                                 padding:2px 8px;font-size:0.72rem;font-weight:600">
+                        {st_key.replace("_"," ").upper()}
+                    </span>
+                </div>
+                <div style="color:#475569;line-height:1.7">
+                    <b>Tipo:</b> {tipo_lbl} · {type_lbl} &nbsp;|&nbsp;
+                    <b>Inicio:</b> {f_ini} &nbsp;|&nbsp; <b>Fin:</b> {f_fin}<br>
+                    <b>Riesgo:</b> {riesgo[:120]}{'…' if len(riesgo)>120 else ''}
+                </div>
+            </div>
+            """, unsafe_allow_html=True)
+        if len(df_view) > 10:
+            st.caption(f"+{len(df_view)-10} más en «Tabla completa»")
+
+    with tab_s_todas:
+        _sol_cards(df_sol)
+
+    with tab_s_pend:
+        df_pend = df_sol[df_sol["status"] == "pendiente"]
+        _sol_cards(df_pend)
+
+    with tab_s_tabla:
+        cols_show = ["correlativo", "empresa_nombre", "instalacion_nombre", "status",
+                     "tipo_solicitud", "type", "fecha_inicio", "fecha_fin"]
+        df_t = df_sol[cols_show].copy()
+        df_t.columns = ["Correlativo", "Empresa", "Instalación", "Status",
+                        "Tipo", "Elemento", "Inicio", "Fin"]
+        hdrs = "".join(f'<th style="padding:5px 10px;background:#F1F5F9;font-size:0.72rem;text-align:left">{c}</th>' for c in df_t.columns)
+        rows_html = ""
+        for _, r in df_t.iterrows():
+            cells = "".join(f'<td style="padding:5px 10px;font-size:0.72rem;border-bottom:1px solid #F1F5F9;white-space:nowrap">{str(r[c]) if pd.notna(r[c]) else ""}</td>' for c in df_t.columns)
+            rows_html += f"<tr>{cells}</tr>"
+        tabla_html = (
+            f'<div style="overflow-x:auto;margin-top:0.5rem">'
+            f'<table style="border-collapse:collapse;width:100%">'
+            f'<thead><tr>{hdrs}</tr></thead><tbody>{rows_html}</tbody></table></div>'
+        )
+        st.markdown(tabla_html, unsafe_allow_html=True)
 
 
 # ── Servicios Complementarios (SSCC) ─────────────────────────

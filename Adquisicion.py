@@ -656,6 +656,110 @@ def upsert_limitaciones(registros: list[dict]) -> tuple[int, int]:
     return nuevos, actualizados
 
 
+def fetch_solicitudes(start: str, end: str) -> list[dict]:
+    """
+    Trae solicitudes de trabajo de AES Andes / Angamos / Cochrane desde API CEN SIP.
+    Endpoint: /solicitudes-trabajo/v4/findByDate (plan SIP, page base 1, limit=100).
+    Filtra localmente por empresa_nombre o grupo_nombre que contenga
+    'AES ANDES' o 'ANGAMOS' o 'COCHRANE'.
+    """
+    if not CEN_USER_KEY:
+        log.warning("  CEN_USER_KEY no configurada — saltando solicitudes")
+        return []
+
+    PALABRAS_AES = {"AES ANDES", "ANGAMOS", "COCHRANE"}
+    registros = []
+    page = 1
+    base_url = f"{API_BASE_SIP}/solicitudes-trabajo/v4/findByDate"
+
+    try:
+        while True:
+            r = _get_with_retry(
+                base_url,
+                params={"user_key": CEN_USER_KEY, "startDate": start,
+                        "endDate": end, "page": page, "limit": 100},
+            )
+            body  = r.json()
+            data  = body.get("data", [])
+            total = body.get("totalPages", 1)
+
+            if not data:
+                break
+
+            for rec in data:
+                empresa = (rec.get("empresa_nombre") or "").upper()
+                grupo   = (rec.get("grupo_nombre")   or "").upper()
+                if not any(p in empresa or p in grupo for p in PALABRAS_AES):
+                    continue
+                registros.append({
+                    "id":                       rec.get("id"),
+                    "correlativo":              int(rec["correlativo"]) if rec.get("correlativo") else None,
+                    "empresa_nombre":           rec.get("empresa_nombre"),
+                    "grupo_nombre":             rec.get("grupo_nombre"),
+                    "instalacion_nombre":       rec.get("instalacion_nombre"),
+                    "centro_control":           rec.get("centro_control"),
+                    "status":                   rec.get("status"),
+                    "tipo_solicitud":           rec.get("tipo_solicitud"),
+                    "type":                     rec.get("type"),
+                    "origen":                   rec.get("origen"),
+                    "tipo_programacion":        rec.get("tipo_programacion"),
+                    "consumo":                  rec.get("consumo"),
+                    "descripcion_nivel_riesgo": rec.get("descripcion_nivel_riesgo"),
+                    "fecha_inicio":             rec.get("fecha_inicio"),
+                    "fecha_fin":                rec.get("fecha_fin"),
+                    "created":                  rec.get("created"),
+                    "modified":                 rec.get("modified"),
+                    "partition_date":           rec.get("partition_date"),
+                })
+
+            log.info(f"  Solicitudes pág {page}/{total}")
+            if page >= int(total):
+                break
+            page += 1
+
+    except Exception as e:
+        log.error(f"  Error solicitudes: {e}")
+
+    log.info(f"  Solicitudes AES/ANG/CCR ({start}→{end}): {len(registros)} registros")
+    return registros
+
+
+def upsert_solicitudes(registros: list[dict]) -> tuple[int, int]:
+    if not registros:
+        return 0, 0
+    sql = """
+        INSERT INTO solicitudes_trabajo
+            (id, correlativo, empresa_nombre, grupo_nombre, instalacion_nombre,
+             centro_control, status, tipo_solicitud, type, origen,
+             tipo_programacion, consumo, descripcion_nivel_riesgo,
+             fecha_inicio, fecha_fin, created, modified, partition_date)
+        VALUES
+            (%(id)s, %(correlativo)s, %(empresa_nombre)s, %(grupo_nombre)s,
+             %(instalacion_nombre)s, %(centro_control)s, %(status)s,
+             %(tipo_solicitud)s, %(type)s, %(origen)s, %(tipo_programacion)s,
+             %(consumo)s, %(descripcion_nivel_riesgo)s,
+             %(fecha_inicio)s, %(fecha_fin)s, %(created)s, %(modified)s,
+             %(partition_date)s)
+        ON CONFLICT (id) DO UPDATE SET
+            status             = EXCLUDED.status,
+            fecha_inicio       = EXCLUDED.fecha_inicio,
+            fecha_fin          = EXCLUDED.fecha_fin,
+            modified           = EXCLUDED.modified
+    """
+    nuevos = actualizados = 0
+    try:
+        with get_conn() as conn:
+            with conn.cursor() as cur:
+                for rec in registros:
+                    cur.execute(sql, rec)
+                    if cur.rowcount == 1: nuevos      += 1
+                    else:                actualizados += 1
+            conn.commit()
+    except Exception as e:
+        log.error(f"  Error upsert solicitudes: {e}")
+    return nuevos, actualizados
+
+
 def log_adquisicion(endpoint, fecha, nuevos, dupes, duracion_ms, error=None):
     sql = """
         INSERT INTO log_adquisicion
@@ -762,6 +866,21 @@ def run():
     except Exception as e:
         err_str = str(e); log.error(f"  ❌ Limitaciones: {e}"); nuevos = actualizados = 0
     log_adquisicion("limitaciones_transmision", lim_end, nuevos, actualizados,
+                    int((time.time() - t0) * 1000), err_str)
+
+    # ── Solicitudes de trabajo AES/ANG/CCR (ventana 7 días) ──────
+    sol_start = (hoy - timedelta(days=7)).strftime("%Y-%m-%d")
+    sol_end   = hoy.strftime("%Y-%m-%d")
+    log.info(f"\n  ── Solicitudes de trabajo {sol_start} → {sol_end}")
+    t0 = time.time()
+    err_str = None
+    try:
+        regs_sol             = fetch_solicitudes(sol_start, sol_end)
+        nuevos, actualizados = upsert_solicitudes(regs_sol)
+        log.info(f"  ✅ Solicitudes: {nuevos} nuevos, {actualizados} actualizados")
+    except Exception as e:
+        err_str = str(e); log.error(f"  ❌ Solicitudes: {e}"); nuevos = actualizados = 0
+    log_adquisicion("solicitudes_trabajo", sol_end, nuevos, actualizados,
                     int((time.time() - t0) * 1000), err_str)
 
     log.info(f"\n  Fin adquisición\n")
