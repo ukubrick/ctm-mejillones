@@ -1564,12 +1564,14 @@ st.markdown('<div class="sec">SERVICIOS COMPLEMENTARIOS (SSCC)</div>', unsafe_al
 COLORES_SSCC = {
     "CSF(+)": "#16A34A", "CSF(-)": "#0891B2",
     "CPF(+)": "#6D28D9", "CPF(-)": "#D97706",
-    "CT":     "#64748B",
+    "CT":     "#CA8A04",
+    "CTF":    "#DC2626",
 }
 BADGE_SSCC = {
     "CSF(+)": "#DCFCE7", "CSF(-)": "#CFFAFE",
     "CPF(+)": "#EDE9FE", "CPF(-)": "#FEF3C7",
-    "CT":     "#F1F5F9",
+    "CT":     "#FEF9C3",
+    "CTF":    "#FEE2E2",
 }
 st.markdown("""
 <details style="background:#F8FAFC;border:1px solid #E2E8F0;border-radius:8px;padding:0.7rem 1rem;margin-bottom:1rem;">
