@@ -29,7 +29,7 @@ Adquisición automática vía GitHub Actions cada hora (minuto 5 UTC).
 - `app.py` — Dashboard Streamlit v5 (~1300 líneas)
 - `Adquisicion.py` — Script de adquisición (~620 líneas)
 - `requirements.txt` — requests, psycopg2-binary, python-dotenv, streamlit, pandas, plotly, matplotlib, reportlab, **streamlit-autorefresh**
-- `.github/workflows/adquisicion.yml` — cron "5 * * * *", timeout 35 min
+- `.github/workflows/adquisicion.yml` — cron "5 * * * *", timeout 55 min
 - `backfill_programada.py` — script de recuperación manual de gen. programada (uso: `python3 backfill_programada.py YYYY-MM-DD YYYY-MM-DD`)
 
 ---
@@ -162,7 +162,7 @@ Todos los endpoints usan `_get_with_retry()` con backoff exponencial:
 | Endpoint | Host | Ruta exacta | Params clave | Notas |
 |----------|------|-------------|--------------|-------|
 | Generación real | SIP | `/generacion-real/v3/findByDate` | `startDate`, `endDate`, `idCentral`, `pageSize=5000` | Filtra por central en servidor |
-| Generación programada PCP | SIP | `/generacion-programada-pcp/v4/findByDate` | `startDate`, `endDate`, `page`, `limit=5000` | NO filtra por central → paginar todo (~61 págs) y filtrar local por `id_central ∈ {377,379}` |
+| Generación programada PCP | SIP | `/generacion-programada-pcp/v4/findByDate` | `startDate`, `endDate`, `page`, `limit=5000` | NO filtra por central → paginar todo (~61 págs) y filtrar local por `id_central ∈ {377,379}`. Se consulta rango completo (startDate→endDate) en una sola llamada, no una por día |
 | CMG online | S3 público | `https://cen-template-graph-pweb-prod.s3.us-east-1.amazonaws.com/CMG-online/costo-marginal-online.json` | — | JSON estático, se actualiza ~15 min. Requiere `Referer` header. Solo 8 nodos fijos, NO incluye Mejillones/Angamos/Cochrane |
 | SSCC instrucciones | Operaciones | `/servicios-complementarios/v1` | `initDate`, `endDate`, `page=0`, `pageSize=-1` | `-1` trae todo en una llamada (~350 registros sistema, ~10 ANG/CCR) |
 | Limitaciones transmisión | SIP | `/limitaciones-transmision/v4/findByDate` | `startDate`, `endDate`, `page`, `limit=100` | **SIN** prefijo `/sipub/api/rest/v4/` — ruta directa. Filtrar local por `id_central` o nombre |

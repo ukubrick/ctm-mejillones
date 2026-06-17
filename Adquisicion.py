@@ -694,23 +694,21 @@ def run():
         log_adquisicion("generacion_real", fecha, nuevos, dupes,
                         int((time.time() - t0) * 1000), err_str)
 
-    # ── Generación programada PCP (ventana de días) ───────────
-    # Se consulta el mismo rango que gen. real (DIAS_VENTANA días) para
-    # recuperar días que pudieron quedar sin datos si la API falló o si
-    # la programación no estaba disponible al momento de la consulta.
-    # El upsert usa DO UPDATE, así que repetir días anteriores es seguro.
-    for fecha in fechas:
-        log.info(f"\n  ── Gen. programada PCP {fecha}")
-        t0 = time.time()
-        err_str = None
-        try:
-            regs                 = fetch_generacion_programada(fecha, fecha)
-            nuevos, actualizados = upsert_generacion_programada(regs)
-            log.info(f"  ✅ PCP: {nuevos} nuevos, {actualizados} actualizados")
-        except Exception as e:
-            err_str = str(e); log.error(f"  ❌ PCP: {e}"); nuevos = actualizados = 0
-        log_adquisicion("generacion_programada_pcp", fecha, nuevos, actualizados,
-                        int((time.time() - t0) * 1000), err_str)
+    # ── Generación programada PCP (rango completo en una sola llamada) ──
+    # Una sola llamada startDate→endDate reduce el tiempo de 7×12 min a ~15 min.
+    pcp_start = fechas[0]
+    pcp_end   = fechas[-1]
+    log.info(f"\n  ── Gen. programada PCP {pcp_start} → {pcp_end}")
+    t0 = time.time()
+    err_str = None
+    try:
+        regs                 = fetch_generacion_programada(pcp_start, pcp_end)
+        nuevos, actualizados = upsert_generacion_programada(regs)
+        log.info(f"  ✅ PCP: {nuevos} nuevos, {actualizados} actualizados")
+    except Exception as e:
+        err_str = str(e); log.error(f"  ❌ PCP: {e}"); nuevos = actualizados = 0
+    log_adquisicion("generacion_programada_pcp", pcp_end, nuevos, actualizados,
+                    int((time.time() - t0) * 1000), err_str)
 
     # ── CMG múltiples nodos (S3) ──────────────────────────────
     log.info(f"\n  ── CMG Nodos CTM (S3 portal CEN)")
