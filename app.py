@@ -1033,34 +1033,8 @@ if df_r.empty: st.warning("Sin datos para el período seleccionado."); st.stop()
 
 
 # ── Header ────────────────────────────────────────────────────
-ch1,ch2 = st.columns([3,1])
-with ch1:
-    st.markdown("# Dashboard Operacional — Complejo Térmico Mejillones")
-    st.markdown(f'<p style="color:#64748B;font-size:0.85rem;margin-top:-0.5rem">Período {s} → {e} · Generación real + Programada PCP + CMG {NOMBRES_NODO.get(nodo_cmg, "Crucero 220kV")}</p>', unsafe_allow_html=True)
-with ch2:
-    ult_real = df_r["fecha_hora"].max()
-    ult_prog = df_p["fecha_hora"].max() if not df_p.empty else None
-    ult_cmg  = df_c["fecha_hora"].max() if not df_c.empty else None
-    df_sscc_hdr = load_sscc(s, e)
-    ult_sscc = df_sscc_hdr["fecha"].max() if not df_sscc_hdr.empty else None
-    df_lim_hdr = load_limitaciones(s, e)
-    n_lim_activas = int((df_lim_hdr["status"] == "pendiente").sum()) if not df_lim_hdr.empty else 0
-
-    diff = (datetime.now() - ult_real.to_pydatetime()).seconds
-    cls_r = "dot-g" if diff < 7200 else "dot-y"
-    prog_str = ult_prog.strftime("%d/%m %H:%M") if ult_prog is not None else "—"
-    cmg_str  = ult_cmg.strftime("%d/%m %H:%M")  if ult_cmg  is not None else "—"
-    sscc_str = str(ult_sscc) if ult_sscc is not None else "—"
-    lim_cls  = "dot-y" if n_lim_activas > 0 else "dot-g"
-    lim_str  = f"{n_lim_activas} activa{'s' if n_lim_activas != 1 else ''}" if n_lim_activas > 0 else "Sin activas"
-
-    st.markdown(f'''<div style="text-align:right;padding-top:1rem;line-height:2">
-        <div><span class="dot-status {cls_r}"></span><span style="font-size:0.72rem;color:#64748B">Gen. real: <b>{ult_real.strftime("%d/%m %H:%M")}</b></span></div>
-        <div><span class="dot-status dot-g"></span><span style="font-size:0.72rem;color:#64748B">Gen. programada: <b>{prog_str}</b></span></div>
-        <div><span class="dot-status dot-g"></span><span style="font-size:0.72rem;color:#64748B">CMG {NOMBRES_NODO.get(nodo_cmg,"Crucero 220kV")}: <b>{cmg_str}</b></span></div>
-        <div><span class="dot-status dot-g"></span><span style="font-size:0.72rem;color:#64748B">SSCC: <b>{sscc_str}</b></span></div>
-        <div><span class="dot-status {lim_cls}"></span><span style="font-size:0.72rem;color:#64748B">Limitaciones: <b>{lim_str}</b></span></div>
-    </div>''', unsafe_allow_html=True)
+st.markdown("# Dashboard Operacional — Complejo Térmico Mejillones")
+st.markdown(f'<p style="color:#64748B;font-size:0.85rem;margin-top:-0.5rem">Período {s} → {e} · Generación real + Programada PCP + CMG {NOMBRES_NODO.get(nodo_cmg, "Crucero 220kV")}</p>', unsafe_allow_html=True)
 
 
 # ── KPI cards ─────────────────────────────────────────────────

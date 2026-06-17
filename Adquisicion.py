@@ -78,7 +78,7 @@ LLAVES_SSCC = {
     "COCHRANE-CCH2": "CCR2",
 }
 
-DIAS_VENTANA = 2   # días hacia atrás para gen. real y programada
+DIAS_VENTANA = 7   # días hacia atrás para gen. real y programada (7 para corregir ceros)
 
 # id_unidad → código interno (confirmado en exploración 2026-06-11)
 ID_UNIDAD_MAP = {1965: "ANG1", 1966: "ANG2", 1967: "CCR1", 1968: "CCR2"}
@@ -361,7 +361,11 @@ def upsert_generacion_real(registros: list[dict]) -> tuple[int, int]:
         VALUES
             (%(unidad)s, %(llave_opreal)s, %(id_central)s, %(central)s,
              %(gen_real_mw)s, %(potencia_maxima)s, %(fecha_hora)s, %(hora)s)
-        ON CONFLICT (unidad, fecha_hora) DO NOTHING
+        ON CONFLICT (unidad, fecha_hora) DO UPDATE
+            SET gen_real_mw = EXCLUDED.gen_real_mw,
+                potencia_maxima = EXCLUDED.potencia_maxima
+            WHERE generacion_real.gen_real_mw = 0
+               OR EXCLUDED.gen_real_mw > 0
     """
     nuevos = dupes = 0
     try:

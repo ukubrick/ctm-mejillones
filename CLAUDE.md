@@ -182,8 +182,8 @@ Todos los endpoints usan `_get_with_retry()` con backoff exponencial:
 ## Estado actual del código (2026-06-11 — actualizado)
 
 Todo implementado y funcionando en producción:
-- ✅ Generación real automática (API CEN SIPUB) — ventana 2 días
-- ✅ Generación programada automática (API CEN PCP) — ventana 2 días, limit=5000
+- ✅ Generación real automática (API CEN SIPUB) — ventana 7 días, DO UPDATE sobrescribe ceros
+- ✅ Generación programada automática (API CEN PCP) — ventana 7 días, limit=5000
 - ✅ CMG dos nodos: Crucero 220kV y Tarapacá 220kV (S3 portal CEN)
 - ✅ SSCC instrucciones (API CEN Operaciones) — ventana 2 días, pageSize=-1
 - ✅ Retry exponencial en todos los endpoints (429/5xx)
@@ -197,7 +197,7 @@ Todo implementado y funcionando en producción:
 - ✅ Footer: "Dashboard creado por Erick Herrera"
 - ✅ Backfill gen. programada 05–09 junio 2026 completado (3115 registros recuperados)
 - ✅ Sidebar: dot verde palpitante en todas las fuentes, texto "Conectado · Supabase / PostgreSQL", última fecha adquirida por cada fuente (Gen. real, Gen. programada, CMG S3, SSCC)
-- ✅ Header superior derecho: 4 indicadores con dot verde palpitante — Gen. real, Gen. programada, CMG (con nodo), SSCC — cada uno con fecha/hora del último dato en DB
+- ~~Header superior derecho con indicadores de status~~ — eliminado (duplicaba el sidebar)
 - ✅ Checkbox "Mostrar área de desviación (Real vs Programada)" activado por defecto
 - ✅ Dots de unidades en tabs: ANG1 🟣, ANG2 🔵, CCR1 🟡, CCR2 🟢
 - ✅ Limitaciones de transmisión (API CEN SIP `/limitaciones-transmision/v4/findByDate`) — tabla en DB, adquisición automática ventana 30 días, sección visual sobre SSCC con KPIs (activas, total, afecta SSCC, mayor potencia), tabs por unidad (ANG1/ANG2/CCR1/CCR2/Todas), cards con status/colores/correlativo N°/fechas apertura→cierre, tabla completa via `<details>/<summary>` HTML nativo, orden cronológico descendente (más reciente primero), máx 5 por tab
@@ -215,3 +215,4 @@ Todo implementado y funcionando en producción:
 - **Limitaciones/estado operativo unidades:** `/operativos/v1/estados` (Operaciones) sólo retorna catálogo de 21 tipos de estado (LP, LF, LC, DLP, etc.), no el estado actual por unidad. Los módulos referenciados (`desconexion_intervencion`, `informe_fallas`, `limitaciones`) tienen rutas propias aún no identificadas. Angamos ID=377, Cochrane ID=379.
 - **Solicitudes de trabajo** (`/solicitudes-trabajo/v4/findByDate`, SIP) — explorado 2026-06-11, 502 persistente (caída CEN). **Pendiente probar 2026-06-12.** Schema conocido: `id`, `correlativo` (JOIN con limitaciones_transmision), `empresa_nombre`, `grupo_nombre`, `status`, `tipo_solicitud`, `type`, `origen`, `tipo_programacion`, `consumo`, `perdida_registro_energia`, `descripcion_nivel_riesgo`, `fecha_inicio`, `fecha_fin`, `created`, `modified`, `partition_date`. Filtro: `empresa_nombre` o `grupo_nombre` contiene ANGAMOS/COCHRANE. Integración planeada: complementar sección limitaciones con detalle de la solicitud asociada via correlativo.
 - **Limpieza de archivos obsoletos:** eliminar scripts de prueba/exploración que ya cumplieron su propósito: `check_cmg.py`, `probe_sscc.py`, `test_api_cen.py`, `test_cmg_crucero.py`, `test_scraping_cmg.py`, `resumen_endpoints_sscc_sen.md`. También evaluar si conservar `backfill_programada.py` (backfill jun 5–9 ya completado).
+- **RLS Supabase (seguridad):** habilitar Row-Level Security en todas las tablas públicas del proyecto `ctm-mejillones`. El SQL Editor web da timeout; usar psql con conexión directa `db.luddatnopktghtxeixyd.supabase.co:5432` (obtener desde Project Settings → Database → Direct connection). Ver SQL completo en historial de conversación 2026-06-16.
