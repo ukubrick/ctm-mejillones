@@ -78,7 +78,8 @@ LLAVES_SSCC = {
     "COCHRANE-CCH2": "CCR2",
 }
 
-DIAS_VENTANA = 7   # días hacia atrás para gen. real y programada (7 para corregir ceros)
+DIAS_VENTANA     = 7   # días hacia atrás para gen. real y SSCC (filtra en servidor, rápido)
+DIAS_VENTANA_PCP = 2   # días hacia atrás para PCP: ~120 páginas × 0.3s ≈ 8 min (427 págs con 7 días → timeout)
 
 # id_unidad → código interno (confirmado en exploración 2026-06-11)
 ID_UNIDAD_MAP = {1965: "ANG1", 1966: "ANG2", 1967: "CCR1", 1968: "CCR2"}
@@ -695,9 +696,11 @@ def run():
                         int((time.time() - t0) * 1000), err_str)
 
     # ── Generación programada PCP (rango completo en una sola llamada) ──
-    # Una sola llamada startDate→endDate reduce el tiempo de 7×12 min a ~15 min.
-    pcp_start = fechas[0]
-    pcp_end   = fechas[-1]
+    # Ventana propia de 2 días: ~120 páginas ≈ 8 min. Con 7 días serían ~427 páginas → timeout.
+    pcp_fechas = [(hoy - timedelta(days=d)).strftime("%Y-%m-%d")
+                  for d in range(DIAS_VENTANA_PCP - 1, -1, -1)]
+    pcp_start = pcp_fechas[0]
+    pcp_end   = pcp_fechas[-1]
     log.info(f"\n  ── Gen. programada PCP {pcp_start} → {pcp_end}")
     t0 = time.time()
     err_str = None
