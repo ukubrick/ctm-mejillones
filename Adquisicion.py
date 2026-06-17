@@ -706,11 +706,10 @@ def run():
                         int((time.time() - t0) * 1000), err_str)
 
     # ── Generación programada PCP (rango completo en una sola llamada) ──
-    # Ventana propia de 2 días: ~120 páginas ≈ 8 min. Con 7 días serían ~427 páginas → timeout.
-    pcp_fechas = [(hoy - timedelta(days=d)).strftime("%Y-%m-%d")
-                  for d in range(DIAS_VENTANA_PCP - 1, -1, -1)]
-    pcp_start = pcp_fechas[0]
-    pcp_end   = pcp_fechas[-1]
+    # Ventana: ayer → mañana (3 días). Incluir mañana captura la programación
+    # del día completo que CEN publica con anticipación. ~180 páginas ≈ 10 min.
+    pcp_start = (hoy - timedelta(days=DIAS_VENTANA_PCP - 1)).strftime("%Y-%m-%d")
+    pcp_end   = (hoy + timedelta(days=1)).strftime("%Y-%m-%d")
     log.info(f"\n  ── Gen. programada PCP {pcp_start} → {pcp_end}")
     t0 = time.time()
     err_str = None
