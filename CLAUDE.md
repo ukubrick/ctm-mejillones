@@ -208,6 +208,8 @@ Todo implementado y funcionando en producción:
 
 ## Pendiente / Por explorar
 
+- **[PRIORIDAD 1] Solicitudes de trabajo — integrar al dashboard** (`/solicitudes-trabajo/v4/findByDate`, SIP) — endpoint confirmado funcional el 2026-06-17 (ventana ≤7 días). El servidor CEN es intermitente, reintentar con `python probe_solicitudes.py` hasta obtener respuesta estable. Parámetros confirmados: `startDate`, `endDate` (YYYY-MM-DD), `page` (base 1), `limit=100`. Respuesta: `{"data":[...], "totalPages":N, "page":N, "limit":N}`. Con 7 días devuelve ~267 páginas (~26.700 registros del sistema). Campos conocidos: `id`, `correlativo` (JOIN con `limitaciones_transmision`), `empresa_nombre`, `grupo_nombre`, `centro_control` (campo extra no documentado), `status`, `tipo_solicitud`, `type`, `origen`, `tipo_programacion`, `consumo`, `perdida_registro_energia`, `descripcion_nivel_riesgo`, `fecha_inicio`, `fecha_fin`, `created`, `modified`, `partition_date`. Filtro local por `empresa_nombre` + `grupo_nombre` + `centro_control` buscando ANGAMOS/COCHRANE/AES. **Próximo paso:** cuando el servidor responda estable, correr probe para ver empresas únicas y confirmar cómo aparece AES Andes en los datos, luego integrar sección en dashboard igual que limitaciones.
+
 - **SSCC programados PCP** (`/servicios-complementarios-programados-pcp/v4/findByDate`, SIP) — respondía 502 el 2026-06-09 por caída del servidor CEN. Probar cuando la API se recupere.
 - **Instrucciones operacionales SSCC** (`/instrucciones-operacionales-sscc/v4/findByDate`, SIP) — mismo estado, 502 ese día.
 - **Stock combustible** (`/stock-combustible/v4/findByDate`, SIP) — retorna 404 consistente, posible endpoint inactivo o requiere parámetros distintos.
