@@ -151,11 +151,19 @@ def _map_llave_gen_prog(texto: str) -> str | None:
     return None
 
 
-def _get_with_retry(url: str, params: dict, timeout: int = 30,
+def _get_with_retry(url: str, params: dict, timeout: int = 60,
                     max_retries: int = 3) -> requests.Response:
-    """GET con retry exponencial ante 429/5xx."""
+    """GET con retry exponencial ante 429/5xx y errores de red (timeout, conexión)."""
+    last_exc = None
     for intento in range(max_retries):
-        r = requests.get(url, params=params, timeout=timeout)
+        try:
+            r = requests.get(url, params=params, timeout=timeout)
+        except (requests.exceptions.Timeout, requests.exceptions.ConnectionError) as exc:
+            last_exc = exc
+            espera = 10 * 2 ** intento
+            log.warning(f"  Error de red ({exc.__class__.__name__}) — reintento {intento+1}/{max_retries} en {espera}s")
+            time.sleep(espera)
+            continue
         if r.status_code in (429, 500, 502, 503, 504):
             espera = 10 * 2 ** intento          # 10s, 20s, 40s
             log.warning(f"  HTTP {r.status_code} — reintento {intento+1}/{max_retries} en {espera}s")
@@ -163,7 +171,9 @@ def _get_with_retry(url: str, params: dict, timeout: int = 30,
             continue
         r.raise_for_status()
         return r
-    r.raise_for_status()   # lanza el último error si agotó reintentos
+    if last_exc:
+        raise last_exc
+    r.raise_for_status()
     return r
 
 

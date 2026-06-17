@@ -1,0 +1,47 @@
+name: Backfill Gen. Programada PCP
+
+on:
+  workflow_dispatch:
+    inputs:
+      start_date:
+        description: "Fecha inicio (YYYY-MM-DD)"
+        required: true
+      end_date:
+        description: "Fecha fin (YYYY-MM-DD)"
+        required: true
+
+jobs:
+  backfill:
+    name: Backfill PCP ${{ inputs.start_date }} → ${{ inputs.end_date }}
+    runs-on: ubuntu-latest
+    timeout-minutes: 90
+    env:
+      FORCE_JAVASCRIPT_ACTIONS_TO_NODE24: true
+
+    steps:
+      - name: Checkout repositorio
+        uses: actions/checkout@v4
+
+      - name: Configurar Python 3.11
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
+          cache: "pip"
+
+      - name: Instalar dependencias
+        run: pip install -r requirements.txt
+
+      - name: Ejecutar backfill
+        env:
+          CEN_USER_KEY: ${{ secrets.CEN_USER_KEY }}
+          CEN_OPS_KEY:  ${{ secrets.CEN_OPS_KEY }}
+          DATABASE_URL:  ${{ secrets.DATABASE_URL }}
+        run: python3 backfill_programada.py ${{ inputs.start_date }} ${{ inputs.end_date }}
+
+      - name: Subir log como artefacto
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: log-backfill-${{ inputs.start_date }}-${{ inputs.end_date }}
+          path: adquisicion.log
+          retention-days: 7
