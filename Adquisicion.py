@@ -667,7 +667,9 @@ def fetch_solicitudes(start: str, end: str) -> list[dict]:
         log.warning("  CEN_USER_KEY no configurada — saltando solicitudes")
         return []
 
-    PALABRAS_AES = {"AES ANDES", "ANGAMOS", "COCHRANE"}
+    # Filtro estricto: solo empresa/grupo que sea AES ANDES, ANGAMOS o COCHRANE
+    # (confirmado en producción 2026-06-17: aparece como "AES ANDES S.A.")
+    EMPRESAS_AES = {"AES ANDES S.A.", "AES GENER", "ANGAMOS", "COCHRANE"}
     registros = []
     page = 1
     base_url = f"{API_BASE_SIP}/solicitudes-trabajo/v4/findByDate"
@@ -687,9 +689,9 @@ def fetch_solicitudes(start: str, end: str) -> list[dict]:
                 break
 
             for rec in data:
-                empresa = (rec.get("empresa_nombre") or "").upper()
-                grupo   = (rec.get("grupo_nombre")   or "").upper()
-                if not any(p in empresa or p in grupo for p in PALABRAS_AES):
+                empresa = (rec.get("empresa_nombre") or "").strip()
+                grupo   = (rec.get("grupo_nombre")   or "").strip()
+                if empresa not in EMPRESAS_AES and grupo not in EMPRESAS_AES:
                     continue
                 registros.append({
                     "id":                       rec.get("id"),
