@@ -1573,7 +1573,7 @@ BADGE_SSCC = {
 }
 st.markdown("""
 <details style="background:#F8FAFC;border:1px solid #E2E8F0;border-radius:8px;padding:0.7rem 1rem;margin-bottom:1rem;">
-<summary style="cursor:pointer;font-weight:600;color:#334155;font-size:0.9rem;">Guía de instrucciones SSCC — CSF, CPF, CT</summary>
+<summary style="cursor:pointer;font-weight:600;color:#334155;font-size:0.9rem;">Guía de instrucciones SSCC — CSF, CPF, CT, CTF</summary>
 <div style="margin-top:0.8rem;font-size:0.88rem;color:#475569;line-height:1.6;">
 <p>Los <strong>Servicios Complementarios (SSCC)</strong> son prestaciones que el Coordinador Eléctrico Nacional instruye
 a las unidades generadoras para mantener la seguridad y calidad del Sistema Eléctrico Nacional,
@@ -1589,6 +1589,7 @@ más allá de su generación de energía.</p>
 <tr><td style="padding:5px 12px;border-top:1px solid #E2E8F0;"><strong>CPF(+)</strong></td><td style="padding:5px 12px;border-top:1px solid #E2E8F0;">Control Primario de Frecuencia en <strong>subida</strong> — respuesta automática e inmediata ante caída de frecuencia</td></tr>
 <tr><td style="padding:5px 12px;border-top:1px solid #E2E8F0;"><strong>CPF(−)</strong></td><td style="padding:5px 12px;border-top:1px solid #E2E8F0;">Control Primario de Frecuencia en <strong>bajada</strong> — respuesta automática ante alza de frecuencia</td></tr>
 <tr><td style="padding:5px 12px;border-top:1px solid #E2E8F0;"><strong>CT</strong></td><td style="padding:5px 12px;border-top:1px solid #E2E8F0;">Control de <strong>Tensión</strong> — regulación de tensión reactiva en la barra de conexión</td></tr>
+<tr><td style="padding:5px 12px;border-top:1px solid #E2E8F0;"><strong>CTF</strong></td><td style="padding:5px 12px;border-top:1px solid #E2E8F0;">Control <strong>Terciario de Frecuencia</strong> — reserva de potencia de respuesta más lenta (minutos) que activa el Coordinador para restablecer la frecuencia nominal tras un evento, liberando la reserva secundaria (CSF) para nuevas contingencias</td></tr>
 </tbody>
 </table>
 <p>Cada instrucción indica un <strong>período de prestación</strong> (inicio → fin) durante el cual la unidad debe
