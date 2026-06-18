@@ -92,12 +92,14 @@ section[data-testid="stSidebar"] > div:first-child > div:first-child > button{di
 .kpi-mw{font-size:1rem;font-weight:400;color:var(--muted);}
 .kpi-sub{font-size:0.75rem;color:var(--muted);margin-top:0.4rem;}
 .kpi-delta{font-size:0.78rem;margin-top:0.5rem;font-weight:500;}
-.sec{font-size:0.68rem;font-weight:700;letter-spacing:0.15em;text-transform:uppercase;color:var(--muted);border-bottom:1px solid var(--bord);padding-bottom:0.4rem;margin:1.8rem 0 1rem;}
+.sec{font-size:0.82rem;font-weight:800;letter-spacing:0.12em;text-transform:uppercase;color:#334155;border-bottom:2px solid var(--bord);padding-bottom:0.45rem;margin:1.8rem 0 1rem;}
 .dot-status{display:inline-block;width:8px;height:8px;border-radius:50%;margin-right:6px;vertical-align:middle;}
 .dot-g{background:#10B981;box-shadow:0 0 5px rgba(16,185,129,0.6);animation:blink 2s infinite;}
 .dot-r{background:#EF4444;}
 .dot-y{background:#F59E0B;animation:blink 2s infinite;}
 @keyframes blink{0%,100%{opacity:1}50%{opacity:.3}}
+@keyframes pulse-pend{0%,100%{box-shadow:0 0 0 0 rgba(217,119,6,0.7)}70%{box-shadow:0 0 0 6px rgba(217,119,6,0)}}
+.badge-pend{display:inline-block;animation:pulse-pend 1.8s infinite;border-radius:4px;}
 .status-box{background:var(--surf2);border:1px solid var(--bord);border-radius:8px;padding:0.6rem 0.8rem;margin-top:0.5rem;font-size:0.72rem;}
 .stTextInput>div>div>input,.stTextArea>div>div>textarea,.stNumberInput>div>div>input{
     background:var(--surf2)!important;border:1px solid var(--bord)!important;border-radius:8px!important;color:var(--txt)!important;}
@@ -1065,15 +1067,19 @@ for i,u in enumerate(["ANG1","ANG2","CCR1","CCR2"]):
         prom  = df_u["gen_real_mw"].mean()
         pmax  = PMAX.get(u, 0)
         fp    = prom/pmax*100 if pmax else 0
-        ult_mw= df_u.sort_values("fecha_hora").iloc[-1]["gen_real_mw"]
+        df_u_sorted = df_u.sort_values("fecha_hora")
+        ult_row = df_u_sorted.iloc[-1]
+        ult_mw  = ult_row["gen_real_mw"]
+        ult_fh  = str(ult_row["fecha_hora"])[:16]
         delta = ult_mw-prom
         sym   = "▲" if delta>=0 else "▼"
         col_d = "#10B981" if delta>=0 else "#EF4444"
         st.markdown(f"""<div class="kpi">
             <div class="kpi-badge" style="background:{COLORES[u]['badge']};color:{COLORES[u]['text']}">{LABELS[u]}</div>
             <div class="kpi-val">{prom:.1f}<span class="kpi-mw"> MW</span></div>
-            <div class="kpi-sub">Factor de planta {fp:.0f}%</div>
+            <div class="kpi-sub">Factor de planta {fp:.0f}% <span style="color:#94A3B8;font-size:0.68rem">(promedio período)</span></div>
             <div class="kpi-delta" style="color:{col_d}">{sym} {abs(delta):.1f} MW vs última hora</div>
+            <div style="font-size:0.68rem;color:#94A3B8;margin-top:3px">Último dato: {ult_fh}</div>
         </div>""", unsafe_allow_html=True)
 
 
@@ -1245,92 +1251,9 @@ if not df_c.empty:
     cmg_prom = df_c["cmg_usd_mwh"].mean()
     cmg_min  = df_c["cmg_usd_mwh"].min()
     cmg_max  = df_c["cmg_usd_mwh"].max()
-
-    gc1, gc2 = st.columns(2)
     unidades_ord = ["ANG1","ANG2","CCR1","CCR2"]
 
-    with gc1:
-        fig2 = make_subplots(specs=[[{"secondary_y": True}]])
-        fig2.add_trace(go.Bar(
-            x=[LABELS[u] for u in unidades_ord],
-            y=[ingreso_unit.get(u,0) for u in unidades_ord],
-            name="Ingreso est. (USD)",
-            marker_color=[COLORES[u]["line"] for u in unidades_ord],
-            marker_opacity=0.85,
-            text=[f"${ingreso_unit.get(u,0):,.0f}" for u in unidades_ord],
-            textposition="outside",
-            textfont=dict(size=11, color="#475569"),
-        ), secondary_y=False)
-        fig2.add_trace(go.Scatter(
-            x=[LABELS[u] for u in unidades_ord],
-            y=[energia_unit.get(u,0) for u in unidades_ord],
-            name="Energía (MWh)", mode="markers+lines",
-            marker=dict(size=10, color="#0F172A", symbol="diamond"),
-            line=dict(color="#0F172A", width=1.5, dash="dot"),
-        ), secondary_y=True)
-        fig2.update_layout(
-            title=dict(text="Ingreso Estimado + Energía por Unidad",
-                      font=dict(size=13,color="#0F172A"), x=0),
-            height=340,
-            margin=dict(l=10, r=10, t=60, b=10),
-            plot_bgcolor=BG, paper_bgcolor="rgba(0,0,0,0)",
-            legend=dict(orientation="h", y=-0.15, x=0,
-                       font=dict(size=10,color="#475569")),
-        )
-        fig2.update_yaxes(title_text="USD", secondary_y=False,
-                          gridcolor=GR, tickfont=dict(color="#94A3B8",size=10),
-                          title_font=dict(color="#94A3B8",size=10))
-        fig2.update_yaxes(title_text="MWh", secondary_y=True,
-                          tickfont=dict(color="#94A3B8",size=10),
-                          title_font=dict(color="#94A3B8",size=10), showgrid=False)
-        fig2.update_xaxes(tickfont=dict(color="#475569",size=11))
-        st.plotly_chart(fig2, use_container_width=True, config={"displayModeBar":False})
-
-    with gc2:
-        idx_max = df_c["cmg_usd_mwh"].idxmax()
-        idx_min = df_c["cmg_usd_mwh"].idxmin()
-        fig3 = go.Figure()
-        fig3.add_trace(go.Scatter(
-            x=df_c["fecha_hora"], y=df_c["cmg_usd_mwh"],
-            mode="lines", line=dict(color=COLORES["CMG"]["line"],width=2),
-            fill="tozeroy", fillcolor="rgba(109,40,217,0.12)",
-            showlegend=False,
-            hovertemplate="%{x|%d/%m %H:%M}<br><b>%{y:.1f} USD/MWh</b><extra></extra>",
-        ))
-        fig3.add_hline(y=cmg_prom, line_color="#94A3B8", line_width=1.2, line_dash="dot",
-                      annotation_text=f"Prom: {cmg_prom:.1f}",
-                      annotation_position="right",
-                      annotation_font_color="#64748B", annotation_font_size=10)
-        fig3.add_trace(go.Scatter(
-            x=[df_c.loc[idx_max,"fecha_hora"]], y=[cmg_max],
-            mode="markers+text",
-            marker=dict(size=10,color="#EF4444",symbol="triangle-up"),
-            text=[f" Máx: {cmg_max:.1f}"], textposition="top right",
-            textfont=dict(size=10,color="#EF4444"), showlegend=False,
-        ))
-        fig3.add_trace(go.Scatter(
-            x=[df_c.loc[idx_min,"fecha_hora"]], y=[cmg_min],
-            mode="markers+text",
-            marker=dict(size=10,color="#10B981",symbol="triangle-down"),
-            text=[f" Mín: {cmg_min:.1f}"], textposition="bottom right",
-            textfont=dict(size=10,color="#10B981"), showlegend=False,
-        ))
-        fig3.update_layout(
-            title=dict(text="CMG Nodo Crucero en el Tiempo",
-                      font=dict(size=13,color="#0F172A"), x=0),
-            height=340,
-            margin=dict(l=10, r=70, t=60, b=10),
-            plot_bgcolor=BG, paper_bgcolor="rgba(0,0,0,0)",
-            yaxis=dict(title="USD/MWh", gridcolor=GR,
-                      tickfont=dict(color="#94A3B8",size=10),
-                      title_font=dict(color="#94A3B8",size=10)),
-            xaxis=dict(tickfont=dict(color="#94A3B8",size=10),
-                      tickformat="%d/%m\n%H:%M", showgrid=False),
-            hovermode="x unified",
-            hoverlabel=dict(bgcolor="#1E293B",font_color="#F8FAFC"),
-        )
-        st.plotly_chart(fig3, use_container_width=True, config={"displayModeBar":False})
-
+    # KPIs resumen siempre visibles
     rc1,rc2,rc3,rc4 = st.columns(4)
     for col,(lbl,val,sub) in zip([rc1,rc2,rc3,rc4],[
         ("Ingreso Total Est.", f"${ingreso_total:,.0f}", "USD en el período"),
@@ -1339,6 +1262,250 @@ if not df_c.empty:
         ("Rango CMG",          f"{cmg_min:.1f} – {cmg_max:.1f}", "USD/MWh mín/máx"),
     ]):
         col.metric(lbl, val, sub)
+
+    tab_costo_vis, tab_costo_stat = st.tabs(["Gráficos", "Estadísticas"])
+
+    with tab_costo_vis:
+        gc1, gc2 = st.columns(2)
+        with gc1:
+            fig2 = make_subplots(specs=[[{"secondary_y": True}]])
+            fig2.add_trace(go.Bar(
+                x=[LABELS[u] for u in unidades_ord],
+                y=[ingreso_unit.get(u,0) for u in unidades_ord],
+                name="Ingreso est. (USD)",
+                marker_color=[COLORES[u]["line"] for u in unidades_ord],
+                marker_opacity=0.85,
+                text=[f"${ingreso_unit.get(u,0):,.0f}" for u in unidades_ord],
+                textposition="outside",
+                textfont=dict(size=11, color="#475569"),
+            ), secondary_y=False)
+            fig2.add_trace(go.Scatter(
+                x=[LABELS[u] for u in unidades_ord],
+                y=[energia_unit.get(u,0) for u in unidades_ord],
+                name="Energía (MWh)", mode="markers+lines",
+                marker=dict(size=10, color="#0F172A", symbol="diamond"),
+                line=dict(color="#0F172A", width=1.5, dash="dot"),
+            ), secondary_y=True)
+            fig2.update_layout(
+                title=dict(text="Ingreso Estimado + Energía por Unidad",
+                          font=dict(size=13,color="#0F172A"), x=0),
+                height=340, margin=dict(l=10, r=10, t=60, b=10),
+                plot_bgcolor=BG, paper_bgcolor="rgba(0,0,0,0)",
+                legend=dict(orientation="h", y=-0.15, x=0, font=dict(size=10,color="#475569")),
+            )
+            fig2.update_yaxes(title_text="USD", secondary_y=False,
+                              gridcolor=GR, tickfont=dict(color="#94A3B8",size=10),
+                              title_font=dict(color="#94A3B8",size=10))
+            fig2.update_yaxes(title_text="MWh", secondary_y=True,
+                              tickfont=dict(color="#94A3B8",size=10),
+                              title_font=dict(color="#94A3B8",size=10), showgrid=False)
+            fig2.update_xaxes(tickfont=dict(color="#475569",size=11))
+            st.plotly_chart(fig2, use_container_width=True, config={"displayModeBar":False})
+
+        with gc2:
+            idx_max = df_c["cmg_usd_mwh"].idxmax()
+            idx_min = df_c["cmg_usd_mwh"].idxmin()
+            fig3 = go.Figure()
+            fig3.add_trace(go.Scatter(
+                x=df_c["fecha_hora"], y=df_c["cmg_usd_mwh"],
+                mode="lines", line=dict(color=COLORES["CMG"]["line"],width=2),
+                fill="tozeroy", fillcolor="rgba(109,40,217,0.12)",
+                showlegend=False,
+                hovertemplate="%{x|%d/%m %H:%M}<br><b>%{y:.1f} USD/MWh</b><extra></extra>",
+            ))
+            fig3.add_hline(y=cmg_prom, line_color="#94A3B8", line_width=1.2, line_dash="dot",
+                          annotation_text=f"Prom: {cmg_prom:.1f}",
+                          annotation_position="right",
+                          annotation_font_color="#64748B", annotation_font_size=10)
+            fig3.add_trace(go.Scatter(
+                x=[df_c.loc[idx_max,"fecha_hora"]], y=[cmg_max],
+                mode="markers+text",
+                marker=dict(size=10,color="#EF4444",symbol="triangle-up"),
+                text=[f" Máx: {cmg_max:.1f}"], textposition="top right",
+                textfont=dict(size=10,color="#EF4444"), showlegend=False,
+            ))
+            fig3.add_trace(go.Scatter(
+                x=[df_c.loc[idx_min,"fecha_hora"]], y=[cmg_min],
+                mode="markers+text",
+                marker=dict(size=10,color="#10B981",symbol="triangle-down"),
+                text=[f" Mín: {cmg_min:.1f}"], textposition="bottom right",
+                textfont=dict(size=10,color="#10B981"), showlegend=False,
+            ))
+            fig3.update_layout(
+                title=dict(text="CMG en el Tiempo",
+                          font=dict(size=13,color="#0F172A"), x=0),
+                height=340, margin=dict(l=10, r=70, t=60, b=10),
+                plot_bgcolor=BG, paper_bgcolor="rgba(0,0,0,0)",
+                yaxis=dict(title="USD/MWh", gridcolor=GR,
+                          tickfont=dict(color="#94A3B8",size=10),
+                          title_font=dict(color="#94A3B8",size=10)),
+                xaxis=dict(tickfont=dict(color="#94A3B8",size=10),
+                          tickformat="%d/%m\n%H:%M", showgrid=False),
+                hovermode="x unified",
+                hoverlabel=dict(bgcolor="#1E293B",font_color="#F8FAFC"),
+            )
+            st.plotly_chart(fig3, use_container_width=True, config={"displayModeBar":False})
+
+    with tab_costo_stat:
+        BG2 = "rgba(0,0,0,0)"; GR2 = "#E2E8F0"
+
+        # ── Fila 1: ingreso horario acumulado (área) + costo unitario por unidad ──
+        df_merge_t = df_merge.copy()
+        df_merge_t["fecha_hora"] = pd.to_datetime(df_merge_t["fecha_hora"])
+        df_merge_t = df_merge_t.sort_values("fecha_hora")
+
+        fig_ingh = go.Figure()
+        for u in unidades_ord:
+            df_u2 = df_merge_t[df_merge_t["unidad"] == u]
+            fig_ingh.add_trace(go.Scatter(
+                x=df_u2["fecha_hora"], y=df_u2["ingreso_usd"],
+                name=LABELS[u], mode="lines",
+                line=dict(color=COLORES[u]["line"], width=1.8),
+                fill="tozeroy",
+                fillcolor=COLORES[u]["line"].replace("#","rgba(").replace(")",",0.08)") if False else f"rgba({int(COLORES[u]['line'][1:3],16)},{int(COLORES[u]['line'][3:5],16)},{int(COLORES[u]['line'][5:7],16)},0.07)",
+                hovertemplate="%{x|%d/%m %H:%M}<br><b>%{y:,.0f} USD</b><extra>" + LABELS[u] + "</extra>",
+            ))
+        fig_ingh.update_layout(
+            title=dict(text="Ingreso estimado por hora (USD)", font=dict(size=13,color="#0F172A"), x=0),
+            height=300, margin=dict(l=10,r=10,t=50,b=10),
+            plot_bgcolor=BG2, paper_bgcolor=BG2,
+            xaxis=dict(tickformat="%d/%m\n%H:%M", showgrid=False, tickfont=dict(color="#94A3B8",size=10)),
+            yaxis=dict(gridcolor=GR2, tickfont=dict(color="#94A3B8",size=10), title="USD/h"),
+            legend=dict(orientation="h", y=-0.22, font=dict(size=10)),
+            hovermode="x unified",
+        )
+
+        # Costo unitario de generación (USD/MWh generado = ingreso / energía)
+        costo_unit = {u: (ingreso_unit.get(u,0) / energia_unit.get(u,1)) for u in unidades_ord if energia_unit.get(u,0)>0}
+        fig_cu = go.Figure(go.Bar(
+            x=[LABELS[u] for u in unidades_ord if u in costo_unit],
+            y=[costo_unit.get(u,0) for u in unidades_ord if u in costo_unit],
+            marker_color=[COLORES[u]["line"] for u in unidades_ord if u in costo_unit],
+            text=[f"{costo_unit.get(u,0):.1f}" for u in unidades_ord if u in costo_unit],
+            textposition="outside",
+            textfont=dict(size=11,color="#475569"),
+        ))
+        fig_cu.add_hline(y=cmg_prom, line_color="#94A3B8", line_dash="dot",
+                         annotation_text=f"CMG prom {cmg_prom:.1f}", annotation_position="right",
+                         annotation_font_color="#64748B", annotation_font_size=10)
+        fig_cu.update_layout(
+            title=dict(text="Ingreso medio por MWh generado (USD/MWh)", font=dict(size=13,color="#0F172A"), x=0),
+            height=300, margin=dict(l=10,r=80,t=50,b=10),
+            plot_bgcolor=BG2, paper_bgcolor=BG2,
+            xaxis=dict(tickfont=dict(color="#475569",size=11), showgrid=False),
+            yaxis=dict(gridcolor=GR2, tickfont=dict(color="#94A3B8",size=10), title="USD/MWh"),
+        )
+
+        col_s1, col_s2 = st.columns(2)
+        with col_s1:
+            st.plotly_chart(fig_ingh, use_container_width=True, config={"displayModeBar":False})
+        with col_s2:
+            st.plotly_chart(fig_cu, use_container_width=True, config={"displayModeBar":False})
+
+        # ── Fila 2: distribución de CMG (histograma) + correlación gen vs CMG ──
+        fig_hist = go.Figure(go.Histogram(
+            x=df_c["cmg_usd_mwh"], nbinsx=20,
+            marker_color=COLORES["CMG"]["line"], opacity=0.75,
+            hovertemplate="CMG: %{x:.1f} USD/MWh<br>Frecuencia: %{y}<extra></extra>",
+        ))
+        fig_hist.add_vline(x=cmg_prom, line_color="#94A3B8", line_dash="dot",
+                           annotation_text=f"Prom {cmg_prom:.1f}", annotation_position="top right",
+                           annotation_font_color="#64748B", annotation_font_size=10)
+        fig_hist.update_layout(
+            title=dict(text="Distribución de precios CMG (USD/MWh)", font=dict(size=13,color="#0F172A"), x=0),
+            height=300, margin=dict(l=10,r=10,t=50,b=10),
+            plot_bgcolor=BG2, paper_bgcolor=BG2,
+            xaxis=dict(title="USD/MWh", showgrid=False, tickfont=dict(color="#94A3B8",size=10)),
+            yaxis=dict(gridcolor=GR2, tickfont=dict(color="#94A3B8",size=10), title="Horas"),
+            bargap=0.08,
+        )
+
+        # Correlación generación total vs CMG
+        df_corr = df_merge_t.groupby("fecha_hora").agg(
+            gen_total=("gen_real_mw","sum"),
+            cmg=("cmg_usd_mwh","mean"),
+        ).reset_index()
+        fig_corr = go.Figure(go.Scatter(
+            x=df_corr["gen_total"], y=df_corr["cmg"],
+            mode="markers",
+            marker=dict(color=COLORES["CMG"]["line"], size=6, opacity=0.6),
+            hovertemplate="Gen: %{x:.0f} MW<br>CMG: %{y:.1f} USD/MWh<extra></extra>",
+        ))
+        if len(df_corr) > 2:
+            import numpy as np
+            coef = np.polyfit(df_corr["gen_total"], df_corr["cmg"], 1)
+            x_line = [df_corr["gen_total"].min(), df_corr["gen_total"].max()]
+            y_line = [coef[0]*x + coef[1] for x in x_line]
+            fig_corr.add_trace(go.Scatter(
+                x=x_line, y=y_line, mode="lines",
+                line=dict(color="#94A3B8", dash="dot", width=1.5),
+                showlegend=False,
+            ))
+            corr_val = df_corr["gen_total"].corr(df_corr["cmg"])
+            fig_corr.add_annotation(
+                xref="paper", yref="paper", x=0.98, y=0.96, showarrow=False,
+                text=f"r = {corr_val:.2f}",
+                font=dict(size=11, color="#64748B"),
+                align="right",
+            )
+        fig_corr.update_layout(
+            title=dict(text="Generación total vs CMG (correlación horaria)", font=dict(size=13,color="#0F172A"), x=0),
+            height=300, margin=dict(l=10,r=10,t=50,b=10),
+            plot_bgcolor=BG2, paper_bgcolor=BG2,
+            xaxis=dict(title="MW generados (total)", showgrid=False, tickfont=dict(color="#94A3B8",size=10)),
+            yaxis=dict(title="CMG USD/MWh", gridcolor=GR2, tickfont=dict(color="#94A3B8",size=10)),
+        )
+
+        col_s3, col_s4 = st.columns(2)
+        with col_s3:
+            st.plotly_chart(fig_hist, use_container_width=True, config={"displayModeBar":False})
+        with col_s4:
+            st.plotly_chart(fig_corr, use_container_width=True, config={"displayModeBar":False})
+
+        # ── Fila 3: participación de ingresos (donut) + eficiencia económica ──
+        labels_pie = [LABELS[u] for u in unidades_ord if ingreso_unit.get(u,0) > 0]
+        values_pie = [ingreso_unit.get(u,0) for u in unidades_ord if ingreso_unit.get(u,0) > 0]
+        colors_pie = [COLORES[u]["line"] for u in unidades_ord if ingreso_unit.get(u,0) > 0]
+        fig_pie = go.Figure(go.Pie(
+            labels=labels_pie, values=values_pie,
+            hole=0.52,
+            marker=dict(colors=colors_pie),
+            textfont=dict(size=11),
+            hovertemplate="%{label}<br><b>$%{value:,.0f} USD</b><br>%{percent}<extra></extra>",
+        ))
+        fig_pie.update_layout(
+            title=dict(text="Participación en ingresos estimados", font=dict(size=13,color="#0F172A"), x=0),
+            height=300, margin=dict(l=10,r=10,t=50,b=10),
+            paper_bgcolor=BG2,
+            legend=dict(orientation="h", y=-0.1, font=dict(size=10)),
+            annotations=[dict(text=f"${ingreso_total:,.0f}<br><span style='font-size:10px'>USD total</span>",
+                              x=0.5, y=0.5, font_size=13, showarrow=False)],
+        )
+
+        # Eficiencia económica: ingreso por MW de capacidad instalada
+        eff = {u: ingreso_unit.get(u,0) / PMAX.get(u,1) for u in unidades_ord}
+        fig_eff = go.Figure(go.Bar(
+            x=[LABELS[u] for u in unidades_ord],
+            y=[eff[u] for u in unidades_ord],
+            marker_color=[COLORES[u]["line"] for u in unidades_ord],
+            text=[f"${eff[u]:,.0f}" for u in unidades_ord],
+            textposition="outside",
+            textfont=dict(size=11,color="#475569"),
+        ))
+        fig_eff.update_layout(
+            title=dict(text="Ingreso estimado por MW instalado (USD/MW)", font=dict(size=13,color="#0F172A"), x=0),
+            height=300, margin=dict(l=10,r=10,t=50,b=10),
+            plot_bgcolor=BG2, paper_bgcolor=BG2,
+            xaxis=dict(tickfont=dict(color="#475569",size=11), showgrid=False),
+            yaxis=dict(gridcolor=GR2, tickfont=dict(color="#94A3B8",size=10), title="USD/MW"),
+        )
+
+        col_s5, col_s6 = st.columns(2)
+        with col_s5:
+            st.plotly_chart(fig_pie, use_container_width=True, config={"displayModeBar":False})
+        with col_s6:
+            st.plotly_chart(fig_eff, use_container_width=True, config={"displayModeBar":False})
+
 else:
     st.info("Sin datos de CMG para calcular estadísticos de costo.")
 
@@ -1380,7 +1547,8 @@ def _lim_card_html(row):
     afecta      = bool(row.get("afecta_sscc"))
 
     partes_f1 = []
-    partes_f1.append(f'<span style="background:{c_bg};color:{c_txt};padding:2px 8px;border-radius:4px;font-size:0.71rem;font-weight:700;text-transform:uppercase">{row.get("status","")}</span>')
+    _badge_cls = ' class="badge-pend"' if st_key == "pendiente" else ''
+    partes_f1.append(f'<span{_badge_cls} style="background:{c_bg};color:{c_txt};padding:2px 8px;border-radius:4px;font-size:0.71rem;font-weight:700;text-transform:uppercase">{row.get("status","")}</span>')
     partes_f1.append(f'<span style="font-weight:600;font-size:0.84rem">{central_lbl}</span>')
     if unidad_lbl:
         partes_f1.append(f'<span style="background:#EDE9FE;color:#6D28D9;padding:1px 7px;border-radius:4px;font-size:0.71rem;font-weight:600">{unidad_lbl}</span>')
