@@ -100,6 +100,8 @@ section[data-testid="stSidebar"] > div:first-child > div:first-child > button{di
 @keyframes blink{0%,100%{opacity:1}50%{opacity:.3}}
 @keyframes pulse-pend{0%,100%{box-shadow:0 0 0 0 rgba(217,119,6,0.7)}70%{box-shadow:0 0 0 6px rgba(217,119,6,0)}}
 .badge-pend{display:inline-block;animation:pulse-pend 1.8s infinite;border-radius:4px;}
+@keyframes pulse-sscc{0%,100%{box-shadow:0 0 0 0 rgba(100,116,139,0.5)}70%{box-shadow:0 0 0 5px rgba(100,116,139,0)}}
+.sscc-latest{animation:pulse-sscc 2.2s infinite;}
 .status-box{background:var(--surf2);border:1px solid var(--bord);border-radius:8px;padding:0.6rem 0.8rem;margin-top:0.5rem;font-size:0.72rem;}
 .stTextInput>div>div>input,.stTextArea>div>div>textarea,.stNumberInput>div>div>input{
     background:var(--surf2)!important;border:1px solid var(--bord)!important;border-radius:8px!important;color:var(--txt)!important;}
@@ -961,6 +963,7 @@ with st.sidebar:
             <span style="font-size:0.72rem;font-weight:600">{txt_db}</span>
         </div>
         <div style="font-size:0.68rem;line-height:2">
+            <span style="font-size:0.62rem;font-weight:700;letter-spacing:0.06em;color:#94A3B8;text-transform:uppercase">API CEN SIPUB / OPS</span><br>
             <span class="dot-status dot-g"></span>Gen. real → <b>{str_r}</b><br>
             <span class="dot-status dot-g"></span>Gen. programada → <b>{str_p}</b><br>
             <span class="dot-status dot-g"></span>CMG S3 → <b>{str_cmg}</b><br>
@@ -1155,11 +1158,12 @@ def chart_unidad(unidad: str, mostrar_desviacion: bool = False, nodo_label: str 
 
     # ── CMG ──
     if tiene_cmg:
+        r_cmg = int(c["line"][1:3],16); g_cmg = int(c["line"][3:5],16); b_cmg = int(c["line"][5:7],16)
         fig.add_trace(go.Scatter(
             x=df_c["fecha_hora"], y=df_c["cmg_usd_mwh"],
             name=f"CMG {nodo_label}", mode="lines",
-            line=dict(color=COLORES["CMG"]["line"], width=2),
-            fill="tozeroy", fillcolor="rgba(109,40,217,0.10)",
+            line=dict(color=c["line"], width=3),
+            fill="tozeroy", fillcolor=f"rgba({r_cmg},{g_cmg},{b_cmg},0.10)",
             hovertemplate="<b>CMG</b> %{x|%d/%m %H:%M}<br>%{y:.1f} USD/MWh<extra></extra>",
         ), row=2, col=1)
         prom_cmg = df_c["cmg_usd_mwh"].mean()
@@ -1317,17 +1321,33 @@ if not df_c.empty:
                           annotation_text=f"Prom: {cmg_prom:.1f}",
                           annotation_position="right",
                           annotation_font_color="#64748B", annotation_font_size=10)
+            # halos exteriores (efecto palpitación visual)
+            fig3.add_trace(go.Scatter(
+                x=[df_c.loc[idx_max,"fecha_hora"]], y=[cmg_max],
+                mode="markers", showlegend=False,
+                marker=dict(size=22, color="rgba(239,68,68,0.18)", symbol="circle",
+                            line=dict(color="rgba(239,68,68,0.45)", width=1.5)),
+            ))
+            fig3.add_trace(go.Scatter(
+                x=[df_c.loc[idx_min,"fecha_hora"]], y=[cmg_min],
+                mode="markers", showlegend=False,
+                marker=dict(size=22, color="rgba(16,185,129,0.18)", symbol="circle",
+                            line=dict(color="rgba(16,185,129,0.45)", width=1.5)),
+            ))
+            # marcadores centrales con etiqueta
             fig3.add_trace(go.Scatter(
                 x=[df_c.loc[idx_max,"fecha_hora"]], y=[cmg_max],
                 mode="markers+text",
-                marker=dict(size=10,color="#EF4444",symbol="triangle-up"),
+                marker=dict(size=11, color="#EF4444", symbol="triangle-up",
+                            line=dict(color="#fff", width=1.5)),
                 text=[f" Máx: {cmg_max:.1f}"], textposition="top right",
                 textfont=dict(size=10,color="#EF4444"), showlegend=False,
             ))
             fig3.add_trace(go.Scatter(
                 x=[df_c.loc[idx_min,"fecha_hora"]], y=[cmg_min],
                 mode="markers+text",
-                marker=dict(size=10,color="#10B981",symbol="triangle-down"),
+                marker=dict(size=11, color="#10B981", symbol="triangle-down",
+                            line=dict(color="#fff", width=1.5)),
                 text=[f" Mín: {cmg_min:.1f}"], textposition="bottom right",
                 textfont=dict(size=10,color="#10B981"), showlegend=False,
             ))
@@ -1817,15 +1837,16 @@ else:
                 if df_u.empty:
                     st.caption("Sin instrucciones")
                 else:
-                    for _, row in df_u_show.iterrows():
+                    for idx_row, (_, row) in enumerate(df_u_show.iterrows()):
                         tipo  = str(row["instruccion_sscc"])
                         color = COLORES_SSCC.get(tipo, "#64748B")
                         bg    = BADGE_SSCC.get(tipo, "#F1F5F9")
                         ini   = str(row["inicio_periodo"])[:5] if row["inicio_periodo"] else "—"
                         fin   = str(row["fin_periodo"])[:5]    if row["fin_periodo"]    else "—"
                         fecha = str(row["fecha"])
+                        extra_cls = ' sscc-latest' if idx_row == 0 else ''
                         st.markdown(
-                            f'<div style="border:1px solid {color}33;border-left:3px solid {color};'
+                            f'<div class="sscc-card{extra_cls}" style="border:1px solid {color}33;border-left:3px solid {color};'
                             f'background:{bg};border-radius:6px;padding:6px 10px;margin-bottom:6px;">'
                             f'<span style="font-weight:700;color:{color};font-size:0.8rem">{tipo}</span>'
                             f'<span style="color:#64748B;font-size:0.72rem;float:right">{fecha}</span><br>'

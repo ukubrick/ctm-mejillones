@@ -179,7 +179,7 @@ Todos los endpoints usan `_get_with_retry()` con backoff exponencial:
 
 ---
 
-## Estado actual del código (2026-06-11 — actualizado)
+## Estado actual del código (2026-06-18 — actualizado)
 
 Todo implementado y funcionando en producción:
 - ✅ Generación real automática (API CEN SIPUB) — ventana 7 días, DO UPDATE sobrescribe ceros
@@ -193,16 +193,24 @@ Todo implementado y funcionando en producción:
 - ✅ Workflow timeout 35 min (PCP tarda ~12 min/día)
 - ✅ Auto-refresh horario (`streamlit-autorefresh`, 3600000 ms) — recarga automática y previene sleep de Streamlit Cloud
 - ✅ Sección SSCC ubicada después de CMG, con guía desplegable (`<details>/<summary>` HTML nativo), KPIs, tabs Por unidad / Estadísticas / Tabla completa
-- ✅ Tab "Por unidad" SSCC muestra máximo 5 instrucciones recientes por unidad (ordenadas fecha desc); si hay más aparece caption "+N más en «Tabla completa»"
+- ✅ Tab "Por unidad" SSCC muestra máximo 5 instrucciones recientes por unidad (ordenadas fecha desc); primera instrucción con animación palpitante (`.sscc-latest`); si hay más aparece caption "+N más en «Tabla completa»"
 - ✅ Footer: "Dashboard creado por Erick Herrera"
 - ✅ Backfill gen. programada 05–09 junio 2026 completado (3115 registros recuperados)
-- ✅ Sidebar: dot verde palpitante en todas las fuentes, texto "Conectado · Supabase / PostgreSQL", última fecha adquirida por cada fuente (Gen. real, Gen. programada, CMG S3, SSCC)
+- ✅ Sidebar: dot verde palpitante en todas las fuentes, texto "Conectado · Supabase / PostgreSQL", última fecha adquirida por cada fuente (Gen. real, Gen. programada, CMG S3, SSCC), etiqueta "API CEN SIPUB / OPS" encima de las fuentes
 - ~~Header superior derecho con indicadores de status~~ — eliminado (duplicaba el sidebar)
 - ✅ Checkbox "Mostrar área de desviación (Real vs Programada)" activado por defecto
-- ✅ Dots de unidades en tabs: ANG1 🟣, ANG2 🔵, CCR1 🟡, CCR2 🟢
+- ~~Dots de unidades en tabs: ANG1 🟣, ANG2 🔵, CCR1 🟡, CCR2 🟢~~ — eliminados (sin emoji en UI)
 - ✅ Limitaciones de transmisión (API CEN SIP `/limitaciones-transmision/v4/findByDate`) — tabla en DB, adquisición automática ventana 30 días, sección visual sobre SSCC con KPIs (activas, total, afecta SSCC, mayor potencia), tabs por unidad (ANG1/ANG2/CCR1/CCR2/Todas), cards con status/colores/correlativo N°/fechas apertura→cierre, tabla completa via `<details>/<summary>` HTML nativo, orden cronológico descendente (más reciente primero), máx 5 por tab
+- ✅ Badge "pendiente" en limitaciones tiene animación palpitante naranja (`.badge-pend`, CSS `pulse-pend`)
 - ✅ Header y sidebar actualizados con indicador de limitaciones activas (dot amarillo si hay pendientes)
 - ✅ Tab "Estadísticas" en sección limitaciones: barras por mes (apiladas por status), donut por unidad, histograma de potencia limitada por rangos MW, barras de duración en días para limitaciones finalizadas
+- ✅ Títulos de sección (.sec): font-size 0.82rem, font-weight 800, borde inferior 2px, color #334155
+- ✅ KPIs factor de planta: muestra "(promedio período)" junto al % y fecha/hora del último dato adquirido
+- ✅ Análisis de Costo — pestaña "Estadísticas" con 6 gráficos: ingreso horario por unidad, ingreso medio por MWh, distribución CMG (histograma), correlación gen vs CMG (scatter + coef r), donut participación ingresos, eficiencia USD/MW instalado
+- ✅ Análisis de Costo — marcadores máx/mín del CMG con halo exterior (efecto destacado visual)
+- ✅ Gráfico por unidad: serie CMG hereda el color de la unidad (line color = `c["line"]`) y grosor width=3 igual a la serie Real
+- ✅ Solicitudes de trabajo integradas — sección después de SSCC, máx 5 cards por tab, tabla completa disponible
+- ✅ Sin emoji en la UI (eliminados todos en 2026-06-18)
 
 ---
 
