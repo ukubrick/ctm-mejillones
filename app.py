@@ -25,7 +25,7 @@ from reportlab.platypus import SimpleDocTemplate, Paragraph, Spacer, Table, Tabl
 st.set_page_config(
     page_title="Complejo Térmico Mejillones",
     layout="wide",
-    page_icon="⚡",
+    page_icon=None,
     initial_sidebar_state="expanded",
 )
 
@@ -34,10 +34,10 @@ st_autorefresh(interval=3_600_000, limit=None, key="autorefresh_horario")
 
 # Paleta AES: púrpura → azul → cyan → verde (logo AES)
 COLORES = {
-    "ANG1": {"line":"#6D28D9","prog":"#C4B5FD","badge":"#EDE9FE","text":"#6D28D9","dot":"🟣"},
-    "ANG2": {"line":"#2563EB","prog":"#93C5FD","badge":"#DBEAFE","text":"#2563EB","dot":"🔵"},
-    "CCR1": {"line":"#0891B2","prog":"#67E8F9","badge":"#CFFAFE","text":"#0891B2","dot":"🟡"},
-    "CCR2": {"line":"#16A34A","prog":"#86EFAC","badge":"#DCFCE7","text":"#16A34A","dot":"🟢"},
+    "ANG1": {"line":"#6D28D9","prog":"#C4B5FD","badge":"#EDE9FE","text":"#6D28D9"},
+    "ANG2": {"line":"#2563EB","prog":"#93C5FD","badge":"#DBEAFE","text":"#2563EB"},
+    "CCR1": {"line":"#0891B2","prog":"#67E8F9","badge":"#CFFAFE","text":"#0891B2"},
+    "CCR2": {"line":"#16A34A","prog":"#86EFAC","badge":"#DCFCE7","text":"#16A34A"},
     "CMG":  {"line":"#6D28D9"},
 }
 LABELS = {"ANG1":"Angamos U1","ANG2":"Angamos U2","CCR1":"Cochrane U1","CCR2":"Cochrane U2"}
@@ -923,7 +923,7 @@ def load_bit(s,e,u=None):
 
 # ── Sidebar ───────────────────────────────────────────────────
 with st.sidebar:
-    st.markdown("### ⚡ Complejo Térmico Mejillones")
+    st.markdown("### Complejo Térmico Mejillones")
     st.markdown('<p style="font-size:0.75rem;color:#64748B;margin-bottom:0.3rem">Complejo Térmico · Monitoreo Operacional</p>', unsafe_allow_html=True)
 
     # Estado de conexión y fuentes
@@ -1207,7 +1207,7 @@ def chart_unidad(unidad: str, mostrar_desviacion: bool = False, nodo_label: str 
     st.plotly_chart(fig, use_container_width=True, config={"displayModeBar": False})
 
     if mostrar_prog and df_up.empty:
-        st.caption("💡 Sin datos de programada — se importan automáticamente desde CEN PCP cada hora. El ingreso manual está disponible más abajo.")
+        st.caption("Sin datos de programada — se importan automáticamente desde CEN PCP cada hora. El ingreso manual está disponible más abajo.")
 
 
 # ── Tabs por unidad ───────────────────────────────────────────
@@ -1219,9 +1219,7 @@ mostrar_desv = False
 if hay_prog_general and mostrar_prog:
     mostrar_desv = st.checkbox("Mostrar área de desviación (Real vs Programada)", value=True)
 
-tabs = st.tabs([
-    f"{COLORES[u]['dot']} {LABELS[u]}" for u in ["ANG1","ANG2","CCR1","CCR2"]
-])
+tabs = st.tabs([LABELS[u] for u in ["ANG1","ANG2","CCR1","CCR2"]])
 for tab, u in zip(tabs, ["ANG1","ANG2","CCR1","CCR2"]):
     with tab:
         c = COLORES[u]
@@ -1589,7 +1587,7 @@ TYPE_LABEL = {"central_generadora": "Central", "subestacion": "Subestación", "l
 df_sol = load_solicitudes(s, e)
 
 if df_sol.empty:
-    st.info("Sin solicitudes de trabajo registradas para el período seleccionado.", icon="ℹ️")
+    st.info("Sin solicitudes de trabajo registradas para el período seleccionado.")
 else:
     # KPIs
     n_total    = len(df_sol)
@@ -1608,8 +1606,8 @@ else:
 
     def _sol_cards(df_view):
         if df_view.empty:
-            st.info("Sin registros.", icon="ℹ️"); return
-        for _, row in df_view.head(10).iterrows():
+            st.info("Sin registros."); return
+        for _, row in df_view.head(5).iterrows():
             st_key      = str(row.get("status", "")).lower()
             c_txt, c_bg = STATUS_COLOR_SOL.get(st_key, ("#475569", "#F8FAFC"))
             tipo_lbl    = TIPO_LABEL.get(str(row.get("tipo_solicitud","")), str(row.get("tipo_solicitud","")))
@@ -1636,8 +1634,8 @@ else:
                 </div>
             </div>
             """, unsafe_allow_html=True)
-        if len(df_view) > 10:
-            st.caption(f"+{len(df_view)-10} más en «Tabla completa»")
+        if len(df_view) > 5:
+            st.caption(f"+{len(df_view)-5} más en «Tabla completa»")
 
     with tab_s_todas:
         _sol_cards(df_sol)
@@ -1889,8 +1887,8 @@ st.markdown('<div class="sec">POTENCIA PROGRAMADA · CEN PCP + INGRESO MANUAL</d
 st.info(
     "Los datos de programación se importan automáticamente desde la API CEN (PCP) cada hora. "
     "El ingreso manual permite agregar o corregir valores de respaldo cuando no hay datos PCP disponibles.",
-    icon="ℹ️",
 )
+
 tab_p1, tab_p2 = st.tabs(["Por hora", "24 horas de una vez"])
 
 with tab_p1:
@@ -1959,12 +1957,12 @@ if not df_pv2.empty:
             if st.button("Actualizar MW", key="upd_prog"):
                 ok = exe("UPDATE generacion_programada SET gen_programada_mw=%s WHERE id=%s",
                          (new_mw_p, int(reg_p["id"])))
-                if ok: st.success("✅ Actualizado."); st.cache_data.clear(); st.rerun()
+                if ok: st.success("Actualizado."); st.cache_data.clear(); st.rerun()
         with col_dp:
             st.markdown("<br>", unsafe_allow_html=True)
             if st.button("Eliminar", key="del_prog", type="primary"):
                 ok = exe("DELETE FROM generacion_programada WHERE id=%s", (int(reg_p["id"]),))
-                if ok: st.success("✅ Eliminado."); st.cache_data.clear(); st.rerun()
+                if ok: st.success("Eliminado."); st.cache_data.clear(); st.rerun()
 
 
 # ── Generación real manual (respaldo) ────────────────────────
@@ -1973,8 +1971,8 @@ st.info(
     "Los datos de generación real se importan automáticamente desde la API CEN (SIPUB) cada hora. "
     "El ingreso manual permite agregar o corregir valores cuando la adquisición falla. "
     "Si ya existe un registro para esa unidad/hora, el valor se sobreescribe.",
-    icon="ℹ️",
 )
+
 tab_r1, tab_r2 = st.tabs(["Por hora", "24 horas de una vez"])
 
 with tab_r1:
@@ -2045,12 +2043,12 @@ if not df_rv2.empty:
             if st.button("Actualizar MW real", key="upd_real"):
                 ok = exe("UPDATE generacion_real SET gen_real_mw=%s WHERE id=%s",
                          (new_mw_r, int(reg_r["id"])))
-                if ok: st.success("✅ Actualizado."); st.cache_data.clear(); st.rerun()
+                if ok: st.success("Actualizado."); st.cache_data.clear(); st.rerun()
         with col_dr:
             st.markdown("<br>", unsafe_allow_html=True)
             if st.button("Eliminar", key="del_real", type="primary"):
                 ok = exe("DELETE FROM generacion_real WHERE id=%s", (int(reg_r["id"]),))
-                if ok: st.success("✅ Eliminado."); st.cache_data.clear(); st.rerun()
+                if ok: st.success("Eliminado."); st.cache_data.clear(); st.rerun()
 
 
 # ── Datos horarios ────────────────────────────────────────────
@@ -2088,12 +2086,12 @@ with tab_b1:
             new_com_b = st.text_area("Editar comentario:", value=str(reg_b.get("comentario","")), height=80, key="edit_com_b")
             if st.button("Actualizar novedad", key="upd_bit"):
                 ok = exe("UPDATE bitacora SET comentario=%s WHERE id=%s", (new_com_b.strip(), int(reg_b["id"])))
-                if ok: st.success("✅ Actualizado."); st.cache_data.clear(); st.rerun()
+                if ok: st.success("Actualizado."); st.cache_data.clear(); st.rerun()
         with col_del_b:
             st.markdown("<br>", unsafe_allow_html=True)
             if st.button("Eliminar", key="del_bit", type="primary"):
                 ok = exe("DELETE FROM bitacora WHERE id=%s", (int(reg_b["id"]),))
-                if ok: st.success("✅ Eliminado."); st.cache_data.clear(); st.rerun()
+                if ok: st.success("Eliminado."); st.cache_data.clear(); st.rerun()
     else:
         st.info("Sin novedades para el período seleccionado.")
 with tab_b2:
