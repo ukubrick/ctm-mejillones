@@ -747,7 +747,7 @@ def generar_ppt(df_real, df_prog, df_cmg, start_str, end_str,
                     pot  = f"{int(float(row['potencia']))} MW" if pd.notna(row.get("potencia")) and float(row["potencia"]) > 0 else ""
                     txt  = (f"N.{corr}  [{row.get('status','')}]  "
                             f"{str(row.get('fecha_perturbacion',''))[:16]}  {pot}  "
-                            f"{'⚠ Afecta SSCC' if row.get('afecta_sscc') else ''}")
+                            f"{'[Afecta SSCC]' if row.get('afecta_sscc') else ''}")
                     _txb(sl, txt, 0.4, cur_y, 12.5, 0.3, size=9, color=RGB_DARK)
                     cur_y += 0.3
 
@@ -787,7 +787,7 @@ def generar_ppt(df_real, df_prog, df_cmg, start_str, end_str,
             txt = (f"N.{corr}  {unidad}  [{row.get('status','')}]  "
                    f"Apertura: {str(row.get('fecha_perturbacion',''))[:16]}  "
                    f"Potencia: {pot}  "
-                   f"{'⚠ SSCC' if row.get('afecta_sscc') else ''}")
+                   f"{'[Afecta SSCC]' if row.get('afecta_sscc') else ''}")
             _txb(sl, txt, 0.3, cur_y, 12.7, 0.35, size=9, color=RGB_DARK)
             cur_y += 0.38
             if cur_y > 7.0: break
@@ -1402,7 +1402,7 @@ def _lim_card_html(row):
     )
 
 if df_lim.empty:
-    st.info("Sin limitaciones registradas para el período seleccionado.", icon="ℹ️")
+    st.info("Sin limitaciones registradas para el período seleccionado.")
 else:
     activas   = df_lim[df_lim["status"] == "pendiente"]
     n_activas = len(activas)
@@ -1572,96 +1572,6 @@ else:
     st.markdown(tabla_html, unsafe_allow_html=True)
 
 
-# ── Solicitudes de Trabajo ────────────────────────────────────
-st.markdown('<div class="sec">SOLICITUDES DE TRABAJO — AES ANDES / ANG / CCR</div>', unsafe_allow_html=True)
-
-STATUS_COLOR_SOL = {
-    "pendiente":          ("#D97706", "#FEF3C7"),
-    "ejecucion_exitosa":  ("#16A34A", "#DCFCE7"),
-    "anulado":            ("#94A3B8", "#F1F5F9"),
-    "borrador":           ("#6366F1", "#EEF2FF"),
-}
-TIPO_LABEL = {"desconexion": "Desconexión", "intervencion": "Intervención"}
-TYPE_LABEL = {"central_generadora": "Central", "subestacion": "Subestación", "linea": "Línea"}
-
-df_sol = load_solicitudes(s, e)
-
-if df_sol.empty:
-    st.info("Sin solicitudes de trabajo registradas para el período seleccionado.")
-else:
-    # KPIs
-    n_total    = len(df_sol)
-    n_pend     = (df_sol["status"] == "pendiente").sum()
-    n_ejec     = (df_sol["status"] == "ejecucion_exitosa").sum()
-    n_desc     = (df_sol["tipo_solicitud"] == "desconexion").sum()
-
-    kc1, kc2, kc3, kc4 = st.columns(4)
-    kc1.metric("Total solicitudes", n_total)
-    kc2.metric("Pendientes", int(n_pend))
-    kc3.metric("Ejecutadas", int(n_ejec))
-    kc4.metric("Desconexiones", int(n_desc))
-
-    # Tabs
-    tab_s_todas, tab_s_pend, tab_s_tabla = st.tabs(["Todas", "Pendientes", "Tabla completa"])
-
-    def _sol_cards(df_view):
-        if df_view.empty:
-            st.info("Sin registros."); return
-        for _, row in df_view.head(5).iterrows():
-            st_key      = str(row.get("status", "")).lower()
-            c_txt, c_bg = STATUS_COLOR_SOL.get(st_key, ("#475569", "#F8FAFC"))
-            tipo_lbl    = TIPO_LABEL.get(str(row.get("tipo_solicitud","")), str(row.get("tipo_solicitud","")))
-            type_lbl    = TYPE_LABEL.get(str(row.get("type","")), str(row.get("type","")))
-            inst        = str(row.get("instalacion_nombre") or "—")
-            f_ini       = str(row.get("fecha_inicio") or "—")[:16]
-            f_fin       = str(row.get("fecha_fin")    or "—")[:16]
-            corr        = int(row["correlativo"]) if pd.notna(row.get("correlativo")) else "—"
-            riesgo      = str(row.get("descripcion_nivel_riesgo") or "—")
-            st.markdown(f"""
-            <div style="background:{c_bg};border-left:4px solid {c_txt};border-radius:6px;
-                        padding:0.6rem 0.9rem;margin-bottom:0.5rem;font-size:0.82rem">
-                <div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:0.3rem">
-                    <span style="font-weight:700;color:#1E293B">N° {corr} — {inst}</span>
-                    <span style="background:{c_txt};color:#fff;border-radius:4px;
-                                 padding:2px 8px;font-size:0.72rem;font-weight:600">
-                        {st_key.replace("_"," ").upper()}
-                    </span>
-                </div>
-                <div style="color:#475569;line-height:1.7">
-                    <b>Tipo:</b> {tipo_lbl} · {type_lbl} &nbsp;|&nbsp;
-                    <b>Inicio:</b> {f_ini} &nbsp;|&nbsp; <b>Fin:</b> {f_fin}<br>
-                    <b>Riesgo:</b> {riesgo[:120]}{'…' if len(riesgo)>120 else ''}
-                </div>
-            </div>
-            """, unsafe_allow_html=True)
-        if len(df_view) > 5:
-            st.caption(f"+{len(df_view)-5} más en «Tabla completa»")
-
-    with tab_s_todas:
-        _sol_cards(df_sol)
-
-    with tab_s_pend:
-        df_pend = df_sol[df_sol["status"] == "pendiente"]
-        _sol_cards(df_pend)
-
-    with tab_s_tabla:
-        cols_show = ["correlativo", "empresa_nombre", "instalacion_nombre", "status",
-                     "tipo_solicitud", "type", "fecha_inicio", "fecha_fin"]
-        df_t = df_sol[cols_show].copy()
-        df_t.columns = ["Correlativo", "Empresa", "Instalación", "Status",
-                        "Tipo", "Elemento", "Inicio", "Fin"]
-        hdrs = "".join(f'<th style="padding:5px 10px;background:#F1F5F9;font-size:0.72rem;text-align:left">{c}</th>' for c in df_t.columns)
-        rows_html = ""
-        for _, r in df_t.iterrows():
-            cells = "".join(f'<td style="padding:5px 10px;font-size:0.72rem;border-bottom:1px solid #F1F5F9;white-space:nowrap">{str(r[c]) if pd.notna(r[c]) else ""}</td>' for c in df_t.columns)
-            rows_html += f"<tr>{cells}</tr>"
-        tabla_html = (
-            f'<div style="overflow-x:auto;margin-top:0.5rem">'
-            f'<table style="border-collapse:collapse;width:100%">'
-            f'<thead><tr>{hdrs}</tr></thead><tbody>{rows_html}</tbody></table></div>'
-        )
-        st.markdown(tabla_html, unsafe_allow_html=True)
-
 
 # ── Servicios Complementarios (SSCC) ─────────────────────────
 st.markdown('<div class="sec">SERVICIOS COMPLEMENTARIOS (SSCC)</div>', unsafe_allow_html=True)
@@ -1709,7 +1619,7 @@ comprometida cuando está declarada.</p>
 df_sscc = load_sscc(s, e)
 
 if df_sscc.empty:
-    st.info("Sin datos SSCC para el período seleccionado. Los datos se adquieren automáticamente cada hora.", icon="ℹ️")
+    st.info("Sin datos SSCC para el período seleccionado. Los datos se adquieren automáticamente cada hora.")
 else:
     total_instr  = len(df_sscc)
     unidades_act = df_sscc["unidad"].nunique()
@@ -1880,6 +1790,97 @@ else:
             }),
             use_container_width=True, hide_index=True,
         )
+
+
+# ── Solicitudes de Trabajo ────────────────────────────────────
+st.markdown('<div class="sec">SOLICITUDES DE TRABAJO — AES ANDES / ANG / CCR</div>', unsafe_allow_html=True)
+
+STATUS_COLOR_SOL = {
+    "pendiente":          ("#D97706", "#FEF3C7"),
+    "ejecucion_exitosa":  ("#16A34A", "#DCFCE7"),
+    "anulado":            ("#94A3B8", "#F1F5F9"),
+    "borrador":           ("#6366F1", "#EEF2FF"),
+}
+TIPO_LABEL = {"desconexion": "Desconexión", "intervencion": "Intervención"}
+TYPE_LABEL = {"central_generadora": "Central", "subestacion": "Subestación", "linea": "Línea"}
+
+df_sol = load_solicitudes(s, e)
+
+if df_sol.empty:
+    st.info("Sin solicitudes de trabajo registradas para el período seleccionado.")
+else:
+    # KPIs
+    n_total    = len(df_sol)
+    n_pend     = (df_sol["status"] == "pendiente").sum()
+    n_ejec     = (df_sol["status"] == "ejecucion_exitosa").sum()
+    n_desc     = (df_sol["tipo_solicitud"] == "desconexion").sum()
+
+    kc1, kc2, kc3, kc4 = st.columns(4)
+    kc1.metric("Total solicitudes", n_total)
+    kc2.metric("Pendientes", int(n_pend))
+    kc3.metric("Ejecutadas", int(n_ejec))
+    kc4.metric("Desconexiones", int(n_desc))
+
+    # Tabs
+    tab_s_todas, tab_s_pend, tab_s_tabla = st.tabs(["Todas", "Pendientes", "Tabla completa"])
+
+    def _sol_cards(df_view):
+        if df_view.empty:
+            st.info("Sin registros."); return
+        for _, row in df_view.head(5).iterrows():
+            st_key      = str(row.get("status", "")).lower()
+            c_txt, c_bg = STATUS_COLOR_SOL.get(st_key, ("#475569", "#F8FAFC"))
+            tipo_lbl    = TIPO_LABEL.get(str(row.get("tipo_solicitud","")), str(row.get("tipo_solicitud","")))
+            type_lbl    = TYPE_LABEL.get(str(row.get("type","")), str(row.get("type","")))
+            inst        = str(row.get("instalacion_nombre") or "—")
+            f_ini       = str(row.get("fecha_inicio") or "—")[:16]
+            f_fin       = str(row.get("fecha_fin")    or "—")[:16]
+            corr        = int(row["correlativo"]) if pd.notna(row.get("correlativo")) else "—"
+            riesgo      = str(row.get("descripcion_nivel_riesgo") or "—")
+            st.markdown(f"""
+            <div style="background:{c_bg};border-left:4px solid {c_txt};border-radius:6px;
+                        padding:0.6rem 0.9rem;margin-bottom:0.5rem;font-size:0.82rem">
+                <div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:0.3rem">
+                    <span style="font-weight:700;color:#1E293B">N° {corr} — {inst}</span>
+                    <span style="background:{c_txt};color:#fff;border-radius:4px;
+                                 padding:2px 8px;font-size:0.72rem;font-weight:600">
+                        {st_key.replace("_"," ").upper()}
+                    </span>
+                </div>
+                <div style="color:#475569;line-height:1.7">
+                    <b>Tipo:</b> {tipo_lbl} · {type_lbl} &nbsp;|&nbsp;
+                    <b>Inicio:</b> {f_ini} &nbsp;|&nbsp; <b>Fin:</b> {f_fin}<br>
+                    <b>Riesgo:</b> {riesgo[:120]}{'…' if len(riesgo)>120 else ''}
+                </div>
+            </div>
+            """, unsafe_allow_html=True)
+        if len(df_view) > 5:
+            st.caption(f"+{len(df_view)-5} más en «Tabla completa»")
+
+    with tab_s_todas:
+        _sol_cards(df_sol)
+
+    with tab_s_pend:
+        df_pend = df_sol[df_sol["status"] == "pendiente"]
+        _sol_cards(df_pend)
+
+    with tab_s_tabla:
+        cols_show = ["correlativo", "empresa_nombre", "instalacion_nombre", "status",
+                     "tipo_solicitud", "type", "fecha_inicio", "fecha_fin"]
+        df_t = df_sol[cols_show].copy()
+        df_t.columns = ["Correlativo", "Empresa", "Instalación", "Status",
+                        "Tipo", "Elemento", "Inicio", "Fin"]
+        hdrs = "".join(f'<th style="padding:5px 10px;background:#F1F5F9;font-size:0.72rem;text-align:left">{c}</th>' for c in df_t.columns)
+        rows_html = ""
+        for _, r in df_t.iterrows():
+            cells = "".join(f'<td style="padding:5px 10px;font-size:0.72rem;border-bottom:1px solid #F1F5F9;white-space:nowrap">{str(r[c]) if pd.notna(r[c]) else ""}</td>' for c in df_t.columns)
+            rows_html += f"<tr>{cells}</tr>"
+        tabla_html = (
+            f'<div style="overflow-x:auto;margin-top:0.5rem">'
+            f'<table style="border-collapse:collapse;width:100%">'
+            f'<thead><tr>{hdrs}</tr></thead><tbody>{rows_html}</tbody></table></div>'
+        )
+        st.markdown(tabla_html, unsafe_allow_html=True)
 
 
 # ── Potencia programada ───────────────────────────────────────
