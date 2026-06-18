@@ -1377,60 +1377,90 @@ if not df_c.empty:
         with gc2:
             idx_max = df_c["cmg_usd_mwh"].idxmax()
             idx_min = df_c["cmg_usd_mwh"].idxmin()
+
+            # Paleta elegante fondo oscuro
+            BG_DARK  = "#0F172A"
+            GRID_DRK = "rgba(255,255,255,0.07)"
+            LINE_CMG = "#A78BFA"   # púrpura suave sobre fondo oscuro
+            FILL_CMG = "rgba(167,139,250,0.18)"
+
             fig3 = go.Figure()
+
+            # Relleno de área degradado (dos traces: área opaca base + línea brillante encima)
             fig3.add_trace(go.Scatter(
                 x=df_c["fecha_hora"], y=df_c["cmg_usd_mwh"],
-                mode="lines", line=dict(color=COLORES["CMG"]["line"],width=2),
-                fill="tozeroy", fillcolor="rgba(109,40,217,0.12)",
+                mode="none", fill="tozeroy",
+                fillcolor=FILL_CMG,
+                showlegend=False, hoverinfo="skip",
+            ))
+            fig3.add_trace(go.Scatter(
+                x=df_c["fecha_hora"], y=df_c["cmg_usd_mwh"],
+                mode="lines",
+                line=dict(color=LINE_CMG, width=2.5, shape="spline", smoothing=0.6),
                 showlegend=False,
-                hovertemplate="%{x|%d/%m %H:%M}<br><b>%{y:.1f} USD/MWh</b><extra></extra>",
+                hovertemplate="<b>%{x|%d/%m %H:%M}</b><br>%{y:.1f} USD/MWh<extra></extra>",
             ))
-            fig3.add_hline(y=cmg_prom, line_color="#94A3B8", line_width=1.2, line_dash="dot",
-                          annotation_text=f"Prom: {cmg_prom:.1f}",
-                          annotation_position="right",
-                          annotation_font_color="#64748B", annotation_font_size=10)
-            # halos exteriores (efecto palpitación visual)
+
+            # Línea de promedio
+            fig3.add_hline(
+                y=cmg_prom, line_color="rgba(255,255,255,0.3)",
+                line_width=1, line_dash="dot",
+                annotation_text=f"Prom: {cmg_prom:.1f}",
+                annotation_position="right",
+                annotation_font_color="rgba(255,255,255,0.55)",
+                annotation_font_size=10,
+            )
+
+            # Halos exteriores máx/mín
             fig3.add_trace(go.Scatter(
                 x=[df_c.loc[idx_max,"fecha_hora"]], y=[cmg_max],
-                mode="markers", showlegend=False,
-                marker=dict(size=22, color="rgba(239,68,68,0.18)", symbol="circle",
-                            line=dict(color="rgba(239,68,68,0.45)", width=1.5)),
+                mode="markers", showlegend=False, hoverinfo="skip",
+                marker=dict(size=24, color="rgba(248,113,113,0.2)", symbol="circle",
+                            line=dict(color="rgba(248,113,113,0.5)", width=1.5)),
             ))
             fig3.add_trace(go.Scatter(
                 x=[df_c.loc[idx_min,"fecha_hora"]], y=[cmg_min],
-                mode="markers", showlegend=False,
-                marker=dict(size=22, color="rgba(16,185,129,0.18)", symbol="circle",
-                            line=dict(color="rgba(16,185,129,0.45)", width=1.5)),
+                mode="markers", showlegend=False, hoverinfo="skip",
+                marker=dict(size=24, color="rgba(52,211,153,0.2)", symbol="circle",
+                            line=dict(color="rgba(52,211,153,0.5)", width=1.5)),
             ))
-            # marcadores centrales con etiqueta
+            # Marcadores centrales
             fig3.add_trace(go.Scatter(
                 x=[df_c.loc[idx_max,"fecha_hora"]], y=[cmg_max],
                 mode="markers+text",
-                marker=dict(size=11, color="#EF4444", symbol="triangle-up",
+                marker=dict(size=10, color="#F87171", symbol="triangle-up",
                             line=dict(color="#fff", width=1.5)),
-                text=[f" Máx: {cmg_max:.1f}"], textposition="top right",
-                textfont=dict(size=10,color="#EF4444"), showlegend=False,
+                text=[f"  Máx: {cmg_max:.1f}"], textposition="top right",
+                textfont=dict(size=10, color="#F87171"), showlegend=False,
             ))
             fig3.add_trace(go.Scatter(
                 x=[df_c.loc[idx_min,"fecha_hora"]], y=[cmg_min],
                 mode="markers+text",
-                marker=dict(size=11, color="#10B981", symbol="triangle-down",
+                marker=dict(size=10, color="#34D399", symbol="triangle-down",
                             line=dict(color="#fff", width=1.5)),
-                text=[f" Mín: {cmg_min:.1f}"], textposition="bottom right",
-                textfont=dict(size=10,color="#10B981"), showlegend=False,
+                text=[f"  Mín: {cmg_min:.1f}"], textposition="bottom right",
+                textfont=dict(size=10, color="#34D399"), showlegend=False,
             ))
+
             fig3.update_layout(
                 title=dict(text="CMG en el Tiempo",
-                          font=dict(size=13,color="#0F172A"), x=0),
-                height=340, margin=dict(l=10, r=70, t=60, b=10),
-                plot_bgcolor=BG, paper_bgcolor="rgba(0,0,0,0)",
-                yaxis=dict(title="USD/MWh", gridcolor=GR,
-                          tickfont=dict(color="#94A3B8",size=10),
-                          title_font=dict(color="#94A3B8",size=10)),
-                xaxis=dict(tickfont=dict(color="#94A3B8",size=10),
-                          tickformat="%d/%m\n%H:%M", showgrid=False),
+                          font=dict(size=13, color="#E2E8F0"), x=0),
+                height=360, margin=dict(l=10, r=80, t=50, b=10),
+                plot_bgcolor=BG_DARK, paper_bgcolor=BG_DARK,
+                yaxis=dict(
+                    title="USD/MWh", gridcolor=GRID_DRK,
+                    tickfont=dict(color="rgba(255,255,255,0.45)", size=10),
+                    title_font=dict(color="rgba(255,255,255,0.4)", size=10),
+                    zerolinecolor=GRID_DRK,
+                ),
+                xaxis=dict(
+                    tickfont=dict(color="rgba(255,255,255,0.45)", size=10),
+                    tickformat="%d/%m\n%H:%M", showgrid=False,
+                    zerolinecolor=GRID_DRK,
+                ),
                 hovermode="x unified",
-                hoverlabel=dict(bgcolor="#1E293B",font_color="#F8FAFC"),
+                hoverlabel=dict(bgcolor="#1E293B", font_color="#F8FAFC",
+                               bordercolor="#334155"),
             )
             st.plotly_chart(fig3, use_container_width=True, config={"displayModeBar":False})
 
