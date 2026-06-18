@@ -1272,76 +1272,105 @@ if not df_c.empty:
     with tab_costo_vis:
         gc1, gc2 = st.columns(2)
         with gc1:
-            # ── Barras 3D simulado (isométrico) ──────────────────────────
-            # Coordenadas x numéricas para poder desplazar caras laterales
-            n_bars   = len(unidades_ord)
-            x_pos    = list(range(n_bars))          # 0,1,2,3
-            bar_w    = 0.55                          # ancho visual de la barra
-            depth    = 0.18                          # profundidad del efecto 3D
+            # ── Barras 3D simulado + línea energía en eje secundario ─────
+            n_bars = len(unidades_ord)
+            bar_w  = 0.42   # ancho cara frontal
+            dx     = 0.13   # desplazamiento lateral cara 3D
+            dy_pct = 0.06   # altura cara superior como % del valor máx
+
+            y_vals  = [ingreso_unit.get(u, 0) for u in unidades_ord]
+            y_max   = max(y_vals) if y_vals else 1
+            dy      = y_max * dy_pct   # altura fija de la cara superior
+
+            # Para eje secundario (energía) necesitamos escalar manualmente
+            e_vals  = [energia_unit.get(u, 0) for u in unidades_ord]
+            e_max   = max(e_vals) if e_vals else 1
+            # Escalar energía al mismo rango que ingreso para superponerla
+            e_scale = y_max / e_max if e_max else 1
+
             fig2 = go.Figure()
 
-            y_max_ing = max((ingreso_unit.get(u, 0) for u in unidades_ord), default=1) or 1
-
             for i, u in enumerate(unidades_ord):
-                val   = ingreso_unit.get(u, 0)
+                val   = y_vals[i]
                 hex_c = COLORES[u]["line"]
                 r_c = int(hex_c[1:3],16); g_c = int(hex_c[3:5],16); b_c = int(hex_c[5:7],16)
-                col_front = f"rgba({r_c},{g_c},{b_c},0.90)"
-                col_side  = f"rgba({max(0,r_c-45)},{max(0,g_c-45)},{max(0,b_c-45)},0.85)"
-                col_top   = f"rgba({min(255,r_c+35)},{min(255,g_c+35)},{min(255,b_c+35)},0.95)"
+                col_front = f"rgba({r_c},{g_c},{b_c},0.88)"
+                col_side  = f"rgba({max(0,r_c-55)},{max(0,g_c-55)},{max(0,b_c-55)},0.92)"
+                col_top   = f"rgba({min(255,r_c+45)},{min(255,g_c+45)},{min(255,b_c+45)},1.0)"
 
                 x0 = i - bar_w/2; x1 = i + bar_w/2
 
-                # Cara frontal
+                # Cara frontal (rectángulo principal)
                 fig2.add_trace(go.Scatter(
-                    x=[x0, x1, x1, x0, x0],
+                    x=[x0, x1, x1,  x0,  x0],
                     y=[0,  0,  val, val, 0],
                     fill="toself", fillcolor=col_front,
-                    line=dict(color="rgba(255,255,255,0.4)", width=0.8),
-                    mode="lines", showlegend=(i==0), name="Ingreso est. (USD)",
+                    line=dict(color="rgba(255,255,255,0.6)", width=1),
+                    mode="lines", showlegend=False,
                     hovertemplate=f"<b>{LABELS[u]}</b><br>${val:,.0f} USD<extra></extra>",
                 ))
-                # Cara lateral derecha (sombra)
+                # Cara lateral derecha (sombra oscura — da profundidad)
                 fig2.add_trace(go.Scatter(
-                    x=[x1, x1+depth, x1+depth, x1, x1],
-                    y=[0,  depth*0.3, val+depth*0.3, val, 0],
+                    x=[x1,    x1+dx, x1+dx,    x1,  x1],
+                    y=[0,     dy,    val+dy,   val,  0],
                     fill="toself", fillcolor=col_side,
-                    line=dict(color="rgba(0,0,0,0.1)", width=0.5),
+                    line=dict(color="rgba(0,0,0,0.15)", width=0.8),
                     mode="lines", showlegend=False, hoverinfo="skip",
                 ))
-                # Cara superior
+                # Cara superior (tapa clara — efecto luz)
                 fig2.add_trace(go.Scatter(
-                    x=[x0,        x1,        x1+depth,        x0+depth,        x0],
-                    y=[val,        val,        val+depth*0.3,  val+depth*0.3,   val],
+                    x=[x0,   x1,   x1+dx,   x0+dx,  x0],
+                    y=[val,  val,  val+dy,  val+dy, val],
                     fill="toself", fillcolor=col_top,
-                    line=dict(color="rgba(255,255,255,0.5)", width=0.8),
+                    line=dict(color="rgba(255,255,255,0.7)", width=0.8),
                     mode="lines", showlegend=False, hoverinfo="skip",
                 ))
-                # Etiqueta sobre la barra
+                # Etiqueta encima de la tapa
                 fig2.add_annotation(
-                    x=i + depth/2, y=val + y_max_ing * 0.04,
+                    x=i + dx/2, y=val + dy + y_max * 0.025,
                     text=f"${val:,.0f}", showarrow=False,
-                    font=dict(size=10, color="#334155"),
-                    xanchor="center",
+                    font=dict(size=10, color="#334155"), xanchor="center",
+                )
+
+            # Línea punteada energía (escalada al eje izquierdo)
+            e_scaled = [v * e_scale for v in e_vals]
+            fig2.add_trace(go.Scatter(
+                x=[i + dx/2 for i in range(n_bars)],
+                y=e_scaled,
+                name="Energía (MWh)", mode="markers+lines",
+                marker=dict(size=10, color="#0F172A", symbol="diamond"),
+                line=dict(color="#0F172A", width=1.8, dash="dot"),
+                hovertemplate="<b>Energía</b><br>%{customdata:,.0f} MWh<extra></extra>",
+                customdata=e_vals,
+            ))
+            # Anotaciones de energía sobre los puntos
+            for i, (u, ev) in enumerate(zip(unidades_ord, e_vals)):
+                fig2.add_annotation(
+                    x=i + dx/2, y=e_scaled[i] + y_max * 0.025,
+                    text=f"{ev:,.0f} MWh", showarrow=False,
+                    font=dict(size=8, color="#64748B"), xanchor="center",
                 )
 
             fig2.update_layout(
-                title=dict(text="Ingreso Estimado por Unidad (USD)",
+                title=dict(text="Ingreso Estimado + Energía por Unidad",
                           font=dict(size=13, color="#0F172A"), x=0),
-                height=340, margin=dict(l=10, r=20, t=60, b=40),
+                height=360, margin=dict(l=10, r=20, t=60, b=40),
                 plot_bgcolor=BG, paper_bgcolor="rgba(0,0,0,0)",
                 xaxis=dict(
-                    tickvals=x_pos,
+                    tickvals=list(range(n_bars)),
                     ticktext=[LABELS[u] for u in unidades_ord],
                     tickfont=dict(color="#475569", size=11),
-                    showgrid=False, zeroline=False, range=[-0.6, n_bars - 0.3],
+                    showgrid=False, zeroline=False,
+                    range=[-0.55, n_bars - 0.25],
                 ),
                 yaxis=dict(
                     gridcolor=GR, tickfont=dict(color="#94A3B8", size=10),
                     title="USD", title_font=dict(color="#94A3B8", size=10),
                     zeroline=True, zerolinecolor="#E2E8F0",
+                    range=[0, y_max * 1.18],
                 ),
-                showlegend=False,
+                legend=dict(orientation="h", y=-0.12, x=0, font=dict(size=10,color="#475569")),
+                showlegend=True,
             )
             st.plotly_chart(fig2, use_container_width=True, config={"displayModeBar":False})
 
