@@ -122,16 +122,24 @@ span[class*="material"]{font-size:0!important;color:transparent!important;width:
 [data-testid="stWidgetLabel"] span{font-size:0!important;}
 [data-testid="stWidgetLabel"] span[data-testid="stWidgetLabelHelpInline"]{display:none!important;}
 
-/* ── Sidebar: botón colapsar/expandir visible, estilo sobre fondo cyan ── */
-[data-testid="stSidebarCollapseButton"] button,
-[data-testid="collapsedControl"] button{
-  background:rgba(255,255,255,0.15)!important;
-  border-radius:50%!important;
-  color:white!important;
+/* ── Sidebar: visible por defecto, con botón de colapso funcional ── */
+[data-testid="stSidebar"]{display:block!important;visibility:visible!important;}
+/* Botón cerrar sidebar (flecha dentro del sidebar) */
+[data-testid="stSidebarCollapseButton"] button{
+  background:rgba(255,255,255,0.15)!important;border-radius:50%!important;
+  color:white!important;border:none!important;
 }
-[data-testid="stSidebarCollapseButton"] button:hover,
-[data-testid="collapsedControl"] button:hover{
+[data-testid="stSidebarCollapseButton"] button:hover{
   background:rgba(77,200,220,0.35)!important;
+}
+/* Botón abrir sidebar (flecha cuando está colapsado, en el área principal) */
+[data-testid="collapsedControl"]{display:flex!important;visibility:visible!important;}
+[data-testid="collapsedControl"] button{
+  background:rgba(14,110,126,0.85)!important;border-radius:50%!important;
+  color:white!important;border:none!important;
+}
+[data-testid="collapsedControl"] button:hover{
+  background:#0e6e7e!important;
 }
 
 /* ── KPI cards ── */
@@ -275,21 +283,15 @@ setInterval(hideKeyboardHints, 500);
     obs2.observe(document.body, {childList:true, subtree:true});
 })();
 
-// Fix gráficos Plotly encogidos al cambiar de tab
+// Fix gráficos Plotly encogidos al cambiar de tab — dispara window resize
 (function() {
-    function resizePlotly() {
-        if (typeof Plotly === 'undefined') return;
-        document.querySelectorAll('.js-plotly-plot').forEach(function(el) {
-            try {
-                var w = el.parentElement ? el.parentElement.offsetWidth : 0;
-                if (w > 100) Plotly.relayout(el, {width: w});
-            } catch(e) {}
-        });
+    function fireResize() {
+        window.dispatchEvent(new Event('resize'));
     }
     document.addEventListener('click', function(e) {
         var tab = e.target.closest('[data-baseweb="tab"]');
         if (!tab) return;
-        [80, 200, 400, 700].forEach(function(d) { setTimeout(resizePlotly, d); });
+        [50, 150, 350, 600].forEach(function(d) { setTimeout(fireResize, d); });
     });
 })();
 </script>
