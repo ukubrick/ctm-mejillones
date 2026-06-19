@@ -52,81 +52,175 @@ NOMBRES_NODO = {
 
 st.markdown("""
 <style>
-@import url('https://fonts.googleapis.com/css2?family=IBM+Plex+Mono:wght@400;600&family=Inter:wght@300;400;500;600;700&display=swap');
-:root{--bg:#F1F5F9;--surf:#FFFFFF;--surf2:#F8FAFC;--bord:#E2E8F0;--txt:#0F172A;--muted:#64748B;--accent:#2563EB;}
+@import url('https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700;800&display=swap');
+
+/* ── Paleta AES ── */
+:root{
+  --bg:#F5F7FA;--surf:#FFFFFF;--surf2:#F8FAFC;--bord:#E5E7EB;
+  --txt:#1A1F36;--muted:#6B7280;
+  --aes-azul:#3B4CE8;--aes-azul-osc:#2530B0;--aes-cyan:#4DC8DC;
+  --aes-violeta:#9B6FD4;--aes-verde:#5AB848;--aes-ambar:#F59E0B;
+  --aes-rojo:#EF4444;
+}
+
+/* ── Fondo y layout ── */
 .stApp{background:var(--bg)!important;}
 .block-container{padding:1.5rem 2rem 3rem;max-width:1400px;}
-[data-testid="stSidebar"]{background:#1E293B!important;border-right:1px solid #334155!important;}
+
+/* ── Sidebar AES gradiente ── */
+[data-testid="stSidebar"]{
+  background:linear-gradient(160deg,#2530B0 0%,#111540 60%,#0d1035 100%)!important;
+  box-shadow:4px 0 20px rgba(0,0,0,0.25)!important;
+  border-right:none!important;
+}
 [data-testid="stSidebar"] *{color:#E2E8F0!important;}
-[data-testid="stSidebar"] .status-box{background:#0F172A!important;border-color:#334155!important;}
 [data-testid="stSidebar"] .stCheckbox label{color:#CBD5E1!important;}
 [data-testid="stSidebar"] .stDateInput label{color:#94A3B8!important;font-size:0.75rem!important;}
-[data-testid="stSidebar"] input{background:#0F172A!important;color:#E2E8F0!important;border-color:#334155!important;}
+[data-testid="stSidebar"] input{background:rgba(255,255,255,0.07)!important;color:#E2E8F0!important;border-color:rgba(255,255,255,0.15)!important;}
+[data-testid="stSidebar"] .stButton>button{
+  background:rgba(255,255,255,0.06)!important;
+  border:1px solid rgba(255,255,255,0.12)!important;
+  border-radius:8px!important;color:#E2E8F0!important;font-weight:500!important;
+  transition:all 0.20s cubic-bezier(0.4,0,0.2,1)!important;
+}
+[data-testid="stSidebar"] .stButton>button:hover{
+  background:rgba(77,200,220,0.22)!important;
+  border-color:#4DC8DC!important;
+  transform:translateX(3px)!important;
+}
+.status-box{
+  background:rgba(255,255,255,0.07);
+  border:1px solid rgba(255,255,255,0.12);
+  border-radius:8px;padding:0.6rem 0.8rem;margin-top:0.5rem;font-size:0.72rem;
+}
+
+/* ── Tipografía global ── */
 h1,h2,h3{font-family:'Inter',sans-serif!important;color:var(--txt)!important;}
 p,span,div,label{font-family:'Inter',sans-serif!important;}
+
+/* ── UI limpieza ── */
 #MainMenu,footer,header{visibility:hidden;}
 [data-testid="stToolbar"]{display:none;}
-[data-testid="InputInstructions"]{display:none!important;}
+[data-testid="InputInstructions"]{display:none!important;visibility:hidden!important;}
 kbd{display:none!important;}
-/* keyboard_double / sidebar collapse button fix */
 [role="tooltip"]{display:none!important;}
 [data-baseweb="tooltip"]{display:none!important;}
 .material-symbols-rounded{font-size:0!important;width:0!important;height:0!important;overflow:hidden!important;display:inline-block!important;}
 [aria-label*="keyboard"]{display:none!important;}
 div[class*="Tooltip"]{display:none!important;}
 span[class*="instruction"]{display:none!important;}
-[data-testid="InputInstructions"]{display:none!important;visibility:hidden!important;}
 span[class*="material"]{font-size:0!important;color:transparent!important;width:0!important;}
 [data-testid="stWidgetLabel"] span{font-size:0!important;}
 [data-testid="stWidgetLabel"] span[data-testid="stWidgetLabelHelpInline"]{display:none!important;}
-/* Forzar sidebar siempre visible y ocultar botón collapse */
+
+/* ── Sidebar forzado visible ── */
 [data-testid="stSidebar"]{display:block!important;visibility:visible!important;transform:none!important;left:0!important;min-width:244px!important;}
 [data-testid="collapsedControl"]{display:none!important;}
 [data-testid="stSidebarCollapseButton"]{display:none!important;}
 button[aria-label="Close sidebar"]{display:none!important;}
 button[aria-label="Open sidebar"]{display:none!important;}
 section[data-testid="stSidebar"] > div:first-child > div:first-child > button{display:none!important;}
-.kpi{background:var(--surf);border:1px solid var(--bord);border-radius:12px;padding:1.2rem 1.4rem;box-shadow:0 1px 3px rgba(0,0,0,0.06);}
-.kpi-badge{display:inline-block;font-size:0.65rem;font-weight:700;letter-spacing:0.08em;text-transform:uppercase;padding:3px 10px;border-radius:20px;margin-bottom:0.7rem;}
-.kpi-val{font-family:'IBM Plex Mono',monospace;font-size:2rem;font-weight:600;color:var(--txt);line-height:1;}
+
+/* ── KPI cards ── */
+.kpi{
+  background:#FFFFFF;border:1px solid var(--bord);border-radius:12px;
+  padding:1.2rem 1.4rem;
+  box-shadow:0 2px 12px rgba(59,76,232,0.08);
+  transition:transform 0.20s ease,box-shadow 0.20s ease;
+  animation:fadeInUp 0.5s ease both;
+}
+.kpi:hover{transform:translateY(-3px);box-shadow:0 8px 24px rgba(59,76,232,0.15);}
+.kpi-badge{
+  display:inline-block;font-size:0.65rem;font-weight:700;
+  letter-spacing:0.08em;text-transform:uppercase;
+  padding:3px 10px;border-radius:20px;margin-bottom:0.7rem;
+}
+.kpi-val{font-size:2rem;font-weight:800;color:var(--txt);line-height:1;font-family:'Inter',sans-serif;}
 .kpi-mw{font-size:1rem;font-weight:400;color:var(--muted);}
 .kpi-sub{font-size:0.75rem;color:var(--muted);margin-top:0.4rem;}
-.kpi-delta{font-size:0.78rem;margin-top:0.5rem;font-weight:500;}
-.sec{font-size:0.82rem;font-weight:800;letter-spacing:0.12em;text-transform:uppercase;color:#334155;border-bottom:2px solid var(--bord);padding-bottom:0.45rem;margin:1.8rem 0 1rem;}
+.kpi-delta{font-size:0.78rem;margin-top:0.5rem;font-weight:600;}
+
+/* ── Títulos de sección ── */
+.sec{
+  font-size:0.82rem;font-weight:800;letter-spacing:0.12em;text-transform:uppercase;
+  color:#334155;border-bottom:2px solid var(--bord);
+  padding-bottom:0.45rem;margin:1.8rem 0 1rem;
+}
+
+/* ── Dots de estado ── */
 .dot-status{display:inline-block;width:8px;height:8px;border-radius:50%;margin-right:6px;vertical-align:middle;}
-.dot-g{background:#10B981;box-shadow:0 0 5px rgba(16,185,129,0.6);animation:blink 2s infinite;}
+.dot-g{background:#5AB848;box-shadow:0 0 5px rgba(90,184,72,0.6);animation:blink 2s infinite;}
 .dot-r{background:#EF4444;}
 .dot-y{background:#F59E0B;animation:blink 2s infinite;}
+
+/* ── Animaciones ── */
 @keyframes blink{0%,100%{opacity:1}50%{opacity:.3}}
+@keyframes fadeInUp{from{opacity:0;transform:translateY(16px)}to{opacity:1;transform:translateY(0)}}
+@keyframes fadeInLeft{from{opacity:0;transform:translateX(-12px)}to{opacity:1;transform:translateX(0)}}
 @keyframes pulse-pend{0%,100%{box-shadow:0 0 0 0 rgba(217,119,6,0.7)}70%{box-shadow:0 0 0 6px rgba(217,119,6,0)}}
-.badge-pend{display:inline-block;animation:pulse-pend 1.8s infinite;border-radius:4px;}
+@keyframes dot-pulse{0%,100%{transform:scale(1)}50%{transform:scale(1.5)}}
 @keyframes pulse-sscc{0%,100%{box-shadow:0 0 0 0 rgba(100,116,139,0.5)}70%{box-shadow:0 0 0 5px rgba(100,116,139,0)}}
+
+.badge-pend{display:inline-block;animation:pulse-pend 1.8s infinite;border-radius:4px;}
 .sscc-latest{animation:pulse-sscc 2.2s infinite;}
-.status-box{background:var(--surf2);border:1px solid var(--bord);border-radius:8px;padding:0.6rem 0.8rem;margin-top:0.5rem;font-size:0.72rem;}
+
+/* ── Tabs AES ── */
+.stTabs [data-baseweb="tab-list"]{
+  gap:4px;background:#FFFFFF;
+  border-bottom:3px solid var(--aes-azul);
+  border-radius:8px 8px 0 0;
+  box-shadow:0 2px 8px rgba(0,0,0,0.05);
+}
+.stTabs [data-baseweb="tab"]{
+  border-radius:8px 8px 0 0;
+  font-weight:500;font-family:'Inter',sans-serif;
+  font-size:13px;color:var(--muted);
+  transition:all 0.20s cubic-bezier(0.4,0,0.2,1);
+}
+.stTabs [aria-selected="true"][data-baseweb="tab"]{
+  background:linear-gradient(135deg,#3B4CE8 0%,#2530B0 100%)!important;
+  color:white!important;font-weight:700!important;
+  box-shadow:0 -2px 10px rgba(59,76,232,0.30)!important;
+}
+
+/* ── Gráficos wrapper ── */
+[data-testid="stPlotlyChart"]{
+  border-radius:12px;overflow:hidden;
+  box-shadow:0 2px 10px rgba(0,0,0,0.06);
+  animation:fadeInUp 0.5s ease both;
+  transition:box-shadow 0.2s ease;
+}
+[data-testid="stPlotlyChart"]:hover{box-shadow:0 6px 20px rgba(59,76,232,0.12);}
+
+/* ── Inputs y botones (área principal) ── */
 .stTextInput>div>div>input,.stTextArea>div>div>textarea,.stNumberInput>div>div>input{
-    background:var(--surf2)!important;border:1px solid var(--bord)!important;border-radius:8px!important;color:var(--txt)!important;}
-.stButton>button{background:var(--accent)!important;color:#fff!important;border:none!important;border-radius:8px!important;font-family:'Inter',sans-serif!important;font-weight:600!important;}
+  background:var(--surf2)!important;border:1px solid var(--bord)!important;
+  border-radius:8px!important;color:var(--txt)!important;
+}
+.stButton>button{
+  background:var(--aes-azul)!important;color:#fff!important;
+  border:none!important;border-radius:8px!important;
+  font-family:'Inter',sans-serif!important;font-weight:600!important;
+  transition:opacity 0.15s ease!important;
+}
 .stButton>button:hover{opacity:.88!important;}
-.stTabs [data-baseweb="tab-list"]{gap:4px;}
-.stTabs [data-baseweb="tab"]{border-radius:8px 8px 0 0;font-weight:600;font-family:'Inter',sans-serif;}
-/* ── Selectbox: valor mostrado ── */
-[data-testid="stSelectbox"] div[data-baseweb="select"] > div{color:#0F172A!important;background:#FFFFFF!important;}
-[data-testid="stSelectbox"] div[data-baseweb="select"] span{color:#0F172A!important;}
-[data-testid="stSelectbox"] div[data-baseweb="select"] input{color:#0F172A!important;}
-/* Sidebar selectbox — texto claro sobre fondo oscuro */
-[data-testid="stSidebar"] [data-testid="stSelectbox"] div[data-baseweb="select"] > div{color:#E2E8F0!important;background:#1E293B!important;}
+
+/* ── Selectbox: valor mostrado (área principal) ── */
+[data-testid="stSelectbox"] div[data-baseweb="select"] > div{color:#1A1F36!important;background:#FFFFFF!important;}
+[data-testid="stSelectbox"] div[data-baseweb="select"] span{color:#1A1F36!important;}
+[data-testid="stSelectbox"] div[data-baseweb="select"] input{color:#1A1F36!important;}
+/* Sidebar selectbox */
+[data-testid="stSidebar"] [data-testid="stSelectbox"] div[data-baseweb="select"] > div{color:#E2E8F0!important;background:rgba(255,255,255,0.07)!important;}
 [data-testid="stSidebar"] [data-testid="stSelectbox"] div[data-baseweb="select"] span{color:#E2E8F0!important;}
-/* ── Lista desplegable (portal baseweb, fuera del sidebar DOM) ── */
-[data-baseweb="popover"] ul li div,
-[data-baseweb="popover"] ul li span,
-[data-baseweb="popover"] [role="option"] div,
-[data-baseweb="popover"] [role="option"] span{color:#0F172A!important;}
+
+/* ── Lista desplegable ── */
+[data-baseweb="popover"] ul li div,[data-baseweb="popover"] ul li span,
+[data-baseweb="popover"] [role="option"] div,[data-baseweb="popover"] [role="option"] span{color:#1A1F36!important;}
 [data-baseweb="popover"] ul{background:#FFFFFF!important;}
 [data-baseweb="popover"] [role="option"]{background:#FFFFFF!important;}
 [data-baseweb="popover"] [role="option"]:hover{background:#EFF6FF!important;}
 [data-baseweb="popover"] [aria-selected="true"]{background:#DBEAFE!important;}
-/* ── Select nativo (bitácora "Ver registros" filtro) ── */
-select,select option{color:#0F172A!important;background:#FFFFFF!important;}
+select,select option{color:#1A1F36!important;background:#FFFFFF!important;}
 </style>
 <script>
 function hideKeyboardHints() {
@@ -927,8 +1021,12 @@ def load_bit(s,e,u=None):
 
 # ── Sidebar ───────────────────────────────────────────────────
 with st.sidebar:
-    st.markdown("### Complejo Térmico Mejillones")
-    st.markdown('<p style="font-size:0.75rem;color:#64748B;margin-bottom:0.3rem">Complejo Térmico · Monitoreo Operacional</p>', unsafe_allow_html=True)
+    st.markdown(
+        '<div style="font-size:22px;font-weight:800;color:white;letter-spacing:-0.5px;margin-bottom:2px">Complejo Térmico</div>'
+        '<div style="font-size:22px;font-weight:800;color:#4DC8DC;letter-spacing:-0.5px;margin-bottom:6px">Mejillones</div>'
+        '<p style="font-size:0.72rem;color:rgba(255,255,255,0.55);margin-bottom:0.3rem;font-weight:500;letter-spacing:0.04em">AES Andes · Monitoreo Operacional</p>',
+        unsafe_allow_html=True
+    )
 
     # Estado de conexión y fuentes
     db_ok, db_err = test_conn()
@@ -962,15 +1060,15 @@ with st.sidebar:
             <span class="dot-status {dot_db}"></span>
             <span style="font-size:0.72rem;font-weight:600">{txt_db}</span>
         </div>
+        <div style="font-size:0.64rem;font-weight:700;letter-spacing:1.2px;color:#4DC8DC;text-transform:uppercase;margin-bottom:4px">FUENTES DE DATOS</div>
         <div style="font-size:0.68rem;line-height:2">
-            <span style="font-size:0.62rem;font-weight:700;letter-spacing:0.06em;color:#94A3B8;text-transform:uppercase">API CEN SIPUB / OPS</span><br>
             <span class="dot-status dot-g"></span>Gen. real → <b>{str_r}</b><br>
             <span class="dot-status dot-g"></span>Gen. programada → <b>{str_p}</b><br>
             <span class="dot-status dot-g"></span>CMG S3 → <b>{str_cmg}</b><br>
             <span class="dot-status dot-g"></span>SSCC → <b>{str_s}</b><br>
             <span class="dot-status dot-g"></span>Limitaciones → <b>{str_lim}</b><br>
             <span class="dot-status dot-g"></span>Solicitudes → <b>{str_sol}</b><br>
-            <span class="dot-status dot-g"></span>Adquisición GitHub Actions · /hora
+            <span class="dot-status dot-g"></span>API CEN SIPUB / OPS · /hora
         </div>
     </div>
     """, unsafe_allow_html=True)
@@ -1040,7 +1138,14 @@ with st.sidebar:
             except Exception as ex:
                 st.error(f"Error generando PPT: {ex}")
 
-    st.markdown(f'<p style="font-size:0.65rem;color:#94A3B8">{datetime.now().strftime("%d/%m/%Y %H:%M")}</p>', unsafe_allow_html=True)
+    st.markdown(f"""
+    <div style="border-top:1px solid rgba(255,255,255,0.12);padding-top:10px;margin-top:4px;text-align:center;font-size:0.68rem;color:rgba(255,255,255,0.45)">
+        {datetime.now().strftime("%d/%m/%Y %H:%M")}<br>
+        Dashboard creado por<br>
+        <b style="color:rgba(255,255,255,0.70)">Erick Herrera</b><br>
+        AES Andes
+    </div>
+    """, unsafe_allow_html=True)
 
 s = fi.strftime("%Y-%m-%d")
 e = ff.strftime("%Y-%m-%d")
@@ -1054,8 +1159,11 @@ if df_r.empty: st.warning("Sin datos para el período seleccionado."); st.stop()
 
 
 # ── Header ────────────────────────────────────────────────────
-st.markdown("# Dashboard Operacional — Complejo Térmico Mejillones")
-st.markdown(f'<p style="color:#64748B;font-size:0.85rem;margin-top:-0.5rem">Período {s} → {e} · Generación real + Programada PCP + CMG {NOMBRES_NODO.get(nodo_cmg, "Crucero 220kV")}</p>', unsafe_allow_html=True)
+st.markdown(
+    '<h1 style="font-size:30px;font-weight:800;letter-spacing:-0.5px;color:#1A1F36;margin-bottom:2px">Dashboard Operacional — Complejo Térmico Mejillones</h1>',
+    unsafe_allow_html=True
+)
+st.markdown(f'<p style="color:#6B7280;font-size:0.85rem;margin-top:-0.3rem">Período {s} → {e} · Generación real + Programada PCP + CMG {NOMBRES_NODO.get(nodo_cmg, "Crucero 220kV")}</p>', unsafe_allow_html=True)
 
 
 # ── KPI cards ─────────────────────────────────────────────────
@@ -1065,7 +1173,7 @@ for i,u in enumerate(["ANG1","ANG2","CCR1","CCR2"]):
     with cols[i]:
         df_u = df_r[df_r["unidad"]==u]
         if df_u.empty:
-            st.markdown(f'<div class="kpi"><div class="kpi-badge" style="background:{COLORES[u]["badge"]};color:{COLORES[u]["text"]}">{LABELS[u]}</div><div class="kpi-val">—</div></div>', unsafe_allow_html=True)
+            st.markdown(f'<div class="kpi" style="border-top:4px solid {COLORES[u]["line"]}"><div class="kpi-badge" style="background:{COLORES[u]["badge"]};color:{COLORES[u]["text"]}">{LABELS[u]}</div><div class="kpi-val">—</div></div>', unsafe_allow_html=True)
             continue
         prom  = df_u["gen_real_mw"].mean()
         pmax  = PMAX.get(u, 0)
@@ -1077,17 +1185,17 @@ for i,u in enumerate(["ANG1","ANG2","CCR1","CCR2"]):
         delta = ult_mw-prom
         sym   = "▲" if delta>=0 else "▼"
         col_d = "#10B981" if delta>=0 else "#EF4444"
-        st.markdown(f"""<div class="kpi">
+        st.markdown(f"""<div class="kpi" style="border-top:4px solid {COLORES[u]['line']}">
             <div class="kpi-badge" style="background:{COLORES[u]['badge']};color:{COLORES[u]['text']}">{LABELS[u]}</div>
             <div class="kpi-val">{prom:.1f}<span class="kpi-mw"> MW</span></div>
-            <div class="kpi-sub">Factor de planta {fp:.0f}% <span style="color:#94A3B8;font-size:0.68rem">(promedio período)</span></div>
+            <div class="kpi-sub">Factor de planta {fp:.0f}% <span style="color:#9CA3AF;font-size:0.68rem">(promedio período)</span></div>
             <div class="kpi-delta" style="color:{col_d}">{sym} {abs(delta):.1f} MW vs última hora</div>
-            <div style="font-size:0.68rem;color:#94A3B8;margin-top:3px">Último dato: {ult_fh}</div>
+            <div style="font-size:0.68rem;color:#9CA3AF;margin-top:3px">Último dato: {ult_fh}</div>
         </div>""", unsafe_allow_html=True)
 
 
 # ── Función gráfico por unidad ────────────────────────────────
-BG = "#FFFFFF"; GR = "#F1F5F9"
+BG = "#F5F7FA"; GR = "#E5E7EB"
 
 def chart_unidad(unidad: str, mostrar_desviacion: bool = False, nodo_label: str = "Crucero 220kV"):
     df_u  = df_r[df_r["unidad"]==unidad].sort_values("fecha_hora")
@@ -1178,15 +1286,17 @@ def chart_unidad(unidad: str, mostrar_desviacion: bool = False, nodo_label: str 
     fig.update_layout(
         height=520,
         margin=dict(l=10, r=70, t=20, b=10),
-        plot_bgcolor=BG, paper_bgcolor="rgba(0,0,0,0)",
+        template="plotly_white",
+        plot_bgcolor="#F5F7FA", paper_bgcolor="#FFFFFF",
+        transition=dict(duration=500, easing="cubic-in-out"),
         legend=dict(
             orientation="h", yanchor="bottom", y=1.02,
             xanchor="left", x=0,
-            font=dict(color="#475569", size=11),
+            font=dict(color="#6B7280", size=11),
             bgcolor="rgba(0,0,0,0)",
         ),
         hovermode="x unified",
-        hoverlabel=dict(bgcolor="#1E293B", font_color="#F8FAFC", bordercolor="#334155"),
+        hoverlabel=dict(bgcolor="#1A1F36", font_color="#F5F7FA", bordercolor="#3B4CE8"),
     )
 
     # ── Eje Y ──
