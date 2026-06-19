@@ -108,15 +108,8 @@ h1,h2,h3{font-family:'Inter',sans-serif!important;color:var(--txt)!important;}
 p,span,div,label{font-family:'Inter',sans-serif!important;}
 
 /* ── UI limpieza ── */
-#MainMenu,footer{visibility:hidden;}
-/* header: visible solo para alojar stExpandSidebarButton — ocultar todo lo demás dentro */
-[data-testid="stHeader"]{background:transparent!important;box-shadow:none!important;border:none!important;}
-[data-testid="stToolbar"]{display:flex!important;background:transparent!important;}
-/* Ocultar toolbar items excepto el expand button */
-[data-testid="stToolbarActions"]{display:none!important;}
-[data-testid="stAppDeployButton"]{display:none!important;}
-[data-testid="stMainMenuButton"]{display:none!important;}
-[data-testid="stScreencast"]{display:none!important;}
+#MainMenu,footer,header{visibility:hidden;}
+[data-testid="stToolbar"]{display:none;}
 [data-testid="InputInstructions"]{display:none!important;visibility:hidden!important;}
 kbd{display:none!important;}
 [role="tooltip"]{display:none!important;}
@@ -125,37 +118,9 @@ div[class*="Tooltip"]{display:none!important;}
 span[class*="instruction"]{display:none!important;}
 [data-testid="stWidgetLabel"] span[data-testid="stWidgetLabelHelpInline"]{display:none!important;}
 
-/* ── Sidebar visible al cargar, colapsable con botón nativo ── */
-[data-testid="stSidebar"]{display:block!important;visibility:visible!important;transform:translateX(0)!important;}
-
-/* Ocultar ícono keyboard_double_arrow — selector exacto del DOM real Streamlit 1.58 */
-[data-testid="stIconMaterial"]{
-  font-size:0!important;width:0!important;height:0!important;
-  overflow:hidden!important;color:transparent!important;display:inline-block!important;
-}
-
-/* Botón expandir sidebar (aparece cuando sidebar está colapsado) — siempre visible */
-[data-testid="stExpandSidebarButton"]{
-  display:flex!important;visibility:visible!important;opacity:1!important;
-}
-[data-testid="stExpandSidebarButton"],
-[data-testid="stExpandSidebarButton"]>*{
-  background:#0e6e7e!important;border-radius:0 8px 8px 0!important;
-  border:none!important;box-shadow:2px 0 8px rgba(0,0,0,0.2)!important;
-}
-[data-testid="stExpandSidebarButton"]:hover{background:#4DC8DC!important;}
-
-/* Sidebar colapsado (aria-expanded=false): ocultar solo el contenido de usuario */
-[data-testid="stSidebar"][aria-expanded="false"] [data-testid="stSidebarUserContent"]{
-  visibility:hidden!important;opacity:0!important;pointer-events:none!important;
-}
-
-/* Botón colapsar dentro del sidebar */
-[data-testid="stSidebarCollapseButton"] button{
-  background:rgba(255,255,255,0.15)!important;border-radius:50%!important;
-  border:none!important;box-shadow:none!important;
-}
-[data-testid="stSidebarCollapseButton"] button:hover{background:rgba(77,200,220,0.4)!important;}
+/* ── Sidebar siempre visible y fijo ── */
+[data-testid="stSidebar"]{display:block!important;visibility:visible!important;}
+[data-testid="stSidebarCollapseButton"]{display:none!important;}
 
 /* ── KPI cards ── */
 .kpi{
@@ -261,42 +226,8 @@ span[class*="instruction"]{display:none!important;}
 select,select option{color:#1A1F36!important;background:#FFFFFF!important;}
 </style>
 <script>
-function fixSidebar() {
-    // Ocultar InputInstructions
-    document.querySelectorAll('[data-testid="InputInstructions"]').forEach(function(el){el.style.display='none';});
-
-    // Ocultar ícono keyboard_double_arrow — data-testid="stIconMaterial" (Streamlit 1.58)
-    document.querySelectorAll('[data-testid="stIconMaterial"]').forEach(function(el){
-        el.style.fontSize='0';
-        el.style.width='0';
-        el.style.height='0';
-        el.style.overflow='hidden';
-        el.style.color='transparent';
-        el.style.display='inline-block';
-    });
-
-    // Forzar visibilidad del botón de expandir sidebar
-    var expandBtn = document.querySelector('[data-testid="stExpandSidebarButton"]');
-    if (expandBtn) {
-        expandBtn.style.display='flex';
-        expandBtn.style.visibility='visible';
-        expandBtn.style.opacity='1';
-    }
-
-    // Ocultar contenido sidebar cuando colapsado (aria-expanded=false)
-    var sb = document.querySelector('[data-testid="stSidebar"]');
-    if (!sb) return;
-    var collapsed = sb.getAttribute('aria-expanded') === 'false';
-    var userContent = sb.querySelector('[data-testid="stSidebarUserContent"]');
-    if (userContent) {
-        userContent.style.visibility = collapsed ? 'hidden' : '';
-        userContent.style.opacity    = collapsed ? '0' : '';
-    }
-}
-
-fixSidebar();
-setInterval(fixSidebar, 150);
-document.addEventListener('click', function(){ setTimeout(fixSidebar, 300); });
+// Ocultar InputInstructions
+document.querySelectorAll('[data-testid="InputInstructions"]').forEach(function(el){el.style.display='none';});
 
 // Inyectar CSS en <head> para dropdown options (mayor especificidad que variables Streamlit)
 (function injectDropdownCSS() {
