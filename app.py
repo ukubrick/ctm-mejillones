@@ -122,25 +122,24 @@ span[class*="material"]{font-size:0!important;color:transparent!important;width:
 [data-testid="stWidgetLabel"] span{font-size:0!important;}
 [data-testid="stWidgetLabel"] span[data-testid="stWidgetLabelHelpInline"]{display:none!important;}
 
-/* ── Sidebar: visible por defecto, con botón de colapso funcional ── */
-[data-testid="stSidebar"]{display:block!important;visibility:visible!important;}
-/* Botón cerrar sidebar (flecha dentro del sidebar) */
+/* ── Sidebar visible al cargar, colapsable con botón nativo ── */
+[data-testid="stSidebar"]{display:block!important;visibility:visible!important;transform:translateX(0)!important;}
+/* Botón cerrar (flecha izq, dentro del sidebar) */
+[data-testid="stSidebarCollapseButton"]{display:flex!important;visibility:visible!important;}
 [data-testid="stSidebarCollapseButton"] button{
   background:rgba(255,255,255,0.15)!important;border-radius:50%!important;
-  color:white!important;border:none!important;
+  color:white!important;border:none!important;box-shadow:none!important;
 }
-[data-testid="stSidebarCollapseButton"] button:hover{
-  background:rgba(77,200,220,0.35)!important;
-}
-/* Botón abrir sidebar (flecha cuando está colapsado, en el área principal) */
-[data-testid="collapsedControl"]{display:flex!important;visibility:visible!important;}
+[data-testid="stSidebarCollapseButton"] button:hover{background:rgba(77,200,220,0.4)!important;}
+[data-testid="stSidebarCollapseButton"] button svg{stroke:white!important;fill:white!important;}
+/* Botón abrir (flecha der, en área principal cuando colapsado) */
+[data-testid="collapsedControl"]{display:flex!important;visibility:visible!important;opacity:1!important;}
 [data-testid="collapsedControl"] button{
-  background:rgba(14,110,126,0.85)!important;border-radius:50%!important;
-  color:white!important;border:none!important;
+  background:#0e6e7e!important;border-radius:0 8px 8px 0!important;
+  color:white!important;border:none!important;box-shadow:2px 0 8px rgba(0,0,0,0.2)!important;
 }
-[data-testid="collapsedControl"] button:hover{
-  background:#0e6e7e!important;
-}
+[data-testid="collapsedControl"] button:hover{background:#4DC8DC!important;}
+[data-testid="collapsedControl"] button svg{stroke:white!important;fill:white!important;}
 
 /* ── KPI cards ── */
 .kpi{
@@ -219,13 +218,23 @@ span[class*="material"]{font-size:0!important;color:transparent!important;width:
   background:var(--surf2)!important;border:1px solid var(--bord)!important;
   border-radius:8px!important;color:var(--txt)!important;
 }
+/* Botones genéricos (sidebar exportar, actualizar, etc.) */
 .stButton>button{
-  background:var(--aes-cyan)!important;color:#1A1F36!important;
-  border:none!important;border-radius:8px!important;
+  background:#E5E7EB!important;color:#1A1F36!important;
+  border:1px solid #D1D5DB!important;border-radius:8px!important;
   font-family:'Inter',sans-serif!important;font-weight:600!important;
   transition:opacity 0.15s ease!important;
 }
-.stButton>button:hover{opacity:.88!important;}
+.stButton>button:hover{background:#D1D5DB!important;}
+/* Botones de unidad — estilos individuales por ID (sobreescriben el global) */
+#btn_ANG1 button{background:#6D28D9!important;color:#fff!important;border:2px solid #6D28D9!important;}
+#btn_ANG2 button{background:#2563EB!important;color:#fff!important;border:2px solid #2563EB!important;}
+#btn_CCR1 button{background:#0891B2!important;color:#fff!important;border:2px solid #0891B2!important;}
+#btn_CCR2 button{background:#16A34A!important;color:#fff!important;border:2px solid #16A34A!important;}
+#btn_ANG1_off button{background:#FFFFFF!important;color:#6D28D9!important;border:2px solid #6D28D9!important;font-weight:500!important;}
+#btn_ANG2_off button{background:#FFFFFF!important;color:#2563EB!important;border:2px solid #2563EB!important;font-weight:500!important;}
+#btn_CCR1_off button{background:#FFFFFF!important;color:#0891B2!important;border:2px solid #0891B2!important;font-weight:500!important;}
+#btn_CCR2_off button{background:#FFFFFF!important;color:#16A34A!important;border:2px solid #16A34A!important;font-weight:500!important;}
 
 /* ── Selectbox: valor mostrado (área principal) ── */
 [data-testid="stSelectbox"] div[data-baseweb="select"] > div{color:#1A1F36!important;background:#FFFFFF!important;}
@@ -1344,22 +1353,9 @@ _unidades_ord = ["ANG1", "ANG2", "CCR1", "CCR2"]
 _cols_btn = st.columns(len(_unidades_ord))
 for _col, _u in zip(_cols_btn, _unidades_ord):
     _activo = st.session_state["unidad_sel"] == _u
-    _line   = COLORES[_u]["line"]
-    _badge  = COLORES[_u]["badge"]
-    _text   = COLORES[_u]["text"]
+    _div_id = f"btn_{_u}" if _activo else f"btn_{_u}_off"
     with _col:
-        # Botón HTML sobre el st.button para estilar el activo/inactivo
-        _bg = _line if _activo else "#FFFFFF"
-        _fg = "#FFFFFF" if _activo else _text
-        _bw = "700" if _activo else "500"
-        _shadow = f"0 2px 8px {_line}55" if _activo else "none"
-        st.markdown(
-            f'<style>#btn_{_u} button{{background:{_bg}!important;color:{_fg}!important;'
-            f'border:2px solid {_line}!important;border-radius:8px!important;'
-            f'font-weight:{_bw}!important;box-shadow:{_shadow}!important;}}</style>'
-            f'<div id="btn_{_u}">',
-            unsafe_allow_html=True
-        )
+        st.markdown(f'<div id="{_div_id}">', unsafe_allow_html=True)
         if st.button(LABELS[_u], key=f"btn_u_{_u}", use_container_width=True):
             st.session_state["unidad_sel"] = _u
             st.rerun()
