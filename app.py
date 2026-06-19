@@ -124,7 +124,11 @@ span[class*="material"]{font-size:0!important;color:transparent!important;width:
 
 /* ── Sidebar visible al cargar, colapsable con botón nativo ── */
 [data-testid="stSidebar"]{display:block!important;visibility:visible!important;transform:translateX(0)!important;}
-/* Botón cerrar (flecha izq, dentro del sidebar) */
+/* Cuando colapsado: ocultar todo el contenido del sidebar */
+[data-testid="stSidebar"][data-collapsed="true"] > div > div > div{
+  visibility:hidden!important;opacity:0!important;
+}
+/* Botón cerrar (flecha, dentro del sidebar) */
 [data-testid="stSidebarCollapseButton"]{display:flex!important;visibility:visible!important;}
 [data-testid="stSidebarCollapseButton"] button{
   background:rgba(255,255,255,0.15)!important;border-radius:50%!important;
@@ -132,7 +136,7 @@ span[class*="material"]{font-size:0!important;color:transparent!important;width:
 }
 [data-testid="stSidebarCollapseButton"] button:hover{background:rgba(77,200,220,0.4)!important;}
 [data-testid="stSidebarCollapseButton"] button svg{stroke:white!important;fill:white!important;}
-/* Botón abrir (flecha der, en área principal cuando colapsado) */
+/* Botón abrir (cuando colapsado) */
 [data-testid="collapsedControl"]{display:flex!important;visibility:visible!important;opacity:1!important;}
 [data-testid="collapsedControl"] button{
   background:#0e6e7e!important;border-radius:0 8px 8px 0!important;
@@ -140,12 +144,12 @@ span[class*="material"]{font-size:0!important;color:transparent!important;width:
 }
 [data-testid="collapsedControl"] button:hover{background:#4DC8DC!important;}
 [data-testid="collapsedControl"] button svg{stroke:white!important;fill:white!important;}
-/* Ocultar texto "keyboard_double_arrow_right" del botón de abrir sidebar */
-[data-testid="collapsedControl"] button span{
+/* Ocultar texto keyboard_double en botón abrir */
+[data-testid="collapsedControl"] button span,
+[data-testid="collapsedControl"] button p{
   font-size:0!important;width:0!important;height:0!important;
-  overflow:hidden!important;display:inline-block!important;color:transparent!important;
+  overflow:hidden!important;color:transparent!important;position:absolute!important;
 }
-[data-testid="collapsedControl"] p{display:none!important;}
 
 /* ── KPI cards ── */
 .kpi{
@@ -1353,40 +1357,42 @@ mostrar_desv = False
 if hay_prog_general and mostrar_prog:
     mostrar_desv = st.checkbox("Mostrar área de desviación (Real vs Programada)", value=True)
 
-# Selector de unidad — botones HTML puros con st.query_params
-_qp = st.query_params.get("u", "ANG1")
-if _qp not in ["ANG1","ANG2","CCR1","CCR2"]:
-    _qp = "ANG1"
 if "unidad_sel" not in st.session_state:
-    st.session_state["unidad_sel"] = _qp
+    st.session_state["unidad_sel"] = "ANG1"
 
 _u_act = st.session_state["unidad_sel"]
 
-_btn_html = []
-for _u in ["ANG1","ANG2","CCR1","CCR2"]:
+# CSS por nth-child: los 4 botones de unidad son los primeros 4 stButton dentro de su bloque
+_defs = {
+    "ANG1": COLORES["ANG1"]["line"],
+    "ANG2": COLORES["ANG2"]["line"],
+    "CCR1": COLORES["CCR1"]["line"],
+    "CCR2": COLORES["CCR2"]["line"],
+}
+_css_pos = []
+for _i, _u in enumerate(["ANG1","ANG2","CCR1","CCR2"], 1):
     _activo = _u_act == _u
-    _line = COLORES[_u]["line"]
-    _text_col = "#FFFFFF" if _activo else _line
+    _line = _defs[_u]
+    _fg   = "#FFFFFF" if _activo else _line
     _bg   = _line if _activo else "#FFFFFF"
     _bw   = "700" if _activo else "500"
     _shad = f"0 2px 10px {_line}60" if _activo else "none"
-    _btn_html.append(
-        f'<a href="?u={_u}" style="text-decoration:none;flex:1">'
-        f'<div style="text-align:center;padding:10px 8px;background:{_bg};'
-        f'color:{_text_col};border:2px solid {_line};border-radius:8px;'
-        f'font-family:Inter,sans-serif;font-size:13px;font-weight:{_bw};'
-        f'box-shadow:{_shad};transition:all 0.2s;cursor:pointer">'
-        f'{LABELS[_u]}</div></a>'
+    # Selector: dentro del div que contiene los botones de unidad, nth-child por posición
+    _css_pos.append(
+        f'#unit-selector .stColumn:nth-child({_i}) button{{'
+        f'background:{_bg}!important;color:{_fg}!important;'
+        f'border:2px solid {_line}!important;border-radius:8px!important;'
+        f'font-weight:{_bw}!important;box-shadow:{_shad}!important;}}'
     )
-st.markdown(
-    f'<div style="display:flex;gap:10px;margin-bottom:12px">{"".join(_btn_html)}</div>',
-    unsafe_allow_html=True
-)
 
-# Sincronizar query_param → session_state en cada carga
-if _qp != st.session_state["unidad_sel"]:
-    st.session_state["unidad_sel"] = _qp
-    st.rerun()
+st.markdown(f'<style>{"".join(_css_pos)}</style><div id="unit-selector">', unsafe_allow_html=True)
+_cols_btn = st.columns(4)
+for _col, _u in zip(_cols_btn, ["ANG1","ANG2","CCR1","CCR2"]):
+    with _col:
+        if st.button(LABELS[_u], key=f"btn_u_{_u}", use_container_width=True):
+            st.session_state["unidad_sel"] = _u
+            st.rerun()
+st.markdown('</div>', unsafe_allow_html=True)
 
 _u_act = st.session_state["unidad_sel"]
 _c_act = COLORES[_u_act]
