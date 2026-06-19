@@ -124,32 +124,27 @@ span[class*="material"]{font-size:0!important;color:transparent!important;width:
 
 /* ── Sidebar visible al cargar, colapsable con botón nativo ── */
 [data-testid="stSidebar"]{display:block!important;visibility:visible!important;transform:translateX(0)!important;}
-/* Cuando colapsado: ocultar todo el contenido del sidebar */
-[data-testid="stSidebar"][data-collapsed="true"] > div > div > div{
+
+/* Ocultar ícono keyboard_double_arrow — selector exacto del DOM real */
+[data-testid="stIconMaterial"]{
+  font-size:0!important;width:0!important;height:0!important;
+  overflow:hidden!important;color:transparent!important;display:inline-block!important;
+}
+
+/* Sidebar colapsado (aria-expanded=false): ocultar contenido de usuario */
+[data-testid="stSidebar"][aria-expanded="false"] [data-testid="stSidebarUserContent"]{
+  visibility:hidden!important;opacity:0!important;pointer-events:none!important;
+}
+[data-testid="stSidebar"][aria-expanded="false"] [data-testid="stMarkdown"]{
   visibility:hidden!important;opacity:0!important;
 }
-/* Botón cerrar (flecha, dentro del sidebar) */
-[data-testid="stSidebarCollapseButton"]{display:flex!important;visibility:visible!important;}
+
+/* Botón colapsar dentro del sidebar */
 [data-testid="stSidebarCollapseButton"] button{
   background:rgba(255,255,255,0.15)!important;border-radius:50%!important;
-  color:white!important;border:none!important;box-shadow:none!important;
+  border:none!important;box-shadow:none!important;
 }
 [data-testid="stSidebarCollapseButton"] button:hover{background:rgba(77,200,220,0.4)!important;}
-[data-testid="stSidebarCollapseButton"] button svg{stroke:white!important;fill:white!important;}
-/* Botón abrir (cuando colapsado) */
-[data-testid="collapsedControl"]{display:flex!important;visibility:visible!important;opacity:1!important;}
-[data-testid="collapsedControl"] button{
-  background:#0e6e7e!important;border-radius:0 8px 8px 0!important;
-  color:white!important;border:none!important;box-shadow:2px 0 8px rgba(0,0,0,0.2)!important;
-}
-[data-testid="collapsedControl"] button:hover{background:#4DC8DC!important;}
-[data-testid="collapsedControl"] button svg{stroke:white!important;fill:white!important;}
-/* Ocultar texto keyboard_double en botón abrir */
-[data-testid="collapsedControl"] button span,
-[data-testid="collapsedControl"] button p{
-  font-size:0!important;width:0!important;height:0!important;
-  overflow:hidden!important;color:transparent!important;position:absolute!important;
-}
 
 /* ── KPI cards ── */
 .kpi{
@@ -256,55 +251,33 @@ select,select option{color:#1A1F36!important;background:#FFFFFF!important;}
 </style>
 <script>
 function fixSidebar() {
-    // 1) Ocultar InputInstructions y material icons globales
+    // Ocultar InputInstructions
     document.querySelectorAll('[data-testid="InputInstructions"]').forEach(function(el){el.style.display='none';});
-    document.querySelectorAll('.material-symbols-rounded').forEach(function(el){
-        el.style.cssText='font-size:0!important;width:0!important;overflow:hidden!important;color:transparent!important;';
+
+    // Ocultar ícono keyboard_double — selector exacto del DOM real de Streamlit 1.58
+    document.querySelectorAll('[data-testid="stIconMaterial"]').forEach(function(el){
+        el.style.fontSize='0';
+        el.style.width='0';
+        el.style.height='0';
+        el.style.overflow='hidden';
+        el.style.color='transparent';
+        el.style.display='inline-block';
     });
 
-    // 2) Ocultar texto "keyboard_double..." — es un nodo de texto directo dentro del botón
-    var cc = document.querySelector('[data-testid="collapsedControl"]');
-    if (cc) {
-        // Ocultar todos los nodos de texto directos dentro del botón
-        cc.querySelectorAll('button').forEach(function(btn){
-            btn.childNodes.forEach(function(node){
-                if (node.nodeType === 3) { // TEXT_NODE
-                    node.textContent = '';
-                }
-            });
-            // Ocultar spans que no sean SVG
-            btn.querySelectorAll('span').forEach(function(sp){
-                if (!sp.querySelector('svg') && !sp.closest('svg')) {
-                    sp.style.cssText='display:none!important;';
-                }
-            });
-        });
-    }
-
-    // 3) Cuando el sidebar está colapsado, ocultar su contenido para evitar texto difuminado
+    // Ocultar contenido sidebar cuando colapsado (aria-expanded=false)
     var sb = document.querySelector('[data-testid="stSidebar"]');
-    if (sb) {
-        var isCollapsed = sb.getAttribute('aria-expanded') === 'false'
-            || sb.getAttribute('data-collapsed') === 'true'
-            || (sb.getBoundingClientRect().width < 50);
-        // El contenido interior (no el botón de colapso)
-        var inner = sb.querySelector('[data-testid="stSidebarContent"]')
-            || sb.querySelector('section > div:not([data-testid])');
-        if (inner) {
-            inner.style.visibility = isCollapsed ? 'hidden' : 'visible';
-            inner.style.opacity    = isCollapsed ? '0' : '1';
-        }
+    if (!sb) return;
+    var collapsed = sb.getAttribute('aria-expanded') === 'false';
+    var userContent = sb.querySelector('[data-testid="stSidebarUserContent"]');
+    if (userContent) {
+        userContent.style.visibility = collapsed ? 'hidden' : '';
+        userContent.style.opacity    = collapsed ? '0' : '';
     }
 }
 
 fixSidebar();
-setInterval(fixSidebar, 200);
-
-// MutationObserver para reaccionar cuando Streamlit muta el sidebar
-(function(){
-    var obs = new MutationObserver(fixSidebar);
-    obs.observe(document.body, {subtree:true, attributes:true, childList:true, attributeFilter:['data-collapsed','aria-expanded','style']});
-})();
+setInterval(fixSidebar, 150);
+document.addEventListener('click', function(){ setTimeout(fixSidebar, 300); });
 
 // Inyectar CSS en <head> para dropdown options (mayor especificidad que variables Streamlit)
 (function injectDropdownCSS() {
