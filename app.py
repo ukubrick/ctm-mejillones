@@ -164,10 +164,10 @@ section[data-testid="stSidebar"] > div:first-child > div:first-child > button{di
 .badge-pend{display:inline-block;animation:pulse-pend 1.8s infinite;border-radius:4px;}
 .sscc-latest{animation:pulse-sscc 2.2s infinite;}
 
-/* ── Tabs AES ── */
+/* ── Tabs CTM (cyan) ── */
 .stTabs [data-baseweb="tab-list"]{
-  gap:4px;background:#FFFFFF;
-  border-bottom:3px solid var(--aes-azul);
+  gap:6px;background:#FFFFFF;
+  border-bottom:3px solid var(--aes-cyan);
   border-radius:8px 8px 0 0;
   box-shadow:0 2px 8px rgba(0,0,0,0.05);
 }
@@ -175,12 +175,13 @@ section[data-testid="stSidebar"] > div:first-child > div:first-child > button{di
   border-radius:8px 8px 0 0;
   font-weight:500;font-family:'Inter',sans-serif;
   font-size:13px;color:var(--muted);
+  padding:9px 24px!important;
   transition:all 0.20s cubic-bezier(0.4,0,0.2,1);
 }
 .stTabs [aria-selected="true"][data-baseweb="tab"]{
-  background:linear-gradient(135deg,#3B4CE8 0%,#2530B0 100%)!important;
-  color:white!important;font-weight:700!important;
-  box-shadow:0 -2px 10px rgba(59,76,232,0.30)!important;
+  background:linear-gradient(135deg,#4DC8DC 0%,#2ba8be 100%)!important;
+  color:#1A1F36!important;font-weight:700!important;
+  box-shadow:0 -2px 10px rgba(77,200,220,0.35)!important;
 }
 
 /* ── Gráficos wrapper ── */
@@ -198,7 +199,7 @@ section[data-testid="stSidebar"] > div:first-child > div:first-child > button{di
   border-radius:8px!important;color:var(--txt)!important;
 }
 .stButton>button{
-  background:var(--aes-azul)!important;color:#fff!important;
+  background:var(--aes-cyan)!important;color:#1A1F36!important;
   border:none!important;border-radius:8px!important;
   font-family:'Inter',sans-serif!important;font-weight:600!important;
   transition:opacity 0.15s ease!important;
@@ -1285,10 +1286,11 @@ def chart_unidad(unidad: str, mostrar_desviacion: bool = False, nodo_label: str 
     # ── Layout ──
     fig.update_layout(
         height=520,
+        autosize=True,
         margin=dict(l=10, r=70, t=20, b=10),
         template="plotly_white",
         plot_bgcolor="#F5F7FA", paper_bgcolor="#FFFFFF",
-        transition=dict(duration=500, easing="cubic-in-out"),
+        transition=dict(duration=300, easing="cubic-in-out"),
         legend=dict(
             orientation="h", yanchor="bottom", y=1.02,
             xanchor="left", x=0,
@@ -1324,7 +1326,7 @@ def chart_unidad(unidad: str, mostrar_desviacion: bool = False, nodo_label: str 
             row=r, col=1
         )
 
-    st.plotly_chart(fig, use_container_width=True, config={"displayModeBar": False})
+    st.plotly_chart(fig, use_container_width=True, config={"displayModeBar": False}, key=f"chart_unidad_{unidad}")
 
     if mostrar_prog and df_up.empty:
         st.caption("Sin datos de programada — se importan automáticamente desde CEN PCP cada hora. El ingreso manual está disponible más abajo.")
