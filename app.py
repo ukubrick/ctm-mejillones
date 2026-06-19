@@ -283,17 +283,6 @@ setInterval(hideKeyboardHints, 500);
     obs2.observe(document.body, {childList:true, subtree:true});
 })();
 
-// Fix gráficos Plotly encogidos al cambiar de tab — dispara window resize
-(function() {
-    function fireResize() {
-        window.dispatchEvent(new Event('resize'));
-    }
-    document.addEventListener('click', function(e) {
-        var tab = e.target.closest('[data-baseweb="tab"]');
-        if (!tab) return;
-        [50, 150, 350, 600].forEach(function(d) { setTimeout(fireResize, d); });
-    });
-})();
 </script>
 """, unsafe_allow_html=True)
 
@@ -1347,13 +1336,44 @@ mostrar_desv = False
 if hay_prog_general and mostrar_prog:
     mostrar_desv = st.checkbox("Mostrar área de desviación (Real vs Programada)", value=True)
 
-tabs = st.tabs([LABELS[u] for u in ["ANG1","ANG2","CCR1","CCR2"]])
-for tab, u in zip(tabs, ["ANG1","ANG2","CCR1","CCR2"]):
-    with tab:
-        c = COLORES[u]
-        nl = NOMBRES_NODO.get(nodo_cmg, "Crucero 220kV")
-        st.markdown(f'<p style="color:{c["text"]};font-weight:600;font-size:0.9rem;margin-bottom:0.5rem">{LABELS[u]} · Real vs Programada (MW) + CMG {nl} (USD/MWh)</p>', unsafe_allow_html=True)
-        chart_unidad(u, mostrar_desviacion=mostrar_desv, nodo_label=nl)
+if "unidad_sel" not in st.session_state:
+    st.session_state["unidad_sel"] = "ANG1"
+
+# Selector de unidad como botones horizontales (evita el bug de encogimiento de st.tabs)
+_unidades_ord = ["ANG1", "ANG2", "CCR1", "CCR2"]
+_cols_btn = st.columns(len(_unidades_ord))
+for _col, _u in zip(_cols_btn, _unidades_ord):
+    _activo = st.session_state["unidad_sel"] == _u
+    _line   = COLORES[_u]["line"]
+    _badge  = COLORES[_u]["badge"]
+    _text   = COLORES[_u]["text"]
+    with _col:
+        # Botón HTML sobre el st.button para estilar el activo/inactivo
+        _bg = _line if _activo else "#FFFFFF"
+        _fg = "#FFFFFF" if _activo else _text
+        _bw = "700" if _activo else "500"
+        _shadow = f"0 2px 8px {_line}55" if _activo else "none"
+        st.markdown(
+            f'<style>#btn_{_u} button{{background:{_bg}!important;color:{_fg}!important;'
+            f'border:2px solid {_line}!important;border-radius:8px!important;'
+            f'font-weight:{_bw}!important;box-shadow:{_shadow}!important;}}</style>'
+            f'<div id="btn_{_u}">',
+            unsafe_allow_html=True
+        )
+        if st.button(LABELS[_u], key=f"btn_u_{_u}", use_container_width=True):
+            st.session_state["unidad_sel"] = _u
+            st.rerun()
+        st.markdown('</div>', unsafe_allow_html=True)
+
+_u_act = st.session_state["unidad_sel"]
+_c_act = COLORES[_u_act]
+_nl    = NOMBRES_NODO.get(nodo_cmg, "Crucero 220kV")
+st.markdown(
+    f'<p style="color:{_c_act["text"]};font-weight:600;font-size:0.9rem;margin:0.8rem 0 0.3rem">'
+    f'{LABELS[_u_act]} · Real vs Programada (MW) + CMG {_nl} (USD/MWh)</p>',
+    unsafe_allow_html=True
+)
+chart_unidad(_u_act, mostrar_desviacion=mostrar_desv, nodo_label=_nl)
 
 
 # ── Análisis de costo ─────────────────────────────────────────
