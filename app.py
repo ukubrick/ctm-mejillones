@@ -122,13 +122,17 @@ span[class*="material"]{font-size:0!important;color:transparent!important;width:
 [data-testid="stWidgetLabel"] span{font-size:0!important;}
 [data-testid="stWidgetLabel"] span[data-testid="stWidgetLabelHelpInline"]{display:none!important;}
 
-/* ── Sidebar forzado visible ── */
-[data-testid="stSidebar"]{display:block!important;visibility:visible!important;transform:none!important;left:0!important;min-width:244px!important;}
-[data-testid="collapsedControl"]{display:none!important;}
-[data-testid="stSidebarCollapseButton"]{display:none!important;}
-button[aria-label="Close sidebar"]{display:none!important;}
-button[aria-label="Open sidebar"]{display:none!important;}
-section[data-testid="stSidebar"] > div:first-child > div:first-child > button{display:none!important;}
+/* ── Sidebar: botón colapsar/expandir visible, estilo sobre fondo cyan ── */
+[data-testid="stSidebarCollapseButton"] button,
+[data-testid="collapsedControl"] button{
+  background:rgba(255,255,255,0.15)!important;
+  border-radius:50%!important;
+  color:white!important;
+}
+[data-testid="stSidebarCollapseButton"] button:hover,
+[data-testid="collapsedControl"] button:hover{
+  background:rgba(77,200,220,0.35)!important;
+}
 
 /* ── KPI cards ── */
 .kpi{
@@ -240,35 +244,6 @@ function hideKeyboardHints() {
 hideKeyboardHints();
 setInterval(hideKeyboardHints, 500);
 
-// Limpiar estado colapsado de sidebar en localStorage y sessionStorage
-(function() {
-    try {
-        [localStorage, sessionStorage].forEach(function(store) {
-            Object.keys(store).forEach(function(k) {
-                if (/sidebar|Sidebar|collapsed/i.test(k)) store.removeItem(k);
-            });
-        });
-    } catch(e) {}
-})();
-
-// MutationObserver: revertir cualquier intento de Streamlit de colapsar el sidebar
-(function() {
-    function forceSidebar() {
-        var sb = document.querySelector('[data-testid="stSidebar"]');
-        if (!sb) return;
-        sb.style.setProperty('display','block','important');
-        sb.style.setProperty('visibility','visible','important');
-        sb.style.setProperty('transform','none','important');
-        sb.style.setProperty('left','0','important');
-        if (sb.getAttribute('data-collapsed') === 'true') {
-            sb.setAttribute('data-collapsed','false');
-        }
-    }
-    forceSidebar();
-    var obs = new MutationObserver(forceSidebar);
-    obs.observe(document.body, {subtree:true, attributes:true, childList:true});
-})();
-
 // Inyectar CSS en <head> para dropdown options (mayor especificidad que variables Streamlit)
 (function injectDropdownCSS() {
     var style = document.createElement('style');
@@ -300,19 +275,21 @@ setInterval(hideKeyboardHints, 500);
     obs2.observe(document.body, {childList:true, subtree:true});
 })();
 
-// Fix gráficos Plotly encogidos al cambiar de tab — dispara resize en cada tab click
+// Fix gráficos Plotly encogidos al cambiar de tab
 (function() {
     function resizePlotly() {
         if (typeof Plotly === 'undefined') return;
         document.querySelectorAll('.js-plotly-plot').forEach(function(el) {
-            try { Plotly.relayout(el, {}); } catch(e) {}
+            try {
+                var w = el.parentElement ? el.parentElement.offsetWidth : 0;
+                if (w > 100) Plotly.relayout(el, {width: w});
+            } catch(e) {}
         });
     }
     document.addEventListener('click', function(e) {
         var tab = e.target.closest('[data-baseweb="tab"]');
         if (!tab) return;
-        setTimeout(resizePlotly, 80);
-        setTimeout(resizePlotly, 250);
+        [80, 200, 400, 700].forEach(function(d) { setTimeout(resizePlotly, d); });
     });
 })();
 </script>
@@ -1351,7 +1328,9 @@ def chart_unidad(unidad: str, mostrar_desviacion: bool = False, nodo_label: str 
             row=r, col=1
         )
 
-    st.plotly_chart(fig, use_container_width=True, config={"displayModeBar": False}, key=f"chart_unidad_{unidad}")
+    st.markdown('<div style="width:100%;min-width:600px">', unsafe_allow_html=True)
+    st.plotly_chart(fig, use_container_width=True, config={"displayModeBar": False, "responsive": True}, key=f"chart_unidad_{unidad}")
+    st.markdown('</div>', unsafe_allow_html=True)
 
     if mostrar_prog and df_up.empty:
         st.caption("Sin datos de programada — se importan automáticamente desde CEN PCP cada hora. El ingreso manual está disponible más abajo.")
