@@ -179,7 +179,7 @@ Todos los endpoints usan `_get_with_retry()` con backoff exponencial:
 
 ---
 
-## Estado actual del código (2026-06-18 — actualizado)
+## Estado actual del código (2026-06-19 — actualizado)
 
 Todo implementado y funcionando en producción:
 - ✅ Generación real automática (API CEN SIPUB) — ventana 7 días, DO UPDATE sobrescribe ceros
@@ -211,6 +211,15 @@ Todo implementado y funcionando en producción:
 - ✅ Gráfico por unidad: serie CMG hereda el color de la unidad (line color = `c["line"]`) y grosor width=3 igual a la serie Real
 - ✅ Solicitudes de trabajo integradas — sección después de SSCC, máx 5 cards por tab, tabla completa disponible
 - ✅ Sin emoji en la UI (eliminados todos en 2026-06-18)
+- ✅ Sistema de diseño AES aplicado (2026-06-19): paleta AES (cyan `#4DC8DC`, sidebar gradiente `#0e6e7e→#043840`), KPI cards con borde-top de color por unidad + hover lift + animación fadeInUp, tipografía Inter, tabs con acento cyan y padding amplio, gráficos Plotly con `template="plotly_white"` y `plot_bgcolor="#F5F7FA"`
+- ✅ Selector de unidad (gráficos por unidad): reemplazado `st.tabs` por `st.button` + `session_state` — elimina bug de Plotly width=0 cuando tab está oculto con `display:none`
+- ✅ Sidebar fijo siempre visible: `transform:none`, `width:300px`, `visibility:visible` forzados via CSS — evita que cookies del navegador lo dejen colapsado
+
+## Notas técnicas importantes (diseño/CSS)
+
+- **Bug Plotly + st.tabs (Streamlit):** `st.tabs` renderiza todos los paneles simultáneamente con `display:none`. Plotly mide el contenedor al renderizar → obtiene width=0 → el gráfico queda pequeño para siempre. **Solución:** usar `st.button` + `st.session_state` para selector de unidad, renderizando solo un gráfico a la vez.
+- **Sidebar y cookies:** Streamlit Cloud guarda el estado del sidebar (colapsado/expandido) en cookies/localStorage del navegador. Para forzar que siempre esté visible, usar CSS con `transform:none!important`, `width:300px!important`, `visibility:visible!important` en `[data-testid="stSidebar"]`.
+- **DOM Streamlit 1.58:** El ícono de colapso del sidebar está en `[data-testid="stIconMaterial"]` (no `.material-symbols-rounded`). El botón de expandir cuando colapsado es `[data-testid="stExpandSidebarButton"]` y vive dentro de `[data-testid="stToolbar"]` (que por defecto ocultamos con `display:none`). El sidebar usa `aria-expanded="false"` (no `data-collapsed`) para indicar estado colapsado.
 
 ---
 
