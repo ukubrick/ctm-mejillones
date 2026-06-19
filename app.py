@@ -119,8 +119,22 @@ span[class*="instruction"]{display:none!important;}
 [data-testid="stWidgetLabel"] span[data-testid="stWidgetLabelHelpInline"]{display:none!important;}
 
 /* ── Sidebar siempre visible y fijo ── */
-[data-testid="stSidebar"]{display:block!important;visibility:visible!important;}
+[data-testid="stSidebar"]{
+  display:block!important;
+  visibility:visible!important;
+  transform:none!important;
+  width:300px!important;
+  min-width:300px!important;
+  left:0!important;
+  position:relative!important;
+}
+[data-testid="stSidebarContent"]{
+  visibility:visible!important;
+  opacity:1!important;
+  display:block!important;
+}
 [data-testid="stSidebarCollapseButton"]{display:none!important;}
+[data-testid="stExpandSidebarButton"]{display:none!important;}
 
 /* ── KPI cards ── */
 .kpi{
