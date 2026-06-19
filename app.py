@@ -223,18 +223,24 @@ span[class*="material"]{font-size:0!important;color:transparent!important;width:
   background:#E5E7EB!important;color:#1A1F36!important;
   border:1px solid #D1D5DB!important;border-radius:8px!important;
   font-family:'Inter',sans-serif!important;font-weight:600!important;
-  transition:opacity 0.15s ease!important;
+  transition:all 0.15s ease!important;
 }
 .stButton>button:hover{background:#D1D5DB!important;}
-/* Botones de unidad — estilos individuales por ID (sobreescriben el global) */
-#btn_ANG1 button{background:#6D28D9!important;color:#fff!important;border:2px solid #6D28D9!important;}
-#btn_ANG2 button{background:#2563EB!important;color:#fff!important;border:2px solid #2563EB!important;}
-#btn_CCR1 button{background:#0891B2!important;color:#fff!important;border:2px solid #0891B2!important;}
-#btn_CCR2 button{background:#16A34A!important;color:#fff!important;border:2px solid #16A34A!important;}
-#btn_ANG1_off button{background:#FFFFFF!important;color:#6D28D9!important;border:2px solid #6D28D9!important;font-weight:500!important;}
-#btn_ANG2_off button{background:#FFFFFF!important;color:#2563EB!important;border:2px solid #2563EB!important;font-weight:500!important;}
-#btn_CCR1_off button{background:#FFFFFF!important;color:#0891B2!important;border:2px solid #0891B2!important;font-weight:500!important;}
-#btn_CCR2_off button{background:#FFFFFF!important;color:#16A34A!important;border:2px solid #16A34A!important;font-weight:500!important;}
+/* Botones de unidad — activo relleno, inactivo borde */
+.ubtn-ANG1-on>div>button,.ubtn-ANG1-on>div>button:hover{background:#6D28D9!important;color:#fff!important;border:2px solid #6D28D9!important;font-weight:700!important;box-shadow:0 2px 8px #6D28D955!important;}
+.ubtn-ANG2-on>div>button,.ubtn-ANG2-on>div>button:hover{background:#2563EB!important;color:#fff!important;border:2px solid #2563EB!important;font-weight:700!important;box-shadow:0 2px 8px #2563EB55!important;}
+.ubtn-CCR1-on>div>button,.ubtn-CCR1-on>div>button:hover{background:#0891B2!important;color:#fff!important;border:2px solid #0891B2!important;font-weight:700!important;box-shadow:0 2px 8px #0891B255!important;}
+.ubtn-CCR2-on>div>button,.ubtn-CCR2-on>div>button:hover{background:#16A34A!important;color:#fff!important;border:2px solid #16A34A!important;font-weight:700!important;box-shadow:0 2px 8px #16A34A55!important;}
+.ubtn-ANG1-off>div>button{background:#fff!important;color:#6D28D9!important;border:2px solid #6D28D9!important;font-weight:500!important;}
+.ubtn-ANG2-off>div>button{background:#fff!important;color:#2563EB!important;border:2px solid #2563EB!important;font-weight:500!important;}
+.ubtn-CCR1-off>div>button{background:#fff!important;color:#0891B2!important;border:2px solid #0891B2!important;font-weight:500!important;}
+.ubtn-CCR2-off>div>button{background:#fff!important;color:#16A34A!important;border:2px solid #16A34A!important;font-weight:500!important;}
+/* keyboard_double icon oculto en botón colapso sidebar */
+[data-testid="collapsedControl"] span,
+[data-testid="collapsedControl"] .material-symbols-rounded,
+[data-testid="stSidebarCollapseButton"] span[class*="material"]{
+  font-size:0!important;width:0!important;overflow:hidden!important;color:transparent!important;
+}
 
 /* ── Selectbox: valor mostrado (área principal) ── */
 [data-testid="stSelectbox"] div[data-baseweb="select"] > div{color:#1A1F36!important;background:#FFFFFF!important;}
@@ -256,10 +262,21 @@ select,select option{color:#1A1F36!important;background:#FFFFFF!important;}
 <script>
 function hideKeyboardHints() {
     document.querySelectorAll('[data-testid="InputInstructions"]').forEach(function(el){el.style.display='none';});
-    document.querySelectorAll('.material-symbols-rounded').forEach(function(el){el.style.fontSize='0';el.style.width='0';});
+    document.querySelectorAll('.material-symbols-rounded').forEach(function(el){
+        el.style.fontSize='0';el.style.width='0';el.style.overflow='hidden';el.style.color='transparent';
+    });
+    // Ocultar texto "keyboard_double" del botón colapso sidebar
+    var cc = document.querySelector('[data-testid="collapsedControl"]');
+    if (cc) {
+        cc.querySelectorAll('span,p').forEach(function(el){
+            if (el.textContent && el.textContent.trim().length > 0 && !el.querySelector('svg')) {
+                el.style.fontSize='0';el.style.width='0';el.style.overflow='hidden';el.style.color='transparent';
+            }
+        });
+    }
 }
 hideKeyboardHints();
-setInterval(hideKeyboardHints, 500);
+setInterval(hideKeyboardHints, 300);
 
 // Inyectar CSS en <head> para dropdown options (mayor especificidad que variables Streamlit)
 (function injectDropdownCSS() {
@@ -1353,9 +1370,9 @@ _unidades_ord = ["ANG1", "ANG2", "CCR1", "CCR2"]
 _cols_btn = st.columns(len(_unidades_ord))
 for _col, _u in zip(_cols_btn, _unidades_ord):
     _activo = st.session_state["unidad_sel"] == _u
-    _div_id = f"btn_{_u}" if _activo else f"btn_{_u}_off"
+    _cls = f"ubtn-{_u}-{'on' if _activo else 'off'}"
     with _col:
-        st.markdown(f'<div id="{_div_id}">', unsafe_allow_html=True)
+        st.markdown(f'<div class="{_cls}">', unsafe_allow_html=True)
         if st.button(LABELS[_u], key=f"btn_u_{_u}", use_container_width=True):
             st.session_state["unidad_sel"] = _u
             st.rerun()
