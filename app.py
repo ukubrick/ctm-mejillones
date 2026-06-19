@@ -2209,7 +2209,7 @@ else:
 
 
 # ── Solicitudes de Trabajo ────────────────────────────────────
-st.markdown('<div class="sec">SOLICITUDES DE TRABAJO — AES ANDES / ANG / CCR</div>', unsafe_allow_html=True)
+st.markdown('<div class="sec">SOLICITUDES DE TRABAJO — AES ANDES</div>', unsafe_allow_html=True)
 
 STATUS_COLOR_SOL = {
     "pendiente":          ("#D97706", "#FEF3C7"),
