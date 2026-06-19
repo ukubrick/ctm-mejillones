@@ -67,11 +67,20 @@ st.markdown("""
 .stApp{background:var(--bg)!important;}
 .block-container{padding:1.5rem 2rem 3rem;max-width:1400px;}
 
-/* ── Sidebar AES gradiente ── */
+/* ── Sidebar CTM gradiente cyan ── */
 [data-testid="stSidebar"]{
-  background:linear-gradient(160deg,#2530B0 0%,#111540 60%,#0d1035 100%)!important;
+  background:linear-gradient(160deg,#0e6e7e 0%,#074f5c 55%,#043840 100%)!important;
   box-shadow:4px 0 20px rgba(0,0,0,0.25)!important;
   border-right:none!important;
+}
+
+/* ── Fix gráficos Plotly encogidos en tabs ── */
+.stTabs [data-baseweb="tab-panel"] [data-testid="stPlotlyChart"],
+.stTabs [data-baseweb="tab-panel"] [data-testid="stPlotlyChart"] > div,
+.stTabs [data-baseweb="tab-panel"] [data-testid="stPlotlyChart"] > div > div,
+.stTabs [data-baseweb="tab-panel"] .js-plotly-plot,
+.stTabs [data-baseweb="tab-panel"] .js-plotly-plot .plotly{
+  width:100%!important;min-width:0!important;
 }
 [data-testid="stSidebar"] *{color:#E2E8F0!important;}
 [data-testid="stSidebar"] .stCheckbox label{color:#CBD5E1!important;}
@@ -289,6 +298,22 @@ setInterval(hideKeyboardHints, 500);
         });
     });
     obs2.observe(document.body, {childList:true, subtree:true});
+})();
+
+// Fix gráficos Plotly encogidos al cambiar de tab — dispara resize en cada tab click
+(function() {
+    function resizePlotly() {
+        if (typeof Plotly === 'undefined') return;
+        document.querySelectorAll('.js-plotly-plot').forEach(function(el) {
+            try { Plotly.relayout(el, {}); } catch(e) {}
+        });
+    }
+    document.addEventListener('click', function(e) {
+        var tab = e.target.closest('[data-baseweb="tab"]');
+        if (!tab) return;
+        setTimeout(resizePlotly, 80);
+        setTimeout(resizePlotly, 250);
+    });
 })();
 </script>
 """, unsafe_allow_html=True)
