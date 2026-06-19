@@ -140,6 +140,12 @@ span[class*="material"]{font-size:0!important;color:transparent!important;width:
 }
 [data-testid="collapsedControl"] button:hover{background:#4DC8DC!important;}
 [data-testid="collapsedControl"] button svg{stroke:white!important;fill:white!important;}
+/* Ocultar texto "keyboard_double_arrow_right" del botón de abrir sidebar */
+[data-testid="collapsedControl"] button span{
+  font-size:0!important;width:0!important;height:0!important;
+  overflow:hidden!important;display:inline-block!important;color:transparent!important;
+}
+[data-testid="collapsedControl"] p{display:none!important;}
 
 /* ── KPI cards ── */
 .kpi{
@@ -226,21 +232,6 @@ span[class*="material"]{font-size:0!important;color:transparent!important;width:
   transition:all 0.15s ease!important;
 }
 .stButton>button:hover{background:#D1D5DB!important;}
-/* Botones de unidad — activo relleno, inactivo borde */
-.ubtn-ANG1-on>div>button,.ubtn-ANG1-on>div>button:hover{background:#6D28D9!important;color:#fff!important;border:2px solid #6D28D9!important;font-weight:700!important;box-shadow:0 2px 8px #6D28D955!important;}
-.ubtn-ANG2-on>div>button,.ubtn-ANG2-on>div>button:hover{background:#2563EB!important;color:#fff!important;border:2px solid #2563EB!important;font-weight:700!important;box-shadow:0 2px 8px #2563EB55!important;}
-.ubtn-CCR1-on>div>button,.ubtn-CCR1-on>div>button:hover{background:#0891B2!important;color:#fff!important;border:2px solid #0891B2!important;font-weight:700!important;box-shadow:0 2px 8px #0891B255!important;}
-.ubtn-CCR2-on>div>button,.ubtn-CCR2-on>div>button:hover{background:#16A34A!important;color:#fff!important;border:2px solid #16A34A!important;font-weight:700!important;box-shadow:0 2px 8px #16A34A55!important;}
-.ubtn-ANG1-off>div>button{background:#fff!important;color:#6D28D9!important;border:2px solid #6D28D9!important;font-weight:500!important;}
-.ubtn-ANG2-off>div>button{background:#fff!important;color:#2563EB!important;border:2px solid #2563EB!important;font-weight:500!important;}
-.ubtn-CCR1-off>div>button{background:#fff!important;color:#0891B2!important;border:2px solid #0891B2!important;font-weight:500!important;}
-.ubtn-CCR2-off>div>button{background:#fff!important;color:#16A34A!important;border:2px solid #16A34A!important;font-weight:500!important;}
-/* keyboard_double icon oculto en botón colapso sidebar */
-[data-testid="collapsedControl"] span,
-[data-testid="collapsedControl"] .material-symbols-rounded,
-[data-testid="stSidebarCollapseButton"] span[class*="material"]{
-  font-size:0!important;width:0!important;overflow:hidden!important;color:transparent!important;
-}
 
 /* ── Selectbox: valor mostrado (área principal) ── */
 [data-testid="stSelectbox"] div[data-baseweb="select"] > div{color:#1A1F36!important;background:#FFFFFF!important;}
@@ -1362,27 +1353,46 @@ mostrar_desv = False
 if hay_prog_general and mostrar_prog:
     mostrar_desv = st.checkbox("Mostrar área de desviación (Real vs Programada)", value=True)
 
+# Selector de unidad — botones HTML puros con st.query_params
+_qp = st.query_params.get("u", "ANG1")
+if _qp not in ["ANG1","ANG2","CCR1","CCR2"]:
+    _qp = "ANG1"
 if "unidad_sel" not in st.session_state:
-    st.session_state["unidad_sel"] = "ANG1"
+    st.session_state["unidad_sel"] = _qp
 
-# Selector de unidad como botones horizontales (evita el bug de encogimiento de st.tabs)
-_unidades_ord = ["ANG1", "ANG2", "CCR1", "CCR2"]
-_cols_btn = st.columns(len(_unidades_ord))
-for _col, _u in zip(_cols_btn, _unidades_ord):
-    _activo = st.session_state["unidad_sel"] == _u
-    _cls = f"ubtn-{_u}-{'on' if _activo else 'off'}"
-    with _col:
-        st.markdown(f'<div class="{_cls}">', unsafe_allow_html=True)
-        if st.button(LABELS[_u], key=f"btn_u_{_u}", use_container_width=True):
-            st.session_state["unidad_sel"] = _u
-            st.rerun()
-        st.markdown('</div>', unsafe_allow_html=True)
+_u_act = st.session_state["unidad_sel"]
+
+_btn_html = []
+for _u in ["ANG1","ANG2","CCR1","CCR2"]:
+    _activo = _u_act == _u
+    _line = COLORES[_u]["line"]
+    _text_col = "#FFFFFF" if _activo else _line
+    _bg   = _line if _activo else "#FFFFFF"
+    _bw   = "700" if _activo else "500"
+    _shad = f"0 2px 10px {_line}60" if _activo else "none"
+    _btn_html.append(
+        f'<a href="?u={_u}" style="text-decoration:none;flex:1">'
+        f'<div style="text-align:center;padding:10px 8px;background:{_bg};'
+        f'color:{_text_col};border:2px solid {_line};border-radius:8px;'
+        f'font-family:Inter,sans-serif;font-size:13px;font-weight:{_bw};'
+        f'box-shadow:{_shad};transition:all 0.2s;cursor:pointer">'
+        f'{LABELS[_u]}</div></a>'
+    )
+st.markdown(
+    f'<div style="display:flex;gap:10px;margin-bottom:12px">{"".join(_btn_html)}</div>',
+    unsafe_allow_html=True
+)
+
+# Sincronizar query_param → session_state en cada carga
+if _qp != st.session_state["unidad_sel"]:
+    st.session_state["unidad_sel"] = _qp
+    st.rerun()
 
 _u_act = st.session_state["unidad_sel"]
 _c_act = COLORES[_u_act]
 _nl    = NOMBRES_NODO.get(nodo_cmg, "Crucero 220kV")
 st.markdown(
-    f'<p style="color:{_c_act["text"]};font-weight:600;font-size:0.9rem;margin:0.8rem 0 0.3rem">'
+    f'<p style="color:{_c_act["text"]};font-weight:600;font-size:0.9rem;margin:0.4rem 0 0.3rem">'
     f'{LABELS[_u_act]} · Real vs Programada (MW) + CMG {_nl} (USD/MWh)</p>',
     unsafe_allow_html=True
 )
