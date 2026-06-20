@@ -179,7 +179,7 @@ Todos los endpoints usan `_get_with_retry()` con backoff exponencial:
 
 ---
 
-## Estado actual del código (2026-06-19 — actualizado)
+## Estado actual del código (2026-06-20 — actualizado)
 
 Todo implementado y funcionando en producción:
 - ✅ Generación real automática (API CEN SIPUB) — ventana 7 días, DO UPDATE sobrescribe ceros
@@ -214,6 +214,8 @@ Todo implementado y funcionando en producción:
 - ✅ Sistema de diseño AES aplicado (2026-06-19): paleta AES (cyan `#4DC8DC`, sidebar gradiente `#0e6e7e→#043840`), KPI cards con borde-top de color por unidad + hover lift + animación fadeInUp, tipografía Inter, tabs con acento cyan y padding amplio, gráficos Plotly con `template="plotly_white"` y `plot_bgcolor="#F5F7FA"`
 - ✅ Selector de unidad (gráficos por unidad): reemplazado `st.tabs` por `st.button` + `session_state` — elimina bug de Plotly width=0 cuando tab está oculto con `display:none`
 - ✅ Sidebar fijo siempre visible: `transform:none`, `width:300px`, `visibility:visible` forzados via CSS — evita que cookies del navegador lo dejen colapsado
+- ✅ Página ML (`pages/ml_analysis.py`) — Forecasting CMG con XGBoost (lags t-1h a t-48h, forecast 24h) + Detección de anomalías gen. real con Isolation Forest (por unidad, slider % contaminación). Dependencias: `scikit-learn`, `xgboost` en requirements.txt
+- ✅ Navegación multipage: `showSidebarNavigation = false` en `.streamlit/config.toml` — suprime links automáticos de Streamlit. Links manuales (`st.page_link`) debajo del recuadro de fuentes: "Aplicación" y "Machine Learning Analysis", sin emoji, con margen superior de separación
 
 ## Notas técnicas importantes (diseño/CSS)
 

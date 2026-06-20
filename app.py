@@ -1058,6 +1058,7 @@ with st.sidebar:
     </div>
     """, unsafe_allow_html=True)
 
+    st.markdown("<div style='margin-top:12px'></div>", unsafe_allow_html=True)
     st.page_link("app.py",               label="Aplicación")
     st.page_link("pages/ml_analysis.py", label="Machine Learning Analysis")
 
