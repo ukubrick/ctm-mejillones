@@ -429,6 +429,10 @@ def seccion_anomalias():
 
 # ── Layout principal ───────────────────────────────────────────────────────────
 
+with st.sidebar:
+    st.page_link("app.py",               label="Aplicación",                icon="⚡")
+    st.page_link("pages/ml_analysis.py", label="Machine Learning Analysis", icon="🤖")
+
 st.title("Análisis ML — CTM Mejillones")
 st.caption("Modelos entrenados con datos históricos de Supabase · Se recargan cada hora")
 
