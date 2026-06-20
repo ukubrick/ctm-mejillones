@@ -1058,8 +1058,8 @@ with st.sidebar:
     </div>
     """, unsafe_allow_html=True)
 
-    st.page_link("app.py",                  label="Aplicación",                icon="⚡")
-    st.page_link("pages/ml_analysis.py",    label="Machine Learning Analysis", icon="🤖")
+    st.page_link("app.py",               label="Aplicación")
+    st.page_link("pages/ml_analysis.py", label="Machine Learning Analysis")
 
     st.markdown("---")
     hoy   = date.today()
