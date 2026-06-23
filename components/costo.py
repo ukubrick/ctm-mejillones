@@ -5,7 +5,7 @@ import pandas as pd
 import plotly.graph_objects as go
 
 from config import COLORES, LABELS, PMAX, UNIDADES, BG, GR, SERIE
-from utils.data import load_cmg_prog
+from utils.data import load_cmg_prog, load_cmg_real
 
 
 def render_costo(df_r, df_c, s=None, e=None, nodo_cmg="CRUCERO_______220", df_p=None):
@@ -16,6 +16,7 @@ def render_costo(df_r, df_c, s=None, e=None, nodo_cmg="CRUCERO_______220", df_p=
         return
 
     df_cp = load_cmg_prog(s, e, nodo_cmg) if s and e else None
+    df_cr = load_cmg_real(s, e, nodo_cmg) if s and e else None
 
     df_merge = pd.merge_asof(
         df_r[["unidad", "fecha_hora", "gen_real_mw"]].sort_values("fecha_hora"),
@@ -51,6 +52,17 @@ def render_costo(df_r, df_c, s=None, e=None, nodo_cmg="CRUCERO_______220", df_p=
     ]
     if desvio_cmg is not None:
         kpis.append(("Desvío CMG real vs prog.", f"{desvio_cmg:+.1f}", "USD/MWh medio"))
+
+    # Desvío CMG online (S3) vs real oficial liquidado (si hay datos en común)
+    if df_cr is not None and not df_cr.empty:
+        mr = pd.merge_asof(
+            df_c[["fecha_hora", "cmg_usd_mwh"]].sort_values("fecha_hora"),
+            df_cr[["fecha_hora", "cmg_usd_mwh"]].rename(columns={"cmg_usd_mwh": "real"}).sort_values("fecha_hora"),
+            on="fecha_hora", direction="nearest", tolerance=pd.Timedelta("1h"),
+        ).dropna()
+        if not mr.empty:
+            kpis.append(("Desvío online vs real oficial",
+                         f"{(mr['cmg_usd_mwh'] - mr['real']).mean():+.1f}", "USD/MWh medio"))
     cols = st.columns(len(kpis))
     for col, (lbl, val, sub) in zip(cols, kpis):
         col.metric(lbl, val, sub)
@@ -62,7 +74,7 @@ def render_costo(df_r, df_c, s=None, e=None, nodo_cmg="CRUCERO_______220", df_p=
         with gc1:
             _grafico_barras_ingreso(ingreso_unit, energia_unit, unidades_ord)
         with gc2:
-            _grafico_cmg_tiempo(df_c, cmg_prom, cmg_min, cmg_max, df_cp)
+            _grafico_cmg_tiempo(df_c, cmg_prom, cmg_min, cmg_max, df_cp, df_cr)
 
     with tab_stat:
         _estadisticas_costo(df_merge, df_c, ingreso_unit, energia_unit, ingreso_total, cmg_prom, unidades_ord)
@@ -122,20 +134,25 @@ def _grafico_barras_ingreso(ingreso_unit, energia_unit, unidades_ord):
     st.plotly_chart(fig, use_container_width=True, config={"displayModeBar": False})
 
 
-def _grafico_cmg_tiempo(df_c, cmg_prom, cmg_min, cmg_max, df_cp=None):
+def _grafico_cmg_tiempo(df_c, cmg_prom, cmg_min, cmg_max, df_cp=None, df_cr=None):
     idx_max = df_c["cmg_usd_mwh"].idxmax()
     idx_min = df_c["cmg_usd_mwh"].idxmin()
     fig = go.Figure()
     fig.add_trace(go.Scatter(x=df_c["fecha_hora"], y=df_c["cmg_usd_mwh"], mode="none",
         fill="tozeroy", fillcolor="rgba(109,40,217,0.08)", showlegend=False, hoverinfo="skip"))
-    fig.add_trace(go.Scatter(x=df_c["fecha_hora"], y=df_c["cmg_usd_mwh"], mode="lines", name="CMG real",
+    fig.add_trace(go.Scatter(x=df_c["fecha_hora"], y=df_c["cmg_usd_mwh"], mode="lines", name="CMG online",
         line=dict(color=SERIE["cmg"], width=1.8, shape="spline", smoothing=0.5), showlegend=True,
-        hovertemplate="<b>Real</b> %{x|%d/%m %H:%M}<br>%{y:.1f} USD/MWh<extra></extra>"))
+        hovertemplate="<b>Online</b> %{x|%d/%m %H:%M}<br>%{y:.1f} USD/MWh<extra></extra>"))
     # Overlay CMG programado (PID), si existe
     if df_cp is not None and not df_cp.empty:
         fig.add_trace(go.Scatter(x=df_cp["fecha_hora"], y=df_cp["cmg_usd_mwh"], mode="lines", name="CMG programado",
             line=dict(color=SERIE["cmg_prog"], width=1.4, dash="dash"),
             hovertemplate="<b>Programado</b> %{x|%d/%m %H:%M}<br>%{y:.1f} USD/MWh<extra></extra>"))
+    # Overlay CMG real oficial liquidado (rezago ~10 días), si existe
+    if df_cr is not None and not df_cr.empty:
+        fig.add_trace(go.Scatter(x=df_cr["fecha_hora"], y=df_cr["cmg_usd_mwh"], mode="lines", name="CMG real oficial",
+            line=dict(color="#0F766E", width=1.6),
+            hovertemplate="<b>Real oficial</b> %{x|%d/%m %H:%M}<br>%{y:.1f} USD/MWh<extra></extra>"))
     fig.add_hline(y=cmg_prom, line_color="#CBD5E1", line_width=1.2, line_dash="dot",
         annotation_text=f"Prom: {cmg_prom:.1f}", annotation_position="right",
         annotation_font_color="#64748B", annotation_font_size=10)
@@ -152,7 +169,7 @@ def _grafico_cmg_tiempo(df_c, cmg_prom, cmg_min, cmg_max, df_cp=None):
         marker=dict(size=10, color="#10B981", symbol="triangle-down", line=dict(color="#fff", width=1.5)),
         text=[f"  Mín: {cmg_min:.1f}"], textposition="bottom right", textfont=dict(size=10, color="#10B981"), showlegend=False))
     fig.update_layout(
-        title=dict(text="CMG real vs programado", font=dict(size=13, color="#0F172A"), x=0),
+        title=dict(text="CMG online · programado · real oficial", font=dict(size=13, color="#0F172A"), x=0),
         height=360, margin=dict(l=10, r=80, t=60, b=10), plot_bgcolor=BG, paper_bgcolor="rgba(0,0,0,0)",
         legend=dict(orientation="h", yanchor="bottom", y=1.02, x=0, font=dict(size=10, color="#475569")),
         yaxis=dict(title="USD/MWh", gridcolor=GR, tickfont=dict(color="#94A3B8", size=10), title_font=dict(color="#94A3B8", size=10)),

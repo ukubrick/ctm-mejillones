@@ -85,6 +85,15 @@ LLAVES_SSCC = {
     "COCHRANE-CCH2": "CCR2",
 }
 
+# Mapeo campo `central` de instrucciones operacionales CMG → código interno
+# (confirmado en producción 2026-06-23). Misma convención CCH que SSCC.
+LLAVES_INSTR_CMG = {
+    "ANGAMOS-ANG1": "ANG1",
+    "ANGAMOS-ANG2": "ANG2",
+    "COCHRANE-CCH1": "CCR1",
+    "COCHRANE-CCH2": "CCR2",
+}
+
 DIAS_VENTANA     = 7   # días hacia atrás para gen. real y SSCC (filtra en servidor, rápido)
 DIAS_VENTANA_PCP = 2   # días hacia atrás para PCP: ~120 páginas × 0.3s ≈ 8 min (427 págs con 7 días → timeout)
 
@@ -537,6 +546,86 @@ def upsert_cmg_programado(registros: list[dict]) -> tuple[int, int]:
     return nuevos, actualizados
 
 
+def fetch_cmg_real(start: str, end: str) -> list[dict]:
+    """
+    Trae el CMG real oficial liquidado de las barras Crucero/Tarapacá.
+
+    Endpoint: /costo-marginal-real/v4/findByDate (SIP, 1-indexado).
+    SÍ filtra por barra en el servidor con `bar_transf` (baja de ~7810 a ~5 págs).
+    OJO: el CMG real se liquida con rezago (~10 días); fechas recientes devuelven 0.
+    Se conservan solo los valores en hora en punto (min == 0) para cruzar con CMG
+    online/programado, que son horarios.
+    """
+    registros = []
+    for barra in CMG_PROG_BARRAS.values():   # CRUCERO_______220 / TARAPACA______220
+        page  = 1   # 1-indexado
+        # OJO: este endpoint devuelve VACÍO si limit supera los registros de la
+        # página (~96/día a resolución 15-min). limit alto (≥100) → 0 registros.
+        # Se usa limit=50 y se pagina (al contrario del PCP/PID que usan limit=2000).
+        limit = 50
+        antes = len(registros)
+        try:
+            while True:
+                r = _get_with_retry(
+                    f"{API_BASE_SIP}/costo-marginal-real/v4/findByDate",
+                    params={"user_key": CEN_USER_KEY, "startDate": start, "endDate": end,
+                            "bar_transf": barra, "page": page, "limit": limit},
+                )
+                body = r.json()
+                data = body.get("data", [])
+                if not data:
+                    break
+                for rec in data:
+                    if int(rec.get("min") or 0) != 0:
+                        continue   # solo hora en punto
+                    fh = (rec.get("fecha_hora") or "").replace("T", " ")[:16]
+                    if not fh:
+                        continue
+                    registros.append({
+                        "barra_transf": rec.get("barra_transf") or barra,
+                        "fecha_hora":   f"{fh}:00" if len(fh) == 16 else fh,
+                        "cmg_usd_mwh":  float(rec.get("cmg_usd_mwh_") or 0.0),
+                        "cmg_clp_kwh":  float(rec.get("cmg_clp_kwh_") or 0.0),
+                        "version":      rec.get("version"),
+                    })
+                total_pages = body.get("totalPages")
+                if total_pages is None or page >= int(total_pages):
+                    break
+                page += 1
+            log.info(f"  CMG real {barra} ({start}→{end}): {len(registros)-antes} registros")
+        except Exception as e:
+            log.error(f"  Error CMG real {barra}: {e}")
+        time.sleep(1.5)
+    return registros
+
+
+def upsert_cmg_real(registros: list[dict]) -> tuple[int, int]:
+    if not registros:
+        return 0, 0
+    sql = """
+        INSERT INTO costo_marginal_real
+            (barra_transf, fecha_hora, cmg_usd_mwh, cmg_clp_kwh, version)
+        VALUES
+            (%(barra_transf)s, %(fecha_hora)s, %(cmg_usd_mwh)s, %(cmg_clp_kwh)s, %(version)s)
+        ON CONFLICT (barra_transf, fecha_hora) DO UPDATE
+            SET cmg_usd_mwh = EXCLUDED.cmg_usd_mwh,
+                cmg_clp_kwh = EXCLUDED.cmg_clp_kwh,
+                version     = EXCLUDED.version
+    """
+    nuevos = actualizados = 0
+    try:
+        with get_conn() as conn:
+            with conn.cursor() as cur:
+                for rec in registros:
+                    cur.execute(sql, rec)
+                    if cur.rowcount == 1: nuevos      += 1
+                    else:                actualizados += 1
+            conn.commit()
+    except Exception as e:
+        log.error(f"  Error upsert CMG real: {e}")
+    return nuevos, actualizados
+
+
 def fetch_sscc(fecha: str) -> list[dict]:
     """
     Trae instrucciones SSCC de ANG1/2 CCR1/2 desde la API CEN Operaciones.
@@ -627,6 +716,107 @@ def upsert_sscc(registros: list[dict]) -> tuple[int, int]:
             conn.commit()
     except Exception as e:
         log.error(f"  Error upsert SSCC: {e}")
+    return nuevos, actualizados
+
+
+def fetch_instrucciones_cmg(fecha: str) -> list[dict]:
+    """
+    Trae instrucciones operacionales de despacho por CMG de ANG1/2 CCR1/2.
+    Endpoint: /instrucciones-operacionales-cmg/v4/findByDate (plan SIP, 1-indexado).
+    No filtra por central en el servidor → se pagina todo (~25 págs/día) y se
+    filtra localmente por el campo `central` ∈ LLAVES_INSTR_CMG. id_central e
+    id_unidad_generadora vienen vacíos en la respuesta, por eso se usa `central`.
+    """
+    if not CEN_USER_KEY:
+        log.warning("  CEN_USER_KEY no configurada — saltando instrucciones CMG")
+        return []
+
+    registros = []
+    page  = 1   # 1-indexado
+    limit = 100
+    try:
+        while True:
+            r = _get_with_retry(
+                f"{API_BASE_SIP}/instrucciones-operacionales-cmg/v4/findByDate",
+                params={"user_key": CEN_USER_KEY, "startDate": fecha,
+                        "endDate": fecha, "page": page, "limit": limit},
+            )
+            body = r.json()
+            data = body.get("data", [])
+            if not data:
+                break
+
+            for rec in data:
+                central = (rec.get("central") or "").upper()
+                unidad  = LLAVES_INSTR_CMG.get(central)
+                if unidad is None:
+                    continue
+                fch = (rec.get("fecha") or "")[:10]
+                hra = rec.get("hora") or ""
+                fecha_hora = f"{fch} {hra}".strip()
+                registros.append({
+                    "id_instruccion":   rec.get("id_instruccion"),
+                    "unidad":           unidad,
+                    "central":          rec.get("central"),
+                    "fecha_hora":       fecha_hora,
+                    "fecha":            fch,
+                    "hora":             hra,
+                    "configuracion":    rec.get("configuracion"),
+                    "despacho":         rec.get("despacho"),
+                    "estado":           rec.get("estado"),
+                    "estado_operativo": rec.get("estado_operativo"),
+                    "consigna":         rec.get("consigna"),
+                    "instruccion_cmg":  rec.get("instruccion_cmg"),
+                    "motivo":           rec.get("motivo"),
+                    "zona_desaclope":   rec.get("zona_desaclope"),
+                    "control_tension":  rec.get("control_tension"),
+                })
+
+            total_pages = body.get("totalPages")
+            if total_pages is None or page >= int(total_pages):
+                break
+            page += 1
+
+        log.info(f"  Instrucciones CMG ({fecha}): {len(registros)} registros ANG/CCR")
+    except Exception as e:
+        log.error(f"  Error instrucciones CMG: {e}")
+    return registros
+
+
+def upsert_instrucciones_cmg(registros: list[dict]) -> tuple[int, int]:
+    if not registros:
+        return 0, 0
+    sql = """
+        INSERT INTO instrucciones_cmg
+            (id_instruccion, unidad, central, fecha_hora, fecha, hora, configuracion,
+             despacho, estado, estado_operativo, consigna, instruccion_cmg, motivo,
+             zona_desaclope, control_tension)
+        VALUES
+            (%(id_instruccion)s, %(unidad)s, %(central)s, %(fecha_hora)s, %(fecha)s,
+             %(hora)s, %(configuracion)s, %(despacho)s, %(estado)s, %(estado_operativo)s,
+             %(consigna)s, %(instruccion_cmg)s, %(motivo)s, %(zona_desaclope)s,
+             %(control_tension)s)
+        ON CONFLICT (id_instruccion, unidad) DO UPDATE SET
+            despacho         = EXCLUDED.despacho,
+            estado           = EXCLUDED.estado,
+            estado_operativo = EXCLUDED.estado_operativo,
+            consigna         = EXCLUDED.consigna,
+            instruccion_cmg  = EXCLUDED.instruccion_cmg,
+            motivo           = EXCLUDED.motivo,
+            zona_desaclope   = EXCLUDED.zona_desaclope,
+            control_tension  = EXCLUDED.control_tension
+    """
+    nuevos = actualizados = 0
+    try:
+        with get_conn() as conn:
+            with conn.cursor() as cur:
+                for rec in registros:
+                    cur.execute(sql, rec)
+                    if cur.rowcount == 1: nuevos      += 1
+                    else:                actualizados += 1
+            conn.commit()
+    except Exception as e:
+        log.error(f"  Error upsert instrucciones CMG: {e}")
     return nuevos, actualizados
 
 
@@ -945,6 +1135,22 @@ def run():
     log_adquisicion("cmg_programado_pid", cmgp_end, nuevos, actualizados,
                     int((time.time() - t0) * 1000), err_str)
 
+    # ── CMG real oficial liquidado (Crucero/Tarapacá) ─────────
+    # Se liquida con rezago ~10 días → ventana de 16 a 5 días atrás.
+    cmgr_start = (hoy - timedelta(days=16)).strftime("%Y-%m-%d")
+    cmgr_end   = (hoy - timedelta(days=5)).strftime("%Y-%m-%d")
+    log.info(f"\n  ── CMG real {cmgr_start} → {cmgr_end}")
+    t0 = time.time()
+    err_str = None
+    try:
+        regs_cmgr            = fetch_cmg_real(cmgr_start, cmgr_end)
+        nuevos, actualizados = upsert_cmg_real(regs_cmgr)
+        log.info(f"  ✅ CMG real: {nuevos} nuevos, {actualizados} actualizados")
+    except Exception as e:
+        err_str = str(e); log.error(f"  ❌ CMG real: {e}"); nuevos = actualizados = 0
+    log_adquisicion("cmg_real", cmgr_end, nuevos, actualizados,
+                    int((time.time() - t0) * 1000), err_str)
+
     # ── SSCC instrucciones (ventana de días) ──────────────────
     for fecha in fechas:
         log.info(f"\n  ── SSCC instrucciones {fecha}")
@@ -957,6 +1163,20 @@ def run():
         except Exception as e:
             err_str = str(e); log.error(f"  ❌ SSCC: {e}"); nuevos = actualizados = 0
         log_adquisicion("sscc_instrucciones", fecha, nuevos, actualizados,
+                        int((time.time() - t0) * 1000), err_str)
+
+    # ── Instrucciones operacionales CMG (despacho por unidad) ────
+    for fecha in fechas:
+        log.info(f"\n  ── Instrucciones CMG {fecha}")
+        t0 = time.time()
+        err_str = None
+        try:
+            regs_icmg            = fetch_instrucciones_cmg(fecha)
+            nuevos, actualizados = upsert_instrucciones_cmg(regs_icmg)
+            log.info(f"  ✅ Instrucciones CMG: {nuevos} nuevos, {actualizados} actualizados")
+        except Exception as e:
+            err_str = str(e); log.error(f"  ❌ Instrucciones CMG: {e}"); nuevos = actualizados = 0
+        log_adquisicion("instrucciones_cmg", fecha, nuevos, actualizados,
                         int((time.time() - t0) * 1000), err_str)
 
     # ── Limitaciones transmisión ANG/CCR (ventana amplia) ────────

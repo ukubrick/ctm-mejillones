@@ -40,9 +40,11 @@ components/
   sidebar.py            # render_sidebar() → dict de filtros; estado de fuentes; export PDF/PPT
   kpis.py               # render_kpis(df_r) — tarjetas por unidad
   gen_unidad.py         # render_gen_unidad — selector por botones (primary/secondary) + gráfico real/prog/CMG
-  costo.py              # render_costo — análisis CMG×generación (tabs Gráficos / Estadísticas)
+  costo.py              # render_costo — análisis CMG×generación (overlay CMG real oficial; tabs Gráficos / Estadísticas)
+  novedades.py          # render_novedades(s,e) — panel estado actual por unidad (despacho/SSCC/limitación) bajo la serie CMG en Resumen
   limitaciones.py       # render_limitaciones(s,e)
   sscc.py               # render_sscc(s,e)
+  despacho_cmg.py       # render_despacho_cmg(s,e) — instrucciones de despacho por CMG (despacho MW, consigna, motivo)
   solicitudes.py        # render_solicitudes(s,e)
   manual.py             # render_programada_manual / render_real_manual (CRUD)
   datos.py              # render_datos_horarios / render_bitacora
@@ -50,9 +52,15 @@ pages/ml_analysis.py    # página ML (usa config.get_css() y constantes de confi
 ```
 
 **Navegación de vista única** (categoría → vista) en `app.py`: `Operación`
-(Resumen, Análisis de Costo), `Restricciones` (Limitaciones, SSCC, Solicitudes),
-`Gestión de Datos` (Ingreso Manual, Datos & Bitácora). Solo se renderiza la vista
-activa → evita el bug de Plotly width=0 dentro de `st.tabs` y despeja la UI.
+(Resumen, Análisis de Costo), `Restricciones` (Limitaciones, SSCC, Despacho CMG,
+Solicitudes), `Gestión de Datos` (Ingreso Manual, Datos & Bitácora). Solo se
+renderiza la vista activa → evita el bug de Plotly width=0 dentro de `st.tabs` y
+despeja la UI.
+
+**Popover de navegación — no usar `st.rerun()` dentro (2026-06-23):** los botones de
+vista dentro del `st.popover` solo hacen `st.session_state["vista"]=v` SIN `st.rerun()`.
+El click del botón ya dispara el rerun natural que cierra el popover; un `st.rerun()`
+explícito interrumpe ese cierre y deja el menú fijo abierto sobre el contenido.
 
 **Fix sidebar (de raíz):** el CSS ya **NO** fuerza `transform:none`/`width` ni
 oculta `stSidebarCollapseButton`/`stExpandSidebarButton`/`stToolbar`. Solo se
@@ -117,6 +125,27 @@ con gradiente azul cuando está abierto (`aria-expanded="true"`):
 Ventajas: se ve como app de escritorio, ocupa todo el ancho, y al renderizar **solo
 la vista activa** evita el bug de Plotly width=0 dentro de `st.tabs`.
 
+## Nuevos endpoints y vistas (2026-06-23)
+
+Tras explorar los 4 planes de la API CEN (ver sección de exploración más arriba) se
+integraron 2 endpoints nuevos y se añadió un panel de estado:
+
+- **Vista "Despacho CMG"** (`components/despacho_cmg.py`, categoría Restricciones):
+  instrucciones operacionales de despacho por unidad (despacho MW, consigna, instrucción
+  CMG, motivo). Fuente `/instrucciones-operacionales-cmg/v4` → tabla `instrucciones_cmg`.
+  Primera fila con efecto palpitante (`.sscc-latest`).
+- **CMG real oficial** en Análisis de Costo: overlay "CMG real oficial" (3 series:
+  online · programado · real oficial) + KPI "Desvío online vs real oficial". Fuente
+  `/costo-marginal-real/v4` → tabla `costo_marginal_real`. ⚠️ usar `limit=50` (ver tabla).
+- **Panel "Novedades por unidad"** (`components/novedades.py`): bajo la serie de CMG en
+  Resumen, muestra de un vistazo el estado actual de cada unidad — última consigna de
+  despacho, última instrucción SSCC y limitación activa. Referencia operativa rápida.
+- **Loaders REST nuevos** en `utils/data.py`: `load_instrucciones_cmg`, `load_cmg_real`
+  (ambos silenciosos si la tabla no existe).
+- **Migraciones** (correr una vez con DB accesible o backfill REST): `migracion_instrucciones_cmg.py`,
+  `migracion_cmg_real.py`. El backfill de CMG real puede hacerse por REST (puerto 443) si
+  la red bloquea psycopg2.
+
 ## Mejoras de rediseño y valor (2026-06-22)
 
 - **Navegación tipo menú de escritorio:** `app.py` usa `st.popover` por categoría (a todo el ancho) que se despliega hacia abajo.
@@ -168,6 +197,37 @@ va por 443. `Adquisicion.py` sigue en psycopg2 (corre en GitHub Actions, sin res
   a nivel de propietario, contable y con muchos `None` recientes. Poco accionable. → descartado.
 - `backfill_programada.py` — script de recuperación manual de gen. programada (uso: `python3 backfill_programada.py YYYY-MM-DD YYYY-MM-DD`)
 
+### Exploración de los 4 planes de la API CEN (2026-06-23)
+
+Se consolidaron las 4 specs OpenAPI en `resumen_consolidado_4_planes_coordinador.md`
+(437 endpoints: SIP 95, OPERACIONES 44, PLANIFICACION 295 catálogos, MERCADOS 3 POST).
+Se probaron en vivo los candidatos de mayor valor para CTM. Resultado:
+
+**✅ Confirmados integrables (vía `CEN_USER_KEY`, plan SIP):**
+- **`/instrucciones-operacionales-cmg/v4/findByDate`** — **INTEGRADO**. Despacho por
+  unidad (MW) + consigna + instrucción CMG + motivo (texto libre). 1-indexado, NO filtra
+  por central → paginar (~25 págs/día) y filtrar local por campo `central` ∈
+  `LLAVES_INSTR_CMG` (`ANGAMOS-ANG1/ANG2`, `COCHRANE-CCH1/CCH2`, convención CCH como SSCC).
+  `id_central`/`id_unidad_generadora` vienen vacíos. ~19 registros ANG/CCR por día.
+  Tabla `instrucciones_cmg` + `migracion_instrucciones_cmg.py` (correr con DB accesible).
+- **`/costo-marginal-real/v4/findByDate`** — **INTEGRADO**. CMG **real oficial** liquidado.
+  Filtro servidor `bar_transf=CRUCERO_______220` (5 págs vs 7810). Tabla `costo_marginal_real`,
+  `migracion_cmg_real.py`. Overlay "CMG real oficial" en Análisis de Costo (`components/costo.py`).
+  **Rezago de liquidación ~10 días** (ayer/hoy devuelven 0 registros).
+- **`/pronosticos-demanda-corto-plazo/v4/findByDate`** — pronóstico demanda con barra
+  `Angamos220` (`energia_mwh` horaria). Insumo para el modelo XGBoost de la página ML.
+  ~67 págs/día, filtrar local por barra. Pendiente integrar.
+
+**❌ Intermitencia CEN el 2026-06-23 (reintentar otro día, NO es error de parámetros):**
+- `/cmg-programado-pcp/v4` — 504 timeout persistente (endpoint pesado).
+- `/potencia-activa-reactiva-unidad/v4` — 504 timeout incluso con `idCentral=377`.
+- `/costo-combustible/v3/findAll` — 502 persistente.
+- `/demanda-real-estimada/v4` — 404 consistente (ruta no desplegada bajo v4, descartar).
+
+PLANIFICACION (295 endpoints) son catálogos estáticos de activos (líneas, barras,
+interruptores, centrales) → solo consulta puntual de referencia, no series temporales.
+MERCADOS son 3 POST de **envío** de pronósticos → no sirven para adquisición.
+
 ---
 
 ## Variables de entorno / Secrets
@@ -209,6 +269,17 @@ va por 443. `Adquisicion.py` sigue en psycopg2 (corre en GitHub Actions, sin res
 - Ventana adquisición: 30 días hacia atrás (`DIAS_VENTANA_LIM=30`) para capturar limitaciones de larga duración
 - Endpoint: `https://sipub.api.coordinador.cl/limitaciones-transmision/v4/findByDate` (SIN prefijo `/sipub/api/rest/v4/`)
 - Filtro: id_central ∈ {377,379} OR empresa_nombre/instalacion_nombre contiene ANGAMOS o COCHRANE
+
+**instrucciones_cmg** (despacho operacional por unidad — 2026-06-23)
+- PK conflict: `(id_instruccion, unidad)` → DO UPDATE despacho, estado, estado_operativo, consigna, instruccion_cmg, motivo, zona_desaclope, control_tension
+- Campos: id, id_instruccion, unidad, central, fecha_hora, fecha, hora, configuracion, despacho (MW), estado, estado_operativo, consigna, instruccion_cmg, motivo, zona_desaclope, control_tension
+- Fuente: `/instrucciones-operacionales-cmg/v4/findByDate` (SIP). Mapeo `central`→unidad en `LLAVES_INSTR_CMG`. Adquisición: `fetch_instrucciones_cmg`/`upsert_instrucciones_cmg`, ventana `DIAS_VENTANA` (7 días) en `main()`. Migración: `python migracion_instrucciones_cmg.py [DIAS]`.
+
+**costo_marginal_real** (CMG real oficial liquidado — 2026-06-23)
+- PK conflict: `(barra_transf, fecha_hora)` → DO UPDATE cmg_usd_mwh, cmg_clp_kwh, version
+- Campos: id, barra_transf, fecha_hora, cmg_usd_mwh, cmg_clp_kwh, version
+- Fuente: `/costo-marginal-real/v4/findByDate` (SIP). Filtro servidor `bar_transf`. Solo hora en punto (min==0). Rezago liquidación ~10 días → adquisición con ventana 16→5 días atrás. `fetch_cmg_real`/`upsert_cmg_real`. Migración: `python migracion_cmg_real.py [DIAS]`. Overlay "CMG real oficial" en Análisis de Costo.
+- **⚠️ Quirk de `limit`:** este endpoint devuelve **VACÍO** si `limit` supera los registros de la página (~96/día a resolución 15-min). `limit≥100` → 0 registros. Usar **`limit=50`** y paginar (al revés del PCP/PID que usan `limit=2000`). Confirmado 2026-06-23.
 
 **bitacora**
 - Campos: id, unidad, autor, comentario, fecha, hora
@@ -362,6 +433,13 @@ Todo implementado y funcionando en producción:
 ---
 
 ## Pendiente / Por explorar
+
+- **[INTERÉS DEL USUARIO] Generación programada PID** (`/generacion-programada-pid/v4/findByDate`, SIP)
+  — la otra programación de generación además del PCP. El **PID (Programa Intra-Día)** ajusta
+  el PCP (Programa de Corto Plazo / día-ante) durante el día con información más fresca. Integrar
+  como segunda fuente de gen. programada para comparar PCP vs PID vs real por unidad (el dashboard
+  ya distingue `fuente` en `generacion_programada`). Mismo patrón que el PCP: paginar y filtrar
+  local por `id_central ∈ {377,379}`. Pendiente de explorar formato/llaves. Pedido por el usuario 2026-06-23.
 
 - **[PRIORIDAD 1] Solicitudes de trabajo — integrar al dashboard** (`/solicitudes-trabajo/v4/findByDate`, SIP) — endpoint confirmado funcional el 2026-06-17 (ventana ≤7 días). El servidor CEN es intermitente, reintentar con `python probe_solicitudes.py` hasta obtener respuesta estable. Parámetros confirmados: `startDate`, `endDate` (YYYY-MM-DD), `page` (base 1), `limit=100`. Respuesta: `{"data":[...], "totalPages":N, "page":N, "limit":N}`. Con 7 días devuelve ~267 páginas (~26.700 registros del sistema). Campos conocidos: `id`, `correlativo` (JOIN con `limitaciones_transmision`), `empresa_nombre`, `grupo_nombre`, `centro_control` (campo extra no documentado), `status`, `tipo_solicitud`, `type`, `origen`, `tipo_programacion`, `consumo`, `perdida_registro_energia`, `descripcion_nivel_riesgo`, `fecha_inicio`, `fecha_fin`, `created`, `modified`, `partition_date`. Filtro local por `empresa_nombre` + `grupo_nombre` + `centro_control` buscando ANGAMOS/COCHRANE/AES. **Próximo paso:** cuando el servidor responda estable, correr probe para ver empresas únicas y confirmar cómo aparece AES Andes en los datos, luego integrar sección en dashboard igual que limitaciones.
 

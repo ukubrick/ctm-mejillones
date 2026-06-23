@@ -16,6 +16,8 @@ from components.gen_unidad import render_gen_unidad
 from components.costo import render_costo
 from components.limitaciones import render_limitaciones
 from components.sscc import render_sscc
+from components.despacho_cmg import render_despacho_cmg
+from components.novedades import render_novedades
 from components.solicitudes import render_solicitudes
 from components.manual import render_programada_manual, render_real_manual
 from components.datos import render_datos_horarios, render_bitacora
@@ -35,7 +37,7 @@ st.markdown(get_css(), unsafe_allow_html=True)
 # ── Navegación de 2 niveles (categoría → vista) ───────────────────────────────
 CATEGORIAS = {
     "Operación":   ["Resumen", "Análisis de Costo"],
-    "Restricciones": ["Limitaciones", "SSCC", "Solicitudes"],
+    "Restricciones": ["Limitaciones", "SSCC", "Despacho CMG", "Solicitudes"],
     "Gestión de Datos": ["Ingreso Manual", "Datos & Bitácora"],
 }
 VISTAS = [v for grupo in CATEGORIAS.values() for v in grupo]
@@ -58,8 +60,10 @@ def _navegacion():
                 for v in vistas_cat:
                     if st.button(v, key=f"nav_{v}", use_container_width=True,
                                  type="primary" if v == vista else "secondary"):
+                        # No usar st.rerun() aquí: el click del botón ya dispara el
+                        # rerun natural que cierra el popover. Un st.rerun() explícito
+                        # interrumpe ese cierre y deja el menú fijo abierto.
                         st.session_state["vista"] = v
-                        st.rerun()
     st.markdown("</div><div style='height:10px'></div>", unsafe_allow_html=True)
     return vista
 
@@ -96,12 +100,15 @@ def main():
 
     if vista == "Resumen":
         render_gen_unidad(df_r, df_p, df_c, f["mostrar_prog"], f["mostrar_cmg"], f["nodo_cmg"], s, e)
+        render_novedades(s, e)
     elif vista == "Análisis de Costo":
         render_costo(df_r, df_c, s, e, f["nodo_cmg"], df_p)
     elif vista == "Limitaciones":
         render_limitaciones(s, e)
     elif vista == "SSCC":
         render_sscc(s, e)
+    elif vista == "Despacho CMG":
+        render_despacho_cmg(s, e)
     elif vista == "Solicitudes":
         render_solicitudes(s, e)
     elif vista == "Ingreso Manual":

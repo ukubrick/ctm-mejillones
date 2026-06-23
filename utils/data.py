@@ -162,6 +162,47 @@ def load_solicitudes(s, e):
     return df
 
 
+@st.cache_data(ttl=300)
+def load_instrucciones_cmg(s, e):
+    """Instrucciones operacionales de despacho por CMG (ANG/CCR). Silencioso si la tabla no existe."""
+    cols = ("unidad,central,fecha_hora,fecha,hora,despacho,estado,estado_operativo,"
+            "consigna,instruccion_cmg,motivo")
+    try:
+        df = fetch(
+            "instrucciones_cmg", cols,
+            gte={"fecha": s}, lte={"fecha": e},
+            sql="SELECT " + cols.replace(",", ", ") + " FROM instrucciones_cmg "
+                "WHERE fecha BETWEEN %s AND %s ORDER BY fecha_hora DESC, unidad",
+            params=(s, e),
+        )
+    except Exception:
+        return pd.DataFrame()
+    if not df.empty:
+        df["fecha_hora_dt"] = pd.to_datetime(df["fecha_hora"], errors="coerce")
+        df = df.sort_values("fecha_hora_dt", ascending=False)
+    return df
+
+
+@st.cache_data(ttl=300)
+def load_cmg_real(s, e, nodo="CRUCERO_______220"):
+    """CMG real oficial liquidado por barra. Rezago ~10 días. Silencioso si la tabla no existe."""
+    try:
+        df = fetch(
+            "costo_marginal_real", "fecha_hora,cmg_usd_mwh",
+            eq={"barra_transf": nodo}, gte={"fecha_hora": _ini(s)}, lte={"fecha_hora": _fin(e)},
+            order="fecha_hora",
+            sql="SELECT fecha_hora, cmg_usd_mwh FROM costo_marginal_real "
+                "WHERE barra_transf=%s AND fecha_hora::date BETWEEN %s AND %s ORDER BY fecha_hora",
+            params=(nodo, s, e),
+        )
+    except Exception:
+        return pd.DataFrame()
+    if not df.empty:
+        df["fecha_hora"] = pd.to_datetime(df["fecha_hora"])
+        df = df.sort_values("fecha_hora")
+    return df
+
+
 @st.cache_data(ttl=60)
 def load_bit(s, e, u=None):
     eq = {"unidad": u} if (u and u != "Todas") else None
