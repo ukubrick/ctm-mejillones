@@ -3,14 +3,13 @@
 Muestra, debajo de la serie de CMG en la vista Resumen, las últimas novedades
 de cada unidad como referencia operativa de un vistazo:
   · última consigna de despacho (instrucciones CMG)
-  · última instrucción SSCC
-  · limitación de transmisión activa (si la hay)
+  · última instrucción SSCC (la misma que palpita como primera fila en SSCC)
 """
 import pandas as pd
 import streamlit as st
 
-from config import LABELS, UNIDADES, COLORES, ID_UNIDAD_LABEL
-from utils.data import load_instrucciones_cmg, load_sscc, load_limitaciones
+from config import LABELS, UNIDADES, COLORES
+from utils.data import load_instrucciones_cmg, load_sscc
 
 
 def _fila(icono_color, etiqueta, valor, detalle=""):
@@ -30,17 +29,6 @@ def _fila(icono_color, etiqueta, valor, detalle=""):
 def render_novedades(s, e):
     df_d = load_instrucciones_cmg(s, e)
     df_s = load_sscc(s, e)
-    df_l = load_limitaciones(s, e)
-
-    # limitaciones activas por unidad (status pendiente)
-    lim_por_unidad = {}
-    if not df_l.empty:
-        dl = df_l.copy()
-        dl["_unidad"] = dl["id_unidad"].apply(
-            lambda x: ID_UNIDAD_LABEL.get(int(float(x)), "") if pd.notna(x) else "")
-        dl = dl[(dl["status"].astype(str).str.lower() == "pendiente") & (dl["_unidad"] != "")]
-        for _, r in dl.iterrows():
-            lim_por_unidad.setdefault(r["_unidad"], r)
 
     st.markdown('<div class="sec">NOVEDADES POR UNIDAD · ESTADO ACTUAL</div>', unsafe_allow_html=True)
     cols = st.columns(4)
@@ -61,9 +49,11 @@ def render_novedades(s, e):
         else:
             filas.append(_fila("#CBD5E1", "Despacho", "Sin datos"))
 
-        # última instrucción SSCC
+        # última instrucción SSCC — mismo orden que la primera fila (palpitante)
+        # de la sección SSCC: fecha desc, inicio_periodo desc.
         su = df_s[df_s["unidad"] == u] if not df_s.empty else pd.DataFrame()
         if not su.empty:
+            su = su.sort_values(["fecha", "inicio_periodo"], ascending=[False, False])
             row = su.iloc[0]
             tipo = str(row["instruccion_sscc"])
             ini = str(row["inicio_periodo"])[:5] if row.get("inicio_periodo") else "—"
@@ -71,16 +61,6 @@ def render_novedades(s, e):
             filas.append(_fila("#0EA5E9", "SSCC", tipo, f"{row['fecha']} · {ini}→{fin}"))
         else:
             filas.append(_fila("#CBD5E1", "SSCC", "Sin instrucciones"))
-
-        # limitación activa
-        if u in lim_por_unidad:
-            row = lim_por_unidad[u]
-            pot = f"{float(row['potencia']):.0f} MW" if pd.notna(row.get("potencia")) else ""
-            inst = str(row.get("instalacion_nombre") or "")[:40]
-            filas.append(_fila("#D97706", "Limitación activa", f"{inst} {pot}".strip(),
-                               str(row.get("fecha_perturbacion") or "")[:16]))
-        else:
-            filas.append(_fila("#10B981", "Limitación", "Sin limitaciones activas"))
 
         with col:
             st.markdown(

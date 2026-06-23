@@ -6,6 +6,7 @@ Navegación de vista única (categoría → vista) para evitar el bug de Plotly
 dentro de st.tabs y mantener la interfaz despejada.
 """
 import streamlit as st
+import streamlit.components.v1 as components
 from streamlit_autorefresh import st_autorefresh
 
 from config import get_css, NOMBRES_NODO
@@ -60,11 +61,21 @@ def _navegacion():
                 for v in vistas_cat:
                     if st.button(v, key=f"nav_{v}", use_container_width=True,
                                  type="primary" if v == vista else "secondary"):
-                        # No usar st.rerun() aquí: el click del botón ya dispara el
-                        # rerun natural que cierra el popover. Un st.rerun() explícito
-                        # interrumpe ese cierre y deja el menú fijo abierto.
                         st.session_state["vista"] = v
+                        st.session_state["_cerrar_popover"] = True
     st.markdown("</div><div style='height:10px'></div>", unsafe_allow_html=True)
+
+    # st.popover (Streamlit 1.58) no se cierra al hacer click en un botón interno.
+    # Tras elegir una vista, inyectamos JS que re-clickea el trigger abierto
+    # (aria-expanded="true") para cerrarlo — toggle puramente client-side.
+    if st.session_state.pop("_cerrar_popover", False):
+        components.html(
+            "<script>"
+            "const d=window.parent.document;"
+            "setTimeout(()=>{d.querySelectorAll("
+            "'[data-testid=\\'stPopover\\'] button[aria-expanded=\\'true\\']'"
+            ").forEach(b=>b.click());},60);"
+            "</script>", height=0, width=0)
     return vista
 
 
