@@ -295,6 +295,97 @@ def fetch_generacion_programada(start: str, end: str) -> list[dict]:
     return registros
 
 
+def fetch_generacion_programada_pid(start: str, end: str) -> list[dict]:
+    """
+    Trae generación programada PID (Programa Intra-Día) de ANG1/2 CCR1/2.
+
+    Endpoint: /generacion-programada-pid/v4/findByDate (SIP).
+    El PID reajusta el PCP durante el día con información más fresca, por lo que
+    para un mismo (unidad, fecha_hora) puede haber varios programas emitidos a
+    distintas horas; se conserva el MÁS RECIENTE según (fecha_programa, hora_programa).
+
+    ⚠️ A diferencia del PCP (0-indexado), el PID es **1-indexado**: page=0 → 502.
+    No filtra por central en el servidor → paginar todo (limit=5000) y filtrar
+    localmente por id_central. Usa las mismas llaves que el PCP (LLAVES_GEN_PROG).
+    """
+    ids_objetivo = {ID_ANGAMOS, ID_COCHRANE, str(ID_ANGAMOS), str(ID_COCHRANE)}
+    page         = 1
+    limit        = 5000
+    # mejor programa por (unidad, fecha_hora) → (clave_recencia, registro)
+    mejores: dict[tuple[str, str], tuple[tuple, dict]] = {}
+    llaves_no_mapeadas: set[str] = set()
+
+    try:
+        while True:
+            r    = _get_with_retry(
+                f"{API_BASE_SIP}/generacion-programada-pid/v4/findByDate",
+                params={"user_key": CEN_USER_KEY, "startDate": start,
+                        "endDate": end, "page": page, "limit": limit},
+            )
+            body = r.json()
+            data = body.get("data", [])
+            if not data:
+                break
+
+            for rec in data:
+                if rec.get("id_central") not in ids_objetivo:
+                    continue
+
+                llave_gen = rec.get("llave_gen", "")
+                config    = rec.get("configuracion", "")
+                unidad    = _map_llave_gen_prog(llave_gen) or _map_llave_gen_prog(config)
+                if unidad is None:
+                    clave_log = f"{llave_gen}|{config}"
+                    if clave_log not in llaves_no_mapeadas:
+                        log.warning(
+                            f"  PID: sin mapeo para llave_gen='{llave_gen}' "
+                            f"config='{config}' central='{rec.get('central')}'"
+                        )
+                        llaves_no_mapeadas.add(clave_log)
+                    continue
+
+                fecha_hora_str = rec.get("fecha_hora", "")
+                if not fecha_hora_str:
+                    continue
+                fecha_hora_norm = fecha_hora_str.replace("T", " ")[:19]
+
+                hora_raw = rec.get("hora")
+                if hora_raw is not None:
+                    hora = int(hora_raw)
+                else:
+                    try:
+                        hora = datetime.strptime(fecha_hora_norm, "%Y-%m-%d %H:%M:%S").hour + 1
+                    except Exception:
+                        hora = 0
+
+                # Recencia del programa: fecha_programa + hora_programa (mayor = más nuevo)
+                recencia = (str(rec.get("fecha_programa") or ""),
+                            int(rec.get("hora_programa") or 0))
+                clave = (unidad, fecha_hora_norm)
+                if clave in mejores and mejores[clave][0] >= recencia:
+                    continue
+                mejores[clave] = (recencia, {
+                    "unidad":            unidad,
+                    "gen_programada_mw": float(rec.get("gen_programada_mw") or 0.0),
+                    "fecha_hora":        fecha_hora_norm,
+                    "hora":              hora,
+                    "fuente":            "CEN_PID",
+                })
+
+            total_pages = body.get("totalPages")
+            if total_pages is None or page >= int(total_pages):
+                break
+            page += 1
+            time.sleep(0.3)
+
+    except Exception as e:
+        log.error(f"  Error gen. programada PID: {e}")
+
+    registros = [v[1] for v in mejores.values()]
+    log.info(f"  Gen. programada PID ({start}→{end}): {len(registros)} registros ANG/CCR")
+    return registros
+
+
 def fetch_cmg_nodos() -> list[dict]:
     """
     Obtiene el CMG de múltiples nodos (Crucero, Mejillones, Angamos, Cochrane)
@@ -1103,6 +1194,23 @@ def run():
     except Exception as e:
         err_str = str(e); log.error(f"  ❌ PCP: {e}"); nuevos = actualizados = 0
     log_adquisicion("generacion_programada_pcp", pcp_end, nuevos, actualizados,
+                    int((time.time() - t0) * 1000), err_str)
+
+    # ── Generación programada PID (Programa Intra-Día) ────────
+    # Segunda fuente de programación: el PID reajusta el PCP durante el día.
+    # Mismo rango que el PCP; 1-indexado y se conserva el programa más reciente.
+    pid_start = (hoy - timedelta(days=DIAS_VENTANA_PCP - 1)).strftime("%Y-%m-%d")
+    pid_end   = (hoy + timedelta(days=1)).strftime("%Y-%m-%d")
+    log.info(f"\n  ── Gen. programada PID {pid_start} → {pid_end}")
+    t0 = time.time()
+    err_str = None
+    try:
+        regs                 = fetch_generacion_programada_pid(pid_start, pid_end)
+        nuevos, actualizados = upsert_generacion_programada(regs)
+        log.info(f"  ✅ PID: {nuevos} nuevos, {actualizados} actualizados")
+    except Exception as e:
+        err_str = str(e); log.error(f"  ❌ PID: {e}"); nuevos = actualizados = 0
+    log_adquisicion("generacion_programada_pid", pid_end, nuevos, actualizados,
                     int((time.time() - t0) * 1000), err_str)
 
     # ── CMG múltiples nodos (S3) ──────────────────────────────

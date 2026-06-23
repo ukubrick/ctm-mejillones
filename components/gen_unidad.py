@@ -10,12 +10,14 @@ import plotly.graph_objects as go
 from plotly.subplots import make_subplots
 
 from config import LABELS, NOMBRES_NODO, UNIDADES, BG, GR, POT_MIN_TECNICA, SERIE
-from utils.data import load_cmg_prog
+from utils.data import load_cmg_prog, load_prog_pid
 
 
-def _chart_unidad(unidad, df_r, df_p, df_c, df_cp, mostrar_prog, mostrar_cmg, mostrar_desv, nodo_label):
-    df_u  = df_r[df_r["unidad"] == unidad].sort_values("fecha_hora")
-    df_up = df_p[df_p["unidad"] == unidad].sort_values("fecha_hora") if not df_p.empty else pd.DataFrame()
+def _chart_unidad(unidad, df_r, df_p, df_pid, df_c, df_cp, mostrar_prog, mostrar_cmg, mostrar_desv, nodo_label):
+    df_u   = df_r[df_r["unidad"] == unidad].sort_values("fecha_hora")
+    df_up  = df_p[df_p["unidad"] == unidad].sort_values("fecha_hora") if not df_p.empty else pd.DataFrame()
+    df_upid = (df_pid[df_pid["unidad"] == unidad].sort_values("fecha_hora")
+               if (df_pid is not None and not df_pid.empty) else pd.DataFrame())
 
     if df_u.empty:
         st.info(f"Sin datos para {LABELS[unidad]} en el período.")
@@ -45,9 +47,9 @@ def _chart_unidad(unidad, df_r, df_p, df_c, df_cp, mostrar_prog, mostrar_cmg, mo
 
     if tiene_prog:
         fig.add_trace(go.Scatter(
-            x=df_up["fecha_hora"], y=df_up["gen_programada_mw"], name="Programada", mode="lines",
+            x=df_up["fecha_hora"], y=df_up["gen_programada_mw"], name="Programada PCP", mode="lines",
             line=dict(color=SERIE["prog"], width=1.4, dash="dash"),
-            hovertemplate="<b>Programada</b> %{x|%d/%m %H:%M}<br>%{y:.1f} MW<extra></extra>",
+            hovertemplate="<b>Programada PCP</b> %{x|%d/%m %H:%M}<br>%{y:.1f} MW<extra></extra>",
         ), row=1, col=1)
 
         if mostrar_desv:
@@ -73,6 +75,30 @@ def _chart_unidad(unidad, df_r, df_p, df_c, df_cp, mostrar_prog, mostrar_cmg, mo
                 fig.add_trace(go.Scatter(x=x, y=under, mode="lines", fill="tonexty",
                     fillcolor=SERIE["under"], line=dict(width=0),
                     name="Subgeneración", hoverinfo="skip"), row=1, col=1)
+
+    # Overlay programada PID (intra-día): reajuste del PCP durante el día
+    if mostrar_prog and not df_upid.empty:
+        fig.add_trace(go.Scatter(
+            x=df_upid["fecha_hora"], y=df_upid["gen_programada_mw"], name="Programada PID", mode="lines",
+            line=dict(color=SERIE["prog_pid"], width=1.4, dash="dot"),
+            hovertemplate="<b>Programada PID</b> %{x|%d/%m %H:%M}<br>%{y:.1f} MW<extra></extra>",
+        ), row=1, col=1)
+
+    # Marcar horas con programada bajo el mínimo técnico (rampas / pruebas especiales,
+    # operación sostenida bajo mínimo es excepcional). Se resalta para no confundirlo
+    # con operación normal.
+    if tiene_prog and pmin:
+        bajo = df_up[(df_up["gen_programada_mw"] > 0) & (df_up["gen_programada_mw"] < pmin)]
+        if not bajo.empty:
+            fig.add_trace(go.Scatter(
+                x=bajo["fecha_hora"], y=bajo["gen_programada_mw"], mode="markers",
+                name="Programada < mín técnico",
+                marker=dict(color="#F97316", size=9, symbol="diamond",
+                            line=dict(color="#FFFFFF", width=1.2)),
+                hovertemplate="<b>Bajo mín técnico</b> %{x|%d/%m %H:%M}<br>"
+                              "%{y:.1f} MW (mín " + f"{pmin:.0f}" + ")<br>"
+                              "<i>rampa o prueba especial</i><extra></extra>",
+            ), row=1, col=1)
 
     if tiene_cmg:
         fig.add_trace(go.Scatter(
@@ -156,10 +182,11 @@ def render_gen_unidad(df_r, df_p, df_c, mostrar_prog, mostrar_cmg, nodo_cmg, s=N
                 st.rerun()
 
     u_act = st.session_state["unidad_sel"]
-    df_cp = load_cmg_prog(s, e, nodo_cmg) if (mostrar_cmg and s and e) else None
+    df_cp  = load_cmg_prog(s, e, nodo_cmg) if (mostrar_cmg and s and e) else None
+    df_pid = load_prog_pid(s, e) if (mostrar_prog and s and e) else None
     st.markdown(
         f'<p style="color:#334155;font-weight:600;font-size:0.9rem;margin:0.4rem 0 0.3rem">'
         f'{LABELS[u_act]} · Real vs Programada (MW) + CMG {nl} (USD/MWh)</p>',
         unsafe_allow_html=True,
     )
-    _chart_unidad(u_act, df_r, df_p, df_c, df_cp, mostrar_prog, mostrar_cmg, mostrar_desv, nl)
+    _chart_unidad(u_act, df_r, df_p, df_pid, df_c, df_cp, mostrar_prog, mostrar_cmg, mostrar_desv, nl)

@@ -37,7 +37,8 @@ LABELS = {"ANG1": "Angamos U1", "ANG2": "Angamos U2", "CCR1": "Cochrane U1", "CC
 # Evita el choque visual con las áreas verde/roja de desviación.
 SERIE = {
     "real":     "#1E293B",            # gris azulado oscuro (generación real)
-    "prog":     "#475569",            # gris pizarra oscuro, punteado (programada)
+    "prog":     "#475569",            # gris pizarra oscuro, punteado (programada PCP)
+    "prog_pid": "#0EA5E9",            # cyan, punteado (programada PID intra-día)
     "cmg":      "#7C3AED",            # violeta (CMG real)
     "cmg_fill": "rgba(124,58,237,0.10)",
     "cmg_prog": "#F59E0B",            # ámbar, punteado (CMG programado)

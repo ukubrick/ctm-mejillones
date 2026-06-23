@@ -36,6 +36,8 @@ def load_real(s, e):
 
 @st.cache_data(ttl=300)
 def load_prog(s, e):
+    """Programada 'oficial' por unidad/hora: PCP > MANUAL. Excluye el PID
+    (intra-día), que se consulta aparte con load_prog_pid para comparar."""
     df = fetch(
         "generacion_programada", "unidad,gen_programada_mw,fecha_hora,hora,fuente",
         gte={"fecha_hora": _ini(s)}, lte={"fecha_hora": _fin(e)},
@@ -44,20 +46,48 @@ def load_prog(s, e):
             unidad, gen_programada_mw, fecha_hora, hora, fuente
         FROM generacion_programada
         WHERE fecha_hora::date BETWEEN %s AND %s
+          AND fuente <> 'CEN_PID'
         ORDER BY unidad, fecha_hora, CASE fuente WHEN 'CEN_PCP' THEN 0 ELSE 1 END
         """,
         params=(s, e),
     )
     if df.empty:
         return df
-    # En la vía REST hay que deduplicar priorizando CEN_PCP (lo que el SQL hacía con DISTINCT ON).
+    # En la vía REST hay que filtrar el PID y deduplicar priorizando CEN_PCP
+    # (lo que el SQL hace con WHERE + DISTINCT ON).
     if rest_enabled():
+        df = df[df["fuente"] != "CEN_PID"]
+        if df.empty:
+            return df
         df["_pri"] = (df["fuente"] != "CEN_PCP").astype(int)
         df = (df.sort_values(["unidad", "fecha_hora", "_pri"])
                 .drop_duplicates(["unidad", "fecha_hora"], keep="first")
                 .drop(columns="_pri"))
     df["fecha_hora"] = pd.to_datetime(df["fecha_hora"])
     return df
+
+
+@st.cache_data(ttl=300)
+def load_prog_pid(s, e):
+    """Generación programada PID (Programa Intra-Día) por unidad/hora.
+    Segunda fuente de programación: reajusta el PCP durante el día. Silencioso
+    si aún no hay registros PID en la tabla."""
+    df = fetch(
+        "generacion_programada", "unidad,gen_programada_mw,fecha_hora,hora,fuente",
+        eq={"fuente": "CEN_PID"},
+        gte={"fecha_hora": _ini(s)}, lte={"fecha_hora": _fin(e)}, order="fecha_hora",
+        sql="""
+        SELECT unidad, gen_programada_mw, fecha_hora, hora, fuente
+        FROM generacion_programada
+        WHERE fecha_hora::date BETWEEN %s AND %s AND fuente = 'CEN_PID'
+        ORDER BY unidad, fecha_hora
+        """,
+        params=(s, e),
+    )
+    if df.empty:
+        return df
+    df["fecha_hora"] = pd.to_datetime(df["fecha_hora"])
+    return df.sort_values(["unidad", "fecha_hora"])
 
 
 @st.cache_data(ttl=300)
