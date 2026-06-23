@@ -10,10 +10,17 @@ import plotly.graph_objects as go
 from plotly.subplots import make_subplots
 
 from config import LABELS, NOMBRES_NODO, UNIDADES, BG, GR, POT_MIN_TECNICA, SERIE
-from utils.data import load_cmg_prog, load_prog_pid
+from utils.data import load_cmg_prog, load_prog_pid, load_pronostico_demanda
+
+# Nodo CMG (barra_transf) → barra del pronóstico de demanda
+CMG_A_DEMANDA = {
+    "CRUCERO_______220": "Crucero220",
+    "TARAPACA______220": "Tarapaca220",
+}
 
 
-def _chart_unidad(unidad, df_r, df_p, df_pid, df_c, df_cp, mostrar_prog, mostrar_cmg, mostrar_desv, nodo_label):
+def _chart_unidad(unidad, df_r, df_p, df_pid, df_c, df_cp, df_dem, barra_dem,
+                  mostrar_prog, mostrar_cmg, mostrar_desv, nodo_label):
     df_u   = df_r[df_r["unidad"] == unidad].sort_values("fecha_hora")
     df_up  = df_p[df_p["unidad"] == unidad].sort_values("fecha_hora") if not df_p.empty else pd.DataFrame()
     df_upid = (df_pid[df_pid["unidad"] == unidad].sort_values("fecha_hora")
@@ -25,10 +32,14 @@ def _chart_unidad(unidad, df_r, df_p, df_pid, df_c, df_cp, mostrar_prog, mostrar
 
     tiene_cmg  = mostrar_cmg and not df_c.empty
     tiene_prog = mostrar_prog and not df_up.empty
+    tiene_dem  = tiene_cmg and df_dem is not None and not df_dem.empty
     n_rows  = 2 if tiene_cmg else 1
     heights = [0.62, 0.38] if n_rows == 2 else [1.0]
 
-    fig = make_subplots(rows=n_rows, cols=1, shared_xaxes=True, row_heights=heights, vertical_spacing=0.12)
+    # La fila del CMG lleva eje secundario para la demanda (MWh)
+    specs = [[{"secondary_y": False}], [{"secondary_y": True}]] if n_rows == 2 else [[{"secondary_y": False}]]
+    fig = make_subplots(rows=n_rows, cols=1, shared_xaxes=True, row_heights=heights,
+                        vertical_spacing=0.12, specs=specs)
 
     fig.add_trace(go.Scatter(
         x=df_u["fecha_hora"], y=df_u["gen_real_mw"], name="Real", mode="lines",
@@ -114,10 +125,18 @@ def _chart_unidad(unidad, df_r, df_p, df_pid, df_c, df_cp, mostrar_prog, mostrar
                 line=dict(color=SERIE["cmg_prog"], width=1.4, dash="dash"),
                 hovertemplate="<b>CMG programado</b> %{x|%d/%m %H:%M}<br>%{y:.1f} USD/MWh<extra></extra>",
             ), row=2, col=1)
+        # Overlay demanda pronosticada (eje secundario): alta demanda anticipa CMG alto
+        if tiene_dem:
+            fig.add_trace(go.Scatter(
+                x=df_dem["fecha_hora"], y=df_dem["energia_mwh"], name=f"Demanda {barra_dem}", mode="lines",
+                line=dict(color="#64748B", width=1.2, dash="dot"),
+                hovertemplate="<b>Demanda</b> %{x|%d/%m %H:%M}<br>%{y:,.0f} MWh<extra></extra>",
+            ), row=2, col=1, secondary_y=True)
         prom_cmg = df_c["cmg_usd_mwh"].mean()
         fig.add_hline(y=prom_cmg, line_color="#94A3B8", line_width=1, line_dash="dot",
                       annotation_text=f"Prom: {prom_cmg:.1f}", annotation_position="right",
-                      annotation_font_color="#64748B", annotation_font_size=10, row=2, col=1)
+                      annotation_font_color="#64748B", annotation_font_size=10, row=2, col=1,
+                      secondary_y=False)
 
     fig.update_layout(
         height=520, autosize=True, margin=dict(l=10, r=70, t=20, b=10),
@@ -132,7 +151,12 @@ def _chart_unidad(unidad, df_r, df_p, df_pid, df_c, df_cp, mostrar_prog, mostrar
                      tickfont=dict(color="#94A3B8", size=10), title_font=dict(color="#94A3B8", size=11), row=1, col=1)
     if tiene_cmg:
         fig.update_yaxes(title_text="USD/MWh", gridcolor=GR, zeroline=False,
-                         tickfont=dict(color="#94A3B8", size=10), title_font=dict(color="#94A3B8", size=11), row=2, col=1)
+                         tickfont=dict(color="#94A3B8", size=10), title_font=dict(color="#94A3B8", size=11),
+                         row=2, col=1, secondary_y=False)
+        if tiene_dem:
+            fig.update_yaxes(title_text="Demanda MWh", showgrid=False, zeroline=False,
+                             tickfont=dict(color="#94A3B8", size=10), title_font=dict(color="#94A3B8", size=11),
+                             row=2, col=1, secondary_y=True)
     for r in range(1, n_rows + 1):
         fig.update_xaxes(showticklabels=True, tickformat="%d/%m\n%H:%M",
                          tickfont=dict(color="#64748B", size=10), showgrid=False, row=r, col=1)
@@ -184,9 +208,12 @@ def render_gen_unidad(df_r, df_p, df_c, mostrar_prog, mostrar_cmg, nodo_cmg, s=N
     u_act = st.session_state["unidad_sel"]
     df_cp  = load_cmg_prog(s, e, nodo_cmg) if (mostrar_cmg and s and e) else None
     df_pid = load_prog_pid(s, e) if (mostrar_prog and s and e) else None
+    barra_dem = CMG_A_DEMANDA.get(nodo_cmg, "Crucero220")
+    df_dem = load_pronostico_demanda(s, e, barra_dem) if (mostrar_cmg and s and e) else None
     st.markdown(
         f'<p style="color:#334155;font-weight:600;font-size:0.9rem;margin:0.4rem 0 0.3rem">'
         f'{LABELS[u_act]} · Real vs Programada (MW) + CMG {nl} (USD/MWh)</p>',
         unsafe_allow_html=True,
     )
-    _chart_unidad(u_act, df_r, df_p, df_pid, df_c, df_cp, mostrar_prog, mostrar_cmg, mostrar_desv, nl)
+    _chart_unidad(u_act, df_r, df_p, df_pid, df_c, df_cp, df_dem, barra_dem,
+                  mostrar_prog, mostrar_cmg, mostrar_desv, nl)
