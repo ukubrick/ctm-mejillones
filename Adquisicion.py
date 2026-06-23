@@ -77,6 +77,16 @@ CMG_PROG_BARRAS = {
     "Tarapaca220": "TARAPACA______220",
 }
 
+# Pronóstico de demanda corto plazo: barras relevantes para CTM Mejillones.
+# Crucero220 es el nodo regional norte (el mismo del CMG → anticipa su movimiento);
+# Angamos220 y Mejillones110 son la demanda local. La API entrega `energia_mwh` horaria.
+BARRAS_DEMANDA = ["Crucero220", "Laberinto220", "Angamos220", "Mejillones110"]
+# Mapeo barra_transf del CMG → barra del pronóstico de demanda (para cruzarlos)
+CMG_A_DEMANDA = {
+    "CRUCERO_______220": "Crucero220",
+    "TARAPACA______220": "Tarapaca220",
+}
+
 # Mapeo centralUnidad → código interno (confirmado en API Operaciones 2026-06-09)
 LLAVES_SSCC = {
     "ANGAMOS-ANG1": "ANG1",
@@ -717,6 +727,83 @@ def upsert_cmg_real(registros: list[dict]) -> tuple[int, int]:
     return nuevos, actualizados
 
 
+def fetch_pronostico_demanda(start: str, end: str) -> list[dict]:
+    """
+    Trae el pronóstico de demanda corto plazo de las barras relevantes para CTM.
+
+    Endpoint: /pronosticos-demanda-corto-plazo/v4/findByDate (SIP, 0-indexado).
+    NO filtra por barra en el servidor → paginar (liviano, ~4 págs/2 días con
+    limit=2000) y filtrar local por BARRAS_DEMANDA. Entrega `energia_mwh` horaria.
+    """
+    registros = []
+    page  = 0
+    limit = 2000
+    try:
+        while True:
+            r = _get_with_retry(
+                f"{API_BASE_SIP}/pronosticos-demanda-corto-plazo/v4/findByDate",
+                params={"user_key": CEN_USER_KEY, "startDate": start,
+                        "endDate": end, "page": page, "limit": limit},
+            )
+            body = r.json()
+            data = body.get("data", [])
+            if not data:
+                break
+            for rec in data:
+                if rec.get("barra") not in BARRAS_DEMANDA:
+                    continue
+                fh = (rec.get("fecha_hora") or "").replace("T", " ")[:19]
+                if not fh:
+                    continue
+                hora_raw = rec.get("hora")
+                hora = int(hora_raw) if hora_raw is not None else 0
+                registros.append({
+                    "barra":        rec.get("barra"),
+                    "fecha_hora":   fh,
+                    "energia_mwh":  float(rec.get("energia_mwh") or 0.0),
+                    "hora":         hora,
+                    "date_control": rec.get("date_control"),
+                })
+            total_pages = body.get("totalPages")
+            if total_pages is None or page + 1 >= int(total_pages):
+                break
+            page += 1
+            time.sleep(0.3)
+    except Exception as e:
+        log.error(f"  Error pronóstico demanda: {e}")
+    log.info(f"  Pronóstico demanda ({start}→{end}): {len(registros)} registros "
+             f"({', '.join(BARRAS_DEMANDA)})")
+    return registros
+
+
+def upsert_pronostico_demanda(registros: list[dict]) -> tuple[int, int]:
+    """Inserta/actualiza el pronóstico de demanda. Conserva el pronóstico más
+    reciente por (barra, fecha_hora) — el cron horario sobrescribe con date_control nuevo."""
+    if not registros:
+        return 0, 0
+    sql = """
+        INSERT INTO pronostico_demanda
+            (barra, fecha_hora, energia_mwh, hora, date_control)
+        VALUES
+            (%(barra)s, %(fecha_hora)s, %(energia_mwh)s, %(hora)s, %(date_control)s)
+        ON CONFLICT (barra, fecha_hora) DO UPDATE
+            SET energia_mwh  = EXCLUDED.energia_mwh,
+                date_control = EXCLUDED.date_control
+    """
+    nuevos = actualizados = 0
+    try:
+        with get_conn() as conn:
+            with conn.cursor() as cur:
+                for rec in registros:
+                    cur.execute(sql, rec)
+                    if cur.rowcount == 1: nuevos      += 1
+                    else:                actualizados += 1
+            conn.commit()
+    except Exception as e:
+        log.error(f"  Error upsert pronóstico demanda: {e}")
+    return nuevos, actualizados
+
+
 def fetch_sscc(fecha: str) -> list[dict]:
     """
     Trae instrucciones SSCC de ANG1/2 CCR1/2 desde la API CEN Operaciones.
@@ -1257,6 +1344,22 @@ def run():
     except Exception as e:
         err_str = str(e); log.error(f"  ❌ CMG real: {e}"); nuevos = actualizados = 0
     log_adquisicion("cmg_real", cmgr_end, nuevos, actualizados,
+                    int((time.time() - t0) * 1000), err_str)
+
+    # ── Pronóstico de demanda corto plazo (Crucero/Laberinto/Angamos/Mejillones) ──
+    # Pronóstico futuro: ventana hoy → +2 días. Contexto de demanda para anticipar CMG.
+    dem_start = hoy.strftime("%Y-%m-%d")
+    dem_end   = (hoy + timedelta(days=2)).strftime("%Y-%m-%d")
+    log.info(f"\n  ── Pronóstico demanda {dem_start} → {dem_end}")
+    t0 = time.time()
+    err_str = None
+    try:
+        regs_dem             = fetch_pronostico_demanda(dem_start, dem_end)
+        nuevos, actualizados = upsert_pronostico_demanda(regs_dem)
+        log.info(f"  ✅ Demanda: {nuevos} nuevos, {actualizados} actualizados")
+    except Exception as e:
+        err_str = str(e); log.error(f"  ❌ Demanda: {e}"); nuevos = actualizados = 0
+    log_adquisicion("pronostico_demanda", dem_end, nuevos, actualizados,
                     int((time.time() - t0) * 1000), err_str)
 
     # ── SSCC instrucciones (ventana de días) ──────────────────

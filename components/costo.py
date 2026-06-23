@@ -5,7 +5,13 @@ import pandas as pd
 import plotly.graph_objects as go
 
 from config import COLORES, LABELS, PMAX, UNIDADES, BG, GR, SERIE
-from utils.data import load_cmg_prog, load_cmg_real
+from utils.data import load_cmg_prog, load_cmg_real, load_pronostico_demanda
+
+# Nodo CMG (barra_transf) → barra del pronóstico de demanda (para cruzar CMG vs demanda)
+CMG_A_DEMANDA = {
+    "CRUCERO_______220": "Crucero220",
+    "TARAPACA______220": "Tarapaca220",
+}
 
 
 def render_costo(df_r, df_c, s=None, e=None, nodo_cmg="CRUCERO_______220", df_p=None):
@@ -17,6 +23,8 @@ def render_costo(df_r, df_c, s=None, e=None, nodo_cmg="CRUCERO_______220", df_p=
 
     df_cp = load_cmg_prog(s, e, nodo_cmg) if s and e else None
     df_cr = load_cmg_real(s, e, nodo_cmg) if s and e else None
+    barra_dem = CMG_A_DEMANDA.get(nodo_cmg, "Crucero220")
+    df_dem = load_pronostico_demanda(s, e, barra_dem) if s and e else None
 
     df_merge = pd.merge_asof(
         df_r[["unidad", "fecha_hora", "gen_real_mw"]].sort_values("fecha_hora"),
@@ -74,7 +82,7 @@ def render_costo(df_r, df_c, s=None, e=None, nodo_cmg="CRUCERO_______220", df_p=
         with gc1:
             _grafico_barras_ingreso(ingreso_unit, energia_unit, unidades_ord)
         with gc2:
-            _grafico_cmg_tiempo(df_c, cmg_prom, cmg_min, cmg_max, df_cp, df_cr)
+            _grafico_cmg_tiempo(df_c, cmg_prom, cmg_min, cmg_max, df_cp, df_cr, df_dem, barra_dem)
 
     with tab_stat:
         _estadisticas_costo(df_merge, df_c, ingreso_unit, energia_unit, ingreso_total, cmg_prom, unidades_ord)
@@ -134,7 +142,7 @@ def _grafico_barras_ingreso(ingreso_unit, energia_unit, unidades_ord):
     st.plotly_chart(fig, use_container_width=True, config={"displayModeBar": False})
 
 
-def _grafico_cmg_tiempo(df_c, cmg_prom, cmg_min, cmg_max, df_cp=None, df_cr=None):
+def _grafico_cmg_tiempo(df_c, cmg_prom, cmg_min, cmg_max, df_cp=None, df_cr=None, df_dem=None, barra_dem="Crucero220"):
     idx_max = df_c["cmg_usd_mwh"].idxmax()
     idx_min = df_c["cmg_usd_mwh"].idxmin()
     fig = go.Figure()
@@ -153,6 +161,12 @@ def _grafico_cmg_tiempo(df_c, cmg_prom, cmg_min, cmg_max, df_cp=None, df_cr=None
         fig.add_trace(go.Scatter(x=df_cr["fecha_hora"], y=df_cr["cmg_usd_mwh"], mode="lines", name="CMG real oficial",
             line=dict(color="#0F766E", width=1.6),
             hovertemplate="<b>Real oficial</b> %{x|%d/%m %H:%M}<br>%{y:.1f} USD/MWh<extra></extra>"))
+    # Overlay demanda pronosticada (eje secundario): alta demanda anticipa CMG alto
+    if df_dem is not None and not df_dem.empty:
+        fig.add_trace(go.Scatter(x=df_dem["fecha_hora"], y=df_dem["energia_mwh"], mode="lines",
+            name=f"Demanda {barra_dem}", yaxis="y2",
+            line=dict(color="#64748B", width=1.2, dash="dot"),
+            hovertemplate="<b>Demanda</b> %{x|%d/%m %H:%M}<br>%{y:,.0f} MWh<extra></extra>"))
     fig.add_hline(y=cmg_prom, line_color="#CBD5E1", line_width=1.2, line_dash="dot",
         annotation_text=f"Prom: {cmg_prom:.1f}", annotation_position="right",
         annotation_font_color="#64748B", annotation_font_size=10)
@@ -173,6 +187,8 @@ def _grafico_cmg_tiempo(df_c, cmg_prom, cmg_min, cmg_max, df_cp=None, df_cr=None
         height=360, margin=dict(l=10, r=80, t=60, b=10), plot_bgcolor=BG, paper_bgcolor="rgba(0,0,0,0)",
         legend=dict(orientation="h", yanchor="bottom", y=1.02, x=0, font=dict(size=10, color="#475569")),
         yaxis=dict(title="USD/MWh", gridcolor=GR, tickfont=dict(color="#94A3B8", size=10), title_font=dict(color="#94A3B8", size=10)),
+        yaxis2=dict(title="Demanda MWh", overlaying="y", side="right", showgrid=False,
+                    tickfont=dict(color="#94A3B8", size=10), title_font=dict(color="#94A3B8", size=10)),
         xaxis=dict(tickfont=dict(color="#94A3B8", size=10), tickformat="%d/%m\n%H:%M", showgrid=False),
         hovermode="x unified", hoverlabel=dict(bgcolor="#1E293B", font_color="#F8FAFC", bordercolor="#334155"))
     st.plotly_chart(fig, use_container_width=True, config={"displayModeBar": False})

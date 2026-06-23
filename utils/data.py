@@ -233,6 +233,27 @@ def load_cmg_real(s, e, nodo="CRUCERO_______220"):
     return df
 
 
+@st.cache_data(ttl=300)
+def load_pronostico_demanda(s, e, barra="Crucero220"):
+    """Pronóstico de demanda corto plazo por barra (energia_mwh horaria).
+    Silencioso si la tabla no existe."""
+    try:
+        df = fetch(
+            "pronostico_demanda", "fecha_hora,energia_mwh",
+            eq={"barra": barra}, gte={"fecha_hora": _ini(s)}, lte={"fecha_hora": _fin(e)},
+            order="fecha_hora",
+            sql="SELECT fecha_hora, energia_mwh FROM pronostico_demanda "
+                "WHERE barra=%s AND fecha_hora::date BETWEEN %s AND %s ORDER BY fecha_hora",
+            params=(barra, s, e),
+        )
+    except Exception:
+        return pd.DataFrame()
+    if not df.empty:
+        df["fecha_hora"] = pd.to_datetime(df["fecha_hora"])
+        df = df.sort_values("fecha_hora")
+    return df
+
+
 @st.cache_data(ttl=60)
 def load_bit(s, e, u=None):
     eq = {"unidad": u} if (u and u != "Todas") else None
