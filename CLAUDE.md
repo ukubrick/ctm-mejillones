@@ -57,10 +57,14 @@ Solicitudes), `Gestión de Datos` (Ingreso Manual, Datos & Bitácora). Solo se
 renderiza la vista activa → evita el bug de Plotly width=0 dentro de `st.tabs` y
 despeja la UI.
 
-**Popover de navegación — no usar `st.rerun()` dentro (2026-06-23):** los botones de
-vista dentro del `st.popover` solo hacen `st.session_state["vista"]=v` SIN `st.rerun()`.
-El click del botón ya dispara el rerun natural que cierra el popover; un `st.rerun()`
-explícito interrumpe ese cierre y deja el menú fijo abierto sobre el contenido.
+**Navegación — botones nativos, NO `st.popover` (2026-06-23):** se abandonó
+`st.popover` porque en Streamlit 1.58 quedaba **fijo abierto** y exigía **doble click**
+(ni quitar `st.rerun()` ni inyectar JS para re-clickear el trigger lo resolvieron de
+forma fiable). Ahora `_navegacion()` usa solo `st.button` + `session_state`: cada
+categoría es un botón con flecha ▾/▴ que alterna `_cat_abierta`; al abrirse, sus vistas
+se renderizan como botones bajo su columna (`st.columns` alineado por índice). Elegir una
+vista hace `vista=v` + `_cat_abierta=None` + `st.rerun()`. Todo nativo → un solo click,
+sin quedar fijo. (El CSS `[data-testid="stPopover"]` quedó sin uso.)
 
 **Fix sidebar (de raíz):** el CSS ya **NO** fuerza `transform:none`/`width` ni
 oculta `stSidebarCollapseButton`/`stExpandSidebarButton`/`stToolbar`. Solo se

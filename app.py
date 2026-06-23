@@ -6,7 +6,6 @@ Navegación de vista única (categoría → vista) para evitar el bug de Plotly
 dentro de st.tabs y mantener la interfaz despejada.
 """
 import streamlit as st
-import streamlit.components.v1 as components
 from streamlit_autorefresh import st_autorefresh
 
 from config import get_css, NOMBRES_NODO
@@ -45,37 +44,43 @@ VISTAS = [v for grupo in CATEGORIAS.values() for v in grupo]
 
 
 def _navegacion():
-    """Barra de menú a todo el ancho: cada categoría es un menú desplegable
-    (st.popover) que se abre hacia abajo, estilo aplicación de escritorio."""
+    """Barra de menú a todo el ancho con botones nativos + session_state.
+
+    Reemplaza a `st.popover` (que en Streamlit 1.58 quedaba fijo abierto y exigía
+    doble click): cada categoría es un botón que despliega sus vistas como botones
+    debajo de su columna. Todo es `st.button` nativo → un solo click, sin quedar fijo.
+    """
     vista = st.session_state.get("vista", VISTAS[0])
     if vista not in VISTAS:
         vista = VISTAS[0]
+    cat_abierta = st.session_state.get("_cat_abierta")
 
     st.markdown('<div class="menubar">', unsafe_allow_html=True)
     cols = st.columns(len(CATEGORIAS))
     for col, (cat, vistas_cat) in zip(cols, CATEGORIAS.items()):
         with col:
             activa_aqui = vista in vistas_cat
-            etiqueta = f"{cat}  ·  {vista}" if activa_aqui else cat
-            with st.popover(etiqueta, use_container_width=True):
-                for v in vistas_cat:
-                    if st.button(v, key=f"nav_{v}", use_container_width=True,
-                                 type="primary" if v == vista else "secondary"):
-                        st.session_state["vista"] = v
-                        st.session_state["_cerrar_popover"] = True
-    st.markdown("</div><div style='height:10px'></div>", unsafe_allow_html=True)
+            abierta = (cat_abierta == cat)
+            flecha = "▴" if abierta else "▾"
+            etiqueta = f"{flecha}  {cat}  ·  {vista}" if activa_aqui else f"{flecha}  {cat}"
+            if st.button(etiqueta, key=f"cat_{cat}", use_container_width=True,
+                         type="primary" if (activa_aqui or abierta) else "secondary"):
+                st.session_state["_cat_abierta"] = None if abierta else cat
+                st.rerun()
+    st.markdown("</div>", unsafe_allow_html=True)
 
-    # st.popover (Streamlit 1.58) no se cierra al hacer click en un botón interno.
-    # Tras elegir una vista, inyectamos JS que re-clickea el trigger abierto
-    # (aria-expanded="true") para cerrarlo — toggle puramente client-side.
-    if st.session_state.pop("_cerrar_popover", False):
-        components.html(
-            "<script>"
-            "const d=window.parent.document;"
-            "setTimeout(()=>{d.querySelectorAll("
-            "'[data-testid=\\'stPopover\\'] button[aria-expanded=\\'true\\']'"
-            ").forEach(b=>b.click());},60);"
-            "</script>", height=0, width=0)
+    # Panel desplegable: vistas de la categoría abierta, bajo su columna.
+    if cat_abierta in CATEGORIAS:
+        idx = list(CATEGORIAS).index(cat_abierta)
+        cols2 = st.columns(len(CATEGORIAS))
+        with cols2[idx]:
+            for v in CATEGORIAS[cat_abierta]:
+                if st.button(v, key=f"nav_{v}", use_container_width=True,
+                             type="primary" if v == vista else "secondary"):
+                    st.session_state["vista"] = v
+                    st.session_state["_cat_abierta"] = None
+                    st.rerun()
+    st.markdown("<div style='height:10px'></div>", unsafe_allow_html=True)
     return vista
 
 
