@@ -1,4 +1,4 @@
-# CLAUDE.md — Dashboard CTM Mejillones
+# AGENTS.md — Dashboard CTM Mejillones
 
 ## Qué es este proyecto
 Dashboard operacional del Complejo Térmico Mejillones (AES Andes).
@@ -24,148 +24,12 @@ Adquisición automática vía GitHub Actions cada hora (minuto 5 UTC).
 
 ---
 
-## Arquitectura del dashboard (refactor modular — 2026-06-22)
-
-El monolito `app.py` (~2500 líneas) se dividió en módulos siguiendo el patrón del
-proyecto ERNC. `app.py` ahora es solo el orquestador.
-
-```
-app.py                  # orquestador: page_config, CSS, sidebar, KPIs, navegación, dispatch de vistas
-config.py               # paleta AES, constantes (COLORES, LABELS, PMAX, NOMBRES_NODO, mapeos id), get_css()
-utils/
-  db.py                 # get_conn, test_conn, qry, exe, exe_many (psycopg2)
-  data.py               # loaders cacheados (@st.cache_data): load_real/prog/cmg/sscc/limitaciones/solicitudes/bit
-  reports.py            # generar_pdf / generar_ppt + helpers matplotlib (movidos verbatim)
-components/
-  sidebar.py            # render_sidebar() → dict de filtros; estado de fuentes; export PDF/PPT
-  kpis.py               # render_kpis(df_r) — tarjetas por unidad
-  gen_unidad.py         # render_gen_unidad — selector por botones (primary/secondary) + gráfico real/prog/CMG
-  costo.py              # render_costo — análisis CMG×generación (tabs Gráficos / Estadísticas)
-  limitaciones.py       # render_limitaciones(s,e)
-  sscc.py               # render_sscc(s,e)
-  solicitudes.py        # render_solicitudes(s,e)
-  manual.py             # render_programada_manual / render_real_manual (CRUD)
-  datos.py              # render_datos_horarios / render_bitacora
-pages/ml_analysis.py    # página ML (usa config.get_css() y constantes de config)
-```
-
-**Navegación de vista única** (categoría → vista) en `app.py`: `Operación`
-(Resumen, Análisis de Costo), `Restricciones` (Limitaciones, SSCC, Solicitudes),
-`Gestión de Datos` (Ingreso Manual, Datos & Bitácora). Solo se renderiza la vista
-activa → evita el bug de Plotly width=0 dentro de `st.tabs` y despeja la UI.
-
-**Fix sidebar (de raíz):** el CSS ya **NO** fuerza `transform:none`/`width` ni
-oculta `stSidebarCollapseButton`/`stExpandSidebarButton`/`stToolbar`. Solo se
-oculta `#MainMenu`. Así Streamlit gestiona el colapso/expansión nativamente y
-desaparece el ícono "keyboard_double" suelto y el botón muerto. (Igual que ERNC.)
-
 ## Archivos principales
 
-- `app.py` — orquestador modular (~150 líneas)
-- `Adquisicion.py` — Script de adquisición (~890 líneas)
-- `requirements.txt` — requests, psycopg2-binary, python-dotenv, streamlit, pandas, plotly, matplotlib, reportlab, **streamlit-autorefresh**, python-pptx, scikit-learn, xgboost
+- `app.py` — Dashboard Streamlit v5 (~1300 líneas)
+- `Adquisicion.py` — Script de adquisición (~620 líneas)
+- `requirements.txt` — requests, psycopg2-binary, python-dotenv, streamlit, pandas, plotly, matplotlib, reportlab, **streamlit-autorefresh**
 - `.github/workflows/adquisicion.yml` — cron "5 * * * *", timeout 55 min
-- Scripts de exploración/test eliminados (check_cmg, probe_*, test_*, resumen_endpoints_sscc_sen.md). `backfill_programada.py` se conserva (tiene workflow). `ml_pruebas.py` / `exportar_datos_ml.py` quedan como material de experimentos ML.
-
-## ⭐ Patrón de menú desplegable (REPLICAR EN PULSAR / ERNC)
-
-> El usuario quiere este mismo diseño de navegación en la app **Pulsar (ernc-aes-dashboard)**.
-
-Navegación tipo barra de menú de escritorio: cada **categoría** es un `st.popover`
-a todo el ancho que se **despliega hacia abajo** mostrando sus vistas como botones
-(primary = vista activa). Reemplaza al `st.selectbox` + botones. Cómo se hizo en `app.py`:
-
-```python
-CATEGORIAS = {
-    "Operación":        ["Resumen", "Análisis de Costo"],
-    "Restricciones":    ["Limitaciones", "SSCC", "Solicitudes"],
-    "Gestión de Datos": ["Ingreso Manual", "Datos & Bitácora"],
-}
-VISTAS = [v for g in CATEGORIAS.values() for v in g]
-
-def _navegacion():
-    vista = st.session_state.get("vista", VISTAS[0])
-    st.markdown('<div class="menubar">', unsafe_allow_html=True)
-    cols = st.columns(len(CATEGORIAS))
-    for col, (cat, vistas_cat) in zip(cols, CATEGORIAS.items()):
-        with col:
-            activa = vista in vistas_cat
-            etiqueta = f"{cat}  ·  {vista}" if activa else cat   # la categoría activa muestra la vista
-            with st.popover(etiqueta, use_container_width=True):
-                for v in vistas_cat:
-                    if st.button(v, key=f"nav_{v}", use_container_width=True,
-                                 type="primary" if v == vista else "secondary"):
-                        st.session_state["vista"] = v; st.rerun()
-    st.markdown("</div>", unsafe_allow_html=True)
-    return vista
-```
-
-CSS clave (en `config.get_css()`): estiliza el botón del popover a todo el ancho,
-con gradiente azul cuando está abierto (`aria-expanded="true"`):
-
-```css
-[data-testid="stPopover"] > div > button {
-  width:100%; background:linear-gradient(180deg,#FFFFFF 0%,#F3F5FF 100%);
-  border:1.6px solid #C7CDF5; border-radius:10px; min-height:48px;
-  font-weight:700; font-size:14px; color:#2530B0; justify-content:center;
-}
-[data-testid="stPopover"] > div > button[aria-expanded="true"] {
-  background:linear-gradient(135deg,#3B4CE8 0%,#2530B0 100%); color:#fff; border-color:#2530B0;
-}
-```
-
-Ventajas: se ve como app de escritorio, ocupa todo el ancho, y al renderizar **solo
-la vista activa** evita el bug de Plotly width=0 dentro de `st.tabs`.
-
-## Mejoras de rediseño y valor (2026-06-22)
-
-- **Navegación tipo menú de escritorio:** `app.py` usa `st.popover` por categoría (a todo el ancho) que se despliega hacia abajo.
-- **Área de desviación bicolor** en gráficos por unidad: verde = sobregeneración (real>prog), rojo = subgeneración (real<prog). Solo si hay real **y** programada.
-- **Línea de mínimo técnico** (60 MW para las 4 unidades, fuente `/unidades-generadoras/v4`) en cada gráfico — ver `POT_MIN_TECNICA` en config.py.
-- **Contraste de fechas** en el sidebar (caja blanca, texto oscuro).
-- **`connect_timeout=8`** en `utils/db.py` + corte temprano con error claro si la DB no responde (el sidebar hace `st.stop()`).
-- **CMG real vs programado** (nuevo): overlay programado + KPI "Desvío CMG real vs prog." en Análisis de Costo.
-
-### Nuevo endpoint y tabla — CMG programado
-
-- Endpoint: `GET /cmg-programado-pid/v4/findByDate` (SIP). **IMPORTANTE: es 1-indexado** (`page=0` devuelve 502; empezar en `page=1`), a diferencia del PCP que es 0-indexado. No filtra por barra → paginar y filtrar local por `llave_cmg ∈ {Crucero220, Tarapaca220}` (ver `CMG_PROG_BARRAS`). Usar `limit=2000` (5000 da 502 intermitente). Se conserva el programa más reciente por `(barra, fecha_hora)`.
-- Tabla **`costo_marginal_programado`**: `id, barra, fecha_hora, cmg_usd_mwh, fecha_programa`, UNIQUE `(barra, fecha_hora)`. `barra` usa el mismo nombre que `costo_marginal` (`CRUCERO_______220`/`TARAPACA______220`) para cruzar real vs programado.
-- Adquisición: `fetch_cmg_programado` / `upsert_cmg_programado` en `Adquisicion.py`, llamada en `main()` tras el CMG S3.
-- **Migración única** (correr con DB accesible): `python migracion_cmg_programado.py [DIAS]` — crea la tabla y hace backfill. Luego el cron horario la mantiene.
-
-### Endpoints explorados con valor potencial (pendientes de integrar)
-
-- `/generacion-actual/v3/getSumGeneration` — requiere `startDate`+`technology`; snapshot prog vs real por central.
-- `/instrucciones-operacionales/v4/findByDate` — despacho, consigna, motivo por unidad.
-- `/transferencia-economica-nacional/v4`, `/stock-combustible/v4` — KPIs económicos y de combustible.
-
-### Capa de datos: REST de Supabase (2026-06-22) — RESUELVE el bloqueo de red
-
-El dashboard ahora accede a la DB por **REST (supabase-py, HTTPS/443)** cuando hay
-`SUPABASE_URL` + `SUPABASE_KEY`, con **fallback automático a psycopg2** si no están.
-Esto resuelve el bloqueo de redes que filtran el puerto Postgres (5432/6543): la REST
-va por 443. `Adquisicion.py` sigue en psycopg2 (corre en GitHub Actions, sin restricción).
-
-- `utils/db.py`: `rest_enabled()`, `get_client()` (cacheado), y API unificada
-  `fetch(...)`, `write_upsert/update/delete/insert`, `last_ts(...)`, `test_conn()` —
-  todas eligen REST o psycopg2 automáticamente. Cada llamada lleva un `sql=`/`params` de respaldo.
-- `utils/data.py`: loaders por REST. Lo que el SQL hacía en el servidor se replica en
-  pandas para la vía REST: `load_prog` deduplica priorizando `CEN_PCP`; `load_limitaciones`
-  y `load_solicitudes` aplican su condición OR en pandas. Filtros de fecha por `gte/lte`
-  sobre el texto ISO (ordena lexicográficamente).
-- Credenciales: `SUPABASE_URL`, `SUPABASE_KEY` (service_role) en `.env` y `.streamlit/secrets.toml`
-  (ambos gitignoreados). Para que **producción** (Streamlit Cloud) también use REST, agregar
-  esas dos claves en los secrets de Streamlit Cloud; si no, seguirá usando psycopg2 (DATABASE_URL).
-- Dependencia nueva: `supabase` en requirements.txt.
-- Las tablas tienen RLS deshabilitado → la service_role key (server-side en Streamlit) tiene acceso completo.
-
-### Puntos de datos descartados (probados en vivo 2026-06-22)
-
-- `/instrucciones-operacionales/v4` (despacho/consigna): **404** en el plan SIP. La variante
-  `-sscc` trae datos pero a nivel de central (sin ANG1/ANG2) y duplica la sección SSCC. → no se integró.
-- `/stock-combustible/v4`: **404**. → descartado.
-- `/transferencia-economica-nacional/v4`: responde, pero es liquidación mensual de peajes/VATT
-  a nivel de propietario, contable y con muchos `None` recientes. Poco accionable. → descartado.
 - `backfill_programada.py` — script de recuperación manual de gen. programada (uso: `python3 backfill_programada.py YYYY-MM-DD YYYY-MM-DD`)
 
 ---
@@ -315,7 +179,7 @@ Todos los endpoints usan `_get_with_retry()` con backoff exponencial:
 
 ---
 
-## Estado actual del código (2026-06-20 — actualizado)
+## Estado actual del código (2026-06-11 — actualizado)
 
 Todo implementado y funcionando en producción:
 - ✅ Generación real automática (API CEN SIPUB) — ventana 7 días, DO UPDATE sobrescribe ceros
@@ -329,35 +193,16 @@ Todo implementado y funcionando en producción:
 - ✅ Workflow timeout 35 min (PCP tarda ~12 min/día)
 - ✅ Auto-refresh horario (`streamlit-autorefresh`, 3600000 ms) — recarga automática y previene sleep de Streamlit Cloud
 - ✅ Sección SSCC ubicada después de CMG, con guía desplegable (`<details>/<summary>` HTML nativo), KPIs, tabs Por unidad / Estadísticas / Tabla completa
-- ✅ Tab "Por unidad" SSCC muestra máximo 5 instrucciones recientes por unidad (ordenadas fecha desc); primera instrucción con animación palpitante (`.sscc-latest`); si hay más aparece caption "+N más en «Tabla completa»"
+- ✅ Tab "Por unidad" SSCC muestra máximo 5 instrucciones recientes por unidad (ordenadas fecha desc); si hay más aparece caption "+N más en «Tabla completa»"
 - ✅ Footer: "Dashboard creado por Erick Herrera"
 - ✅ Backfill gen. programada 05–09 junio 2026 completado (3115 registros recuperados)
-- ✅ Sidebar: dot verde palpitante en todas las fuentes, texto "Conectado · Supabase / PostgreSQL", última fecha adquirida por cada fuente (Gen. real, Gen. programada, CMG S3, SSCC), etiqueta "API CEN SIPUB / OPS" encima de las fuentes
+- ✅ Sidebar: dot verde palpitante en todas las fuentes, texto "Conectado · Supabase / PostgreSQL", última fecha adquirida por cada fuente (Gen. real, Gen. programada, CMG S3, SSCC)
 - ~~Header superior derecho con indicadores de status~~ — eliminado (duplicaba el sidebar)
 - ✅ Checkbox "Mostrar área de desviación (Real vs Programada)" activado por defecto
-- ~~Dots de unidades en tabs: ANG1 🟣, ANG2 🔵, CCR1 🟡, CCR2 🟢~~ — eliminados (sin emoji en UI)
+- ✅ Dots de unidades en tabs: ANG1 🟣, ANG2 🔵, CCR1 🟡, CCR2 🟢
 - ✅ Limitaciones de transmisión (API CEN SIP `/limitaciones-transmision/v4/findByDate`) — tabla en DB, adquisición automática ventana 30 días, sección visual sobre SSCC con KPIs (activas, total, afecta SSCC, mayor potencia), tabs por unidad (ANG1/ANG2/CCR1/CCR2/Todas), cards con status/colores/correlativo N°/fechas apertura→cierre, tabla completa via `<details>/<summary>` HTML nativo, orden cronológico descendente (más reciente primero), máx 5 por tab
-- ✅ Badge "pendiente" en limitaciones tiene animación palpitante naranja (`.badge-pend`, CSS `pulse-pend`)
 - ✅ Header y sidebar actualizados con indicador de limitaciones activas (dot amarillo si hay pendientes)
 - ✅ Tab "Estadísticas" en sección limitaciones: barras por mes (apiladas por status), donut por unidad, histograma de potencia limitada por rangos MW, barras de duración en días para limitaciones finalizadas
-- ✅ Títulos de sección (.sec): font-size 0.82rem, font-weight 800, borde inferior 2px, color #334155
-- ✅ KPIs factor de planta: muestra "(promedio período)" junto al % y fecha/hora del último dato adquirido
-- ✅ Análisis de Costo — pestaña "Estadísticas" con 6 gráficos: ingreso horario por unidad, ingreso medio por MWh, distribución CMG (histograma), correlación gen vs CMG (scatter + coef r), donut participación ingresos, eficiencia USD/MW instalado
-- ✅ Análisis de Costo — marcadores máx/mín del CMG con halo exterior (efecto destacado visual)
-- ✅ Gráfico por unidad: serie CMG hereda el color de la unidad (line color = `c["line"]`) y grosor width=3 igual a la serie Real
-- ✅ Solicitudes de trabajo integradas — sección después de SSCC, máx 5 cards por tab, tabla completa disponible
-- ✅ Sin emoji en la UI (eliminados todos en 2026-06-18)
-- ✅ Sistema de diseño AES aplicado (2026-06-19): paleta AES (cyan `#4DC8DC`, sidebar gradiente `#0e6e7e→#043840`), KPI cards con borde-top de color por unidad + hover lift + animación fadeInUp, tipografía Inter, tabs con acento cyan y padding amplio, gráficos Plotly con `template="plotly_white"` y `plot_bgcolor="#F5F7FA"`
-- ✅ Selector de unidad (gráficos por unidad): reemplazado `st.tabs` por `st.button` + `session_state` — elimina bug de Plotly width=0 cuando tab está oculto con `display:none`
-- ✅ Sidebar fijo siempre visible: `transform:none`, `width:300px`, `visibility:visible` forzados via CSS — evita que cookies del navegador lo dejen colapsado
-- ✅ Página ML (`pages/ml_analysis.py`) — Forecasting CMG con XGBoost (lags t-1h a t-48h, forecast 24h) + Detección de anomalías gen. real con Isolation Forest (por unidad, slider % contaminación). Dependencias: `scikit-learn`, `xgboost` en requirements.txt
-- ✅ Navegación multipage: `showSidebarNavigation = false` en `.streamlit/config.toml` — suprime links automáticos de Streamlit. Links manuales (`st.page_link`) debajo del recuadro de fuentes: "Aplicación" y "Machine Learning Analysis", sin emoji, con margen superior de separación
-
-## Notas técnicas importantes (diseño/CSS)
-
-- **Bug Plotly + st.tabs (Streamlit):** `st.tabs` renderiza todos los paneles simultáneamente con `display:none`. Plotly mide el contenedor al renderizar → obtiene width=0 → el gráfico queda pequeño para siempre. **Solución:** usar `st.button` + `st.session_state` para selector de unidad, renderizando solo un gráfico a la vez.
-- **Sidebar y cookies:** Streamlit Cloud guarda el estado del sidebar (colapsado/expandido) en cookies/localStorage del navegador. Para forzar que siempre esté visible, usar CSS con `transform:none!important`, `width:300px!important`, `visibility:visible!important` en `[data-testid="stSidebar"]`.
-- **DOM Streamlit 1.58:** El ícono de colapso del sidebar está en `[data-testid="stIconMaterial"]` (no `.material-symbols-rounded`). El botón de expandir cuando colapsado es `[data-testid="stExpandSidebarButton"]` y vive dentro de `[data-testid="stToolbar"]` (que por defecto ocultamos con `display:none`). El sidebar usa `aria-expanded="false"` (no `data-collapsed`) para indicar estado colapsado.
 
 ---
 

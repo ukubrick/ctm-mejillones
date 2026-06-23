@@ -14,6 +14,8 @@ import plotly.graph_objects as go
 from plotly.subplots import make_subplots
 import os
 
+from config import get_css, COLORES, LABELS, PMAX
+
 st.set_page_config(
     page_title="ML · CTM Mejillones",
     layout="wide",
@@ -21,20 +23,12 @@ st.set_page_config(
     initial_sidebar_state="expanded",
 )
 
-# ── Paleta AES (igual que app.py) ─────────────────────────────────────────────
-COLORES = {
-    "ANG1": {"line": "#6D28D9", "prog": "#C4B5FD", "badge": "#EDE9FE"},
-    "ANG2": {"line": "#2563EB", "prog": "#93C5FD", "badge": "#DBEAFE"},
-    "CCR1": {"line": "#0891B2", "prog": "#67E8F9", "badge": "#CFFAFE"},
-    "CCR2": {"line": "#16A34A", "prog": "#86EFAC", "badge": "#DCFCE7"},
-}
-LABELS = {"ANG1": "Angamos U1", "ANG2": "Angamos U2", "CCR1": "Cochrane U1", "CCR2": "Cochrane U2"}
-PMAX   = {"ANG1": 277.0, "ANG2": 280.0, "CCR1": 276.0, "CCR2": 276.0}
+# Diseño AES compartido (mismo sidebar, tabs, tipografía y KPIs que la app principal)
+st.markdown(get_css(), unsafe_allow_html=True)
 
+# Clases propias de esta página (no incluidas en el CSS global)
 st.markdown("""
 <style>
-@import url('https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700;800&display=swap');
-* { font-family: 'Inter', sans-serif; }
 .sec-title {
     font-size: 0.82rem; font-weight: 800; color: #334155;
     border-bottom: 2px solid #4DC8DC; padding-bottom: 4px;

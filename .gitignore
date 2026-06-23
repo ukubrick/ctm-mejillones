@@ -3,3 +3,7 @@
 __pycache__/
 *.pyc
 adquisicion.log
+# Sistema
+.DS_Store
+.cache_openmeteo.sqlite
+.streamlit/secrets.toml

@@ -70,6 +70,13 @@ CMG_NODOS = {
     "TARAPACA______220": "tarapaca",
 }
 
+# CMG programado PID: llave_cmg de la API → nombre de barra usado en el dashboard
+# (el mismo que el CMG real del S3, para poder cruzarlos).
+CMG_PROG_BARRAS = {
+    "Crucero220":  "CRUCERO_______220",
+    "Tarapaca220": "TARAPACA______220",
+}
+
 # Mapeo centralUnidad → código interno (confirmado en API Operaciones 2026-06-09)
 LLAVES_SSCC = {
     "ANGAMOS-ANG1": "ANG1",
@@ -447,6 +454,86 @@ def upsert_cmg(registros: list[dict]) -> tuple[int, int]:
             conn.commit()
     except Exception as e:
         log.error(f"  Error upsert CMG: {e}")
+    return nuevos, actualizados
+
+
+def fetch_cmg_programado(start: str, end: str) -> list[dict]:
+    """
+    Trae el CMG programado (PID) de las barras Crucero/Tarapacá desde la API CEN SIP.
+
+    Endpoint: /cmg-programado-pid/v4/findByDate
+    No filtra por barra en el servidor → se pagina todo y se filtra localmente
+    por llave_cmg ∈ CMG_PROG_BARRAS. Se conserva el programa más reciente
+    (mayor fecha_programa) para cada (barra, fecha_hora).
+    """
+    mejor: dict[tuple, dict] = {}   # (barra, fecha_hora) → registro
+    page  = 1   # este endpoint es 1-indexado (page=0 devuelve 502)
+    limit = 2000
+    try:
+        while True:
+            r = _get_with_retry(
+                f"{API_BASE_SIP}/cmg-programado-pid/v4/findByDate",
+                params={"user_key": CEN_USER_KEY, "startDate": start,
+                        "endDate": end, "page": page, "limit": limit},
+            )
+            body = r.json()
+            data = body.get("data", [])
+            if not data:
+                break
+
+            for rec in data:
+                llave = rec.get("llave_cmg")
+                barra = CMG_PROG_BARRAS.get(llave)
+                if barra is None:
+                    continue
+                fh = (rec.get("fecha_hora") or "").replace("T", " ")[:19]
+                if not fh:
+                    continue
+                fprog = rec.get("fecha_programa") or ""
+                clave = (barra, fh)
+                anterior = mejor.get(clave)
+                if anterior is None or fprog >= anterior["fecha_programa"]:
+                    mejor[clave] = {
+                        "barra":          barra,
+                        "fecha_hora":     fh,
+                        "cmg_usd_mwh":    float(rec.get("cmg_usd_mwh") or 0.0),
+                        "fecha_programa": fprog,
+                    }
+
+            total_pages = body.get("totalPages")
+            if total_pages is None or page >= int(total_pages):
+                break
+            page += 1
+
+        log.info(f"  CMG programado ({start}→{end}): {len(mejor)} registros Crucero/Tarapacá")
+    except Exception as e:
+        log.error(f"  Error CMG programado: {e}")
+    return list(mejor.values())
+
+
+def upsert_cmg_programado(registros: list[dict]) -> tuple[int, int]:
+    if not registros:
+        return 0, 0
+    sql = """
+        INSERT INTO costo_marginal_programado
+            (barra, fecha_hora, cmg_usd_mwh, fecha_programa)
+        VALUES
+            (%(barra)s, %(fecha_hora)s, %(cmg_usd_mwh)s, %(fecha_programa)s)
+        ON CONFLICT (barra, fecha_hora) DO UPDATE
+            SET cmg_usd_mwh    = EXCLUDED.cmg_usd_mwh,
+                fecha_programa = EXCLUDED.fecha_programa
+    """
+    nuevos = actualizados = 0
+    try:
+        with get_conn() as conn:
+            with conn.cursor() as cur:
+                for rec in registros:
+                    cur.execute(sql, rec)
+                    if cur.rowcount == 1: nuevos      += 1
+                    else:                actualizados += 1
+            conn.commit()
+    except Exception as e:
+        log.error(f"  Error upsert CMG programado: {e}")
     return nuevos, actualizados
 
 
@@ -839,6 +926,23 @@ def run():
     except Exception as e:
         err_str = str(e); log.error(f"  ❌ CMG: {e}"); nuevos = actualizados = 0
     log_adquisicion("cmg_nodos_s3", hoy.strftime("%Y-%m-%d"), nuevos, actualizados,
+                    int((time.time() - t0) * 1000), err_str)
+
+    # ── CMG programado PID (Crucero/Tarapacá) ─────────────────
+    # Mismo patrón paginado que el PCP. Ventana ayer→mañana para capturar el
+    # programa del día completo que CEN publica con anticipación.
+    cmgp_start = (hoy - timedelta(days=DIAS_VENTANA_PCP - 1)).strftime("%Y-%m-%d")
+    cmgp_end   = (hoy + timedelta(days=1)).strftime("%Y-%m-%d")
+    log.info(f"\n  ── CMG programado PID {cmgp_start} → {cmgp_end}")
+    t0 = time.time()
+    err_str = None
+    try:
+        regs_cmgp            = fetch_cmg_programado(cmgp_start, cmgp_end)
+        nuevos, actualizados = upsert_cmg_programado(regs_cmgp)
+        log.info(f"  ✅ CMG programado: {nuevos} nuevos, {actualizados} actualizados")
+    except Exception as e:
+        err_str = str(e); log.error(f"  ❌ CMG programado: {e}"); nuevos = actualizados = 0
+    log_adquisicion("cmg_programado_pid", cmgp_end, nuevos, actualizados,
                     int((time.time() - t0) * 1000), err_str)
 
     # ── SSCC instrucciones (ventana de días) ──────────────────

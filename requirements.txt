@@ -10,3 +10,4 @@ streamlit-autorefresh
 python-pptx
 scikit-learn
 xgboost
+supabase

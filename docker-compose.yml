@@ -1,0 +1,14 @@
+services:
+  dashboard:
+    build: .
+    container_name: ctm-dashboard
+    ports:
+      - "8501:8501"
+    env_file:
+      - .env
+    volumes:
+      # Monta el código local → cambios en archivos se reflejan sin rebuild
+      - .:/app
+      # Excluye __pycache__ del contenedor
+      - /app/__pycache__
+    restart: unless-stopped
