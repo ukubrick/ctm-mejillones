@@ -9,19 +9,29 @@ Desplegado en Streamlit Cloud. Código en GitHub (`ukubrick/ctm-mejillones`).
 Adquisición automática vía GitHub Actions cada hora (minuto 5 UTC) + corrida
 ligera de gen. real cada 30 min (minutos :25 y :55).
 
-## Workflow de potencia real cada 30 min (2026-06-24)
+## Workflows separados por concern (2026-06-24)
 
-Réplica del patrón Pulsar (`ernc-aes-dashboard`, Sesión 25). Baja el lag de la
-generación real corriéndola 3×/h en vez de 1×/h.
+Réplica del patrón Pulsar (`ernc-aes-dashboard`, Sesión 25). El job horario único se
+pasaba de los 35 min en PCP/PID (lentos paginados) y se cancelaba **antes de llegar a
+CMG / SSCC / Despacho CMG** → esos datos se congelaban. Solución: separar los endpoints
+rápidos y sensibles al tiempo real en sus propios jobs de 30 min, dejando el horario
+como red de respaldo. Cada script reutiliza las funciones de `Adquisicion.py` (el guard
+`if __name__` evita correr `run()` al importar).
 
-- **`Adquisicion_potencia.py`** — script ligero que solo corre gen-real (reutiliza
-  `fetch_generacion_real` + `upsert_generacion_real` + `log` + `log_adquisicion` de
-  `Adquisicion.py`, importándolas; el guard `if __name__` evita correr `run()` al importar).
-  Ventana `DIAS_VENTANA_POT = 2` días. Solo necesita `CEN_USER_KEY` + `DATABASE_URL`
-  (**NO** usa `CEN_OPS_KEY`; esa solo la requiere SSCC, plan Operaciones).
-- **`.github/workflows/potencia.yml`** — cron `25,55 * * * *`, timeout 15 min,
-  `concurrency: potencia-ctm cancel-in-progress` para no solaparse. Espaciado del `:05`
-  de la corrida horaria completa (`adquisicion.yml`).
+| Workflow | Script | Endpoints | Cron | Keys |
+|----------|--------|-----------|------|------|
+| Potencia real (30 min) | `Adquisicion_potencia.py` | gen-real + CMG S3 | `25,55` | `CEN_USER_KEY` |
+| Operaciones (30 min) | `Adquisicion_operaciones.py` | SSCC + Despacho CMG + Limitaciones | `10,40` | `CEN_USER_KEY` + `CEN_OPS_KEY` |
+| Adquisicion CEN Horaria | `Adquisicion.py` | **todo** (incl. PCP/PID/CMG-prog/CMG-real/solicitudes) | `5` | todas |
+
+- **`Adquisicion_potencia.py`** — gen-real (`DIAS_VENTANA_POT = 2`) + CMG S3 (GET rápido).
+- **`Adquisicion_operaciones.py`** — SSCC + instrucciones CMG (ventana `DIAS_VENTANA=7`) +
+  limitaciones (`DIAS_VENTANA_LIM=30`). Requiere `CEN_OPS_KEY` para SSCC (plan Operaciones).
+- **`Adquisicion.py` (run())** — sigue corriendo todo como respaldo. Se movió el bloque de
+  **CMG S3 ANTES de PCP/PID** (es el dato más sensible al tiempo real, no debe morir si los
+  lentos se cuelgan). Timeout subido 35→50 min. Acciones actualizadas a Node 24
+  (`checkout@v5`, `setup-python@v6`, `upload-artifact@v5`) en los 3 workflows.
+- **Crons espaciados:** horaria `:05`, operaciones `:10,:40`, potencia `:25,:55` → no se solapan.
 
 ---
 

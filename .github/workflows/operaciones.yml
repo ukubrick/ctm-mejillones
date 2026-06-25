@@ -1,0 +1,46 @@
+name: Operaciones CTM (30 min)
+
+on:
+  schedule:
+    # Minutos :10 y :40 — espaciado de la corrida horaria (:05) y de potencia (:25,:55).
+    - cron: "10,40 * * * *"
+  workflow_dispatch:
+
+# Evita solaparse consigo mismo si una corrida se atrasa.
+concurrency:
+  group: operaciones-ctm
+  cancel-in-progress: true
+
+jobs:
+  operaciones:
+    name: SSCC + Despacho CMG + Limitaciones cada 30 min
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+
+    steps:
+      - name: Checkout repositorio
+        uses: actions/checkout@v5
+
+      - name: Configurar Python 3.11
+        uses: actions/setup-python@v6
+        with:
+          python-version: "3.11"
+          cache: "pip"
+
+      - name: Instalar dependencias
+        run: pip install -r requirements.txt
+
+      - name: Adquisición operaciones (SSCC + Despacho CMG + Limitaciones)
+        env:
+          CEN_USER_KEY: ${{ secrets.CEN_USER_KEY }}
+          CEN_OPS_KEY:  ${{ secrets.CEN_OPS_KEY }}
+          DATABASE_URL: ${{ secrets.DATABASE_URL }}
+        run: python3 Adquisicion_operaciones.py
+
+      - name: Subir log como artefacto
+        if: always()
+        uses: actions/upload-artifact@v5
+        with:
+          name: log-operaciones-${{ github.run_id }}
+          path: adquisicion.log
+          retention-days: 7
