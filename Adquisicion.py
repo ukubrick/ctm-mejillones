@@ -1266,6 +1266,23 @@ def run():
         log_adquisicion("generacion_real", fecha, nuevos, dupes,
                         int((time.time() - t0) * 1000), err_str)
 
+    # ── CMG múltiples nodos (S3) ──────────────────────────────
+    # Va ANTES de PCP/PID (endpoints lentos paginados): es un GET rápido y es el
+    # dato más sensible al tiempo real → no debe quedar sin correr si PCP/PID se
+    # cuelgan y el job se cancela por timeout. (También se refresca cada 30 min en
+    # Adquisicion_potencia.py.)
+    log.info(f"\n  ── CMG Nodos CTM (S3 portal CEN)")
+    t0 = time.time()
+    err_str = None
+    try:
+        regs_cmg             = fetch_cmg_nodos()
+        nuevos, actualizados = upsert_cmg(regs_cmg)
+        log.info(f"  ✅ CMG: {nuevos} nuevos, {actualizados} actualizados")
+    except Exception as e:
+        err_str = str(e); log.error(f"  ❌ CMG: {e}"); nuevos = actualizados = 0
+    log_adquisicion("cmg_nodos_s3", hoy.strftime("%Y-%m-%d"), nuevos, actualizados,
+                    int((time.time() - t0) * 1000), err_str)
+
     # ── Generación programada PCP (rango completo en una sola llamada) ──
     # Ventana: ayer → mañana (3 días). Incluir mañana captura la programación
     # del día completo que CEN publica con anticipación. ~180 páginas ≈ 10 min.
@@ -1298,19 +1315,6 @@ def run():
     except Exception as e:
         err_str = str(e); log.error(f"  ❌ PID: {e}"); nuevos = actualizados = 0
     log_adquisicion("generacion_programada_pid", pid_end, nuevos, actualizados,
-                    int((time.time() - t0) * 1000), err_str)
-
-    # ── CMG múltiples nodos (S3) ──────────────────────────────
-    log.info(f"\n  ── CMG Nodos CTM (S3 portal CEN)")
-    t0 = time.time()
-    err_str = None
-    try:
-        regs_cmg             = fetch_cmg_nodos()
-        nuevos, actualizados = upsert_cmg(regs_cmg)
-        log.info(f"  ✅ CMG: {nuevos} nuevos, {actualizados} actualizados")
-    except Exception as e:
-        err_str = str(e); log.error(f"  ❌ CMG: {e}"); nuevos = actualizados = 0
-    log_adquisicion("cmg_nodos_s3", hoy.strftime("%Y-%m-%d"), nuevos, actualizados,
                     int((time.time() - t0) * 1000), err_str)
 
     # ── CMG programado PID (Crucero/Tarapacá) ─────────────────

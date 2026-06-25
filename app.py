@@ -44,42 +44,35 @@ VISTAS = [v for grupo in CATEGORIAS.values() for v in grupo]
 
 
 def _navegacion():
-    """Barra de menú a todo el ancho con botones nativos + session_state.
+    """Navegación tipo barra de menú de escritorio. Devuelve la vista activa.
 
-    Reemplaza a `st.popover` (que en Streamlit 1.58 quedaba fijo abierto y exigía
-    doble click): cada categoría es un botón que despliega sus vistas como botones
-    debajo de su columna. Todo es `st.button` nativo → un solo click, sin quedar fijo.
+    Cada categoría es un `st.popover` a todo el ancho que se despliega hacia abajo
+    mostrando sus vistas como botones (primary = vista activa). La categoría activa
+    muestra inline la vista seleccionada. Patrón replicado del dashboard Pulsar
+    (ernc-aes-dashboard). La categoría activa se deriva de la vista (sin estado
+    `_cat_abierta`) → un solo click, sin quedar fijo abierto.
     """
     vista = st.session_state.get("vista", VISTAS[0])
     if vista not in VISTAS:
         vista = VISTAS[0]
-    cat_abierta = st.session_state.get("_cat_abierta")
 
-    st.markdown('<div class="menubar">', unsafe_allow_html=True)
+    # Limpia estado heredado de la navegación de botones nativos anterior.
+    st.session_state.pop("_cat_abierta", None)
+
+    st.markdown("<div class='menubar'>", unsafe_allow_html=True)
     cols = st.columns(len(CATEGORIAS))
     for col, (cat, vistas_cat) in zip(cols, CATEGORIAS.items()):
         with col:
-            activa_aqui = vista in vistas_cat
-            abierta = (cat_abierta == cat)
-            flecha = "▴" if abierta else "▾"
-            etiqueta = f"{flecha}  {cat}  ·  {vista}" if activa_aqui else f"{flecha}  {cat}"
-            if st.button(etiqueta, key=f"cat_{cat}", use_container_width=True,
-                         type="primary" if (activa_aqui or abierta) else "secondary"):
-                st.session_state["_cat_abierta"] = None if abierta else cat
-                st.rerun()
+            activa = vista in vistas_cat
+            etiqueta = f"{cat}  ·  {vista}" if activa else cat
+            with st.popover(etiqueta, use_container_width=True):
+                for v in vistas_cat:
+                    if st.button(v, key=f"nav_{v}", use_container_width=True,
+                                 type="primary" if v == vista else "secondary"):
+                        st.session_state["vista"] = v
+                        st.rerun()
     st.markdown("</div>", unsafe_allow_html=True)
 
-    # Panel desplegable: vistas de la categoría abierta, bajo su columna.
-    if cat_abierta in CATEGORIAS:
-        idx = list(CATEGORIAS).index(cat_abierta)
-        cols2 = st.columns(len(CATEGORIAS))
-        with cols2[idx]:
-            for v in CATEGORIAS[cat_abierta]:
-                if st.button(v, key=f"nav_{v}", use_container_width=True,
-                             type="primary" if v == vista else "secondary"):
-                    st.session_state["vista"] = v
-                    st.session_state["_cat_abierta"] = None
-                    st.rerun()
     st.markdown("<div style='height:10px'></div>", unsafe_allow_html=True)
     return vista
 

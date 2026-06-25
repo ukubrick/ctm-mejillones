@@ -30,6 +30,8 @@ from Adquisicion import (
     TZ_CHILE,
     fetch_generacion_real,
     upsert_generacion_real,
+    fetch_cmg_nodos,
+    upsert_cmg,
     log_adquisicion,
 )
 
@@ -62,7 +64,22 @@ def run():
         log_adquisicion("generacion_real", fecha, nuevos, dupes,
                         int((time.time() - t0) * 1000), err_str)
 
-    log.info(f"\n  Fin — {total} registros de potencia procesados\n")
+    # ── CMG nodos (S3) ── GET rápido, se actualiza ~15 min en el S3 del CEN.
+    # Corre aquí cada 30 min para tener el CMG lo más cercano a tiempo real,
+    # sin depender del job horario completo (que puede colgarse en PCP/PID).
+    log.info(f"\n  ── CMG Nodos CTM (S3 portal CEN)")
+    t0 = time.time()
+    err_str = None
+    try:
+        regs_cmg             = fetch_cmg_nodos()
+        nuevos, actualizados = upsert_cmg(regs_cmg)
+        log.info(f"  ✅ CMG: {nuevos} nuevos, {actualizados} actualizados")
+    except Exception as e:
+        err_str = str(e); log.error(f"  ❌ CMG: {e}"); nuevos = actualizados = 0
+    log_adquisicion("cmg_nodos_s3", hoy.strftime("%Y-%m-%d"), nuevos, actualizados,
+                    int((time.time() - t0) * 1000), err_str)
+
+    log.info(f"\n  Fin — {total} registros de potencia + CMG procesados\n")
 
 
 if __name__ == "__main__":
