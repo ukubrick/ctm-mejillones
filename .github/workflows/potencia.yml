@@ -1,0 +1,45 @@
+name: Potencia real CTM (30 min)
+
+on:
+  schedule:
+    # Minutos :25 y :55 — espaciado respecto a la corrida horaria completa (:05).
+    - cron: "25,55 * * * *"
+  workflow_dispatch:
+
+# Evita solaparse consigo mismo si una corrida se atrasa.
+concurrency:
+  group: potencia-ctm
+  cancel-in-progress: true
+
+jobs:
+  potencia:
+    name: Gen. real CTM cada 30 min
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+
+    steps:
+      - name: Checkout repositorio
+        uses: actions/checkout@v4
+
+      - name: Configurar Python 3.11
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
+          cache: "pip"
+
+      - name: Instalar dependencias
+        run: pip install -r requirements.txt
+
+      - name: Adquisición potencia real (gen-real)
+        env:
+          CEN_USER_KEY: ${{ secrets.CEN_USER_KEY }}
+          DATABASE_URL: ${{ secrets.DATABASE_URL }}
+        run: python3 Adquisicion_potencia.py
+
+      - name: Subir log como artefacto
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: log-potencia-${{ github.run_id }}
+          path: adquisicion.log
+          retention-days: 7

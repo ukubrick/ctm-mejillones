@@ -6,7 +6,22 @@ Monitorea generación real vs programada + CMG + SSCC para 4 unidades:
 ANG1, ANG2 (Angamos) y CCR1, CCR2 (Cochrane).
 
 Desplegado en Streamlit Cloud. Código en GitHub (`ukubrick/ctm-mejillones`).
-Adquisición automática vía GitHub Actions cada hora (minuto 5 UTC).
+Adquisición automática vía GitHub Actions cada hora (minuto 5 UTC) + corrida
+ligera de gen. real cada 30 min (minutos :25 y :55).
+
+## Workflow de potencia real cada 30 min (2026-06-24)
+
+Réplica del patrón Pulsar (`ernc-aes-dashboard`, Sesión 25). Baja el lag de la
+generación real corriéndola 3×/h en vez de 1×/h.
+
+- **`Adquisicion_potencia.py`** — script ligero que solo corre gen-real (reutiliza
+  `fetch_generacion_real` + `upsert_generacion_real` + `log` + `log_adquisicion` de
+  `Adquisicion.py`, importándolas; el guard `if __name__` evita correr `run()` al importar).
+  Ventana `DIAS_VENTANA_POT = 2` días. Solo necesita `CEN_USER_KEY` + `DATABASE_URL`
+  (**NO** usa `CEN_OPS_KEY`; esa solo la requiere SSCC, plan Operaciones).
+- **`.github/workflows/potencia.yml`** — cron `25,55 * * * *`, timeout 15 min,
+  `concurrency: potencia-ctm cancel-in-progress` para no solaparse. Espaciado del `:05`
+  de la corrida horaria completa (`adquisicion.yml`).
 
 ---
 
