@@ -34,17 +34,20 @@ COLORES = {
 LABELS = {"ANG1": "Angamos U1", "ANG2": "Angamos U2", "CCR1": "Cochrane U1", "CCR2": "Cochrane U2"}
 
 # Colores ESTÁNDAR de las series de tiempo — fijos, no cambian con la unidad.
-# Evita el choque visual con las áreas verde/roja de desviación.
+# Paleta sobria y jerárquica: una sola "línea protagonista" (Real, azul profundo,
+# sólida y gruesa); el resto en tonos secundarios/atenuados y con trazo discontinuo
+# para que se lean como referencias y no compitan visualmente.
 SERIE = {
-    "real":     "#1E293B",            # gris azulado oscuro (generación real)
-    "prog":     "#475569",            # gris pizarra oscuro, punteado (programada PCP)
-    "prog_pid": "#0EA5E9",            # cyan, punteado (programada PID intra-día)
-    "cmg":      "#7C3AED",            # violeta (CMG real)
-    "cmg_fill": "rgba(124,58,237,0.10)",
-    "cmg_prog": "#F59E0B",            # ámbar, punteado (CMG programado)
-    "over":     "rgba(22,163,74,0.25)",   # sobregeneración (real > prog)
-    "under":    "rgba(239,68,68,0.25)",   # subgeneración  (real < prog)
-    "minimo":   "#94A3B8",            # línea de mínimo técnico
+    "real":     "#0B5394",            # azul profundo — línea protagonista (gen. real)
+    "prog":     "#9AA7B8",            # gris neutro, dashed — referencia (programada PCP)
+    "prog_pid": "#E8A33D",            # ámbar suave, dotted — programada PID (intra-día)
+    "cmg":      "#7C3AED",            # violeta — CMG real
+    "cmg_fill": "rgba(124,58,237,0.07)",
+    "cmg_prog": "#10B981",            # verde esmeralda, dashed — CMG programado
+    "demanda":  "#64748B",            # gris pizarra, dotted — demanda pronosticada
+    "over":     "rgba(16,185,129,0.16)",  # sobregeneración (real > prog)
+    "under":    "rgba(239,68,68,0.14)",   # subgeneración  (real < prog)
+    "minimo":   "#CBD5E1",            # línea de mínimo técnico
 }
 
 # Potencias máximas declaradas ante el CEN (MW)

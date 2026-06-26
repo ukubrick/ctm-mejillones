@@ -20,7 +20,7 @@ CMG_A_DEMANDA = {
 
 
 def _chart_unidad(unidad, df_r, df_p, df_pid, df_c, df_cp, df_dem, barra_dem,
-                  mostrar_prog, mostrar_cmg, mostrar_desv, nodo_label):
+                  vis, nodo_label):
     df_u   = df_r[df_r["unidad"] == unidad].sort_values("fecha_hora")
     df_up  = df_p[df_p["unidad"] == unidad].sort_values("fecha_hora") if not df_p.empty else pd.DataFrame()
     df_upid = (df_pid[df_pid["unidad"] == unidad].sort_values("fecha_hora")
@@ -30,9 +30,9 @@ def _chart_unidad(unidad, df_r, df_p, df_pid, df_c, df_cp, df_dem, barra_dem,
         st.info(f"Sin datos para {LABELS[unidad]} en el período.")
         return
 
-    tiene_cmg  = mostrar_cmg and not df_c.empty
-    tiene_prog = mostrar_prog and not df_up.empty
-    tiene_dem  = tiene_cmg and df_dem is not None and not df_dem.empty
+    tiene_cmg  = vis["cmg"] and not df_c.empty
+    tiene_prog = vis["pcp"] and not df_up.empty
+    tiene_dem  = tiene_cmg and vis["demanda"] and df_dem is not None and not df_dem.empty
     n_rows  = 2 if tiene_cmg else 1
     heights = [0.62, 0.38] if n_rows == 2 else [1.0]
 
@@ -43,7 +43,7 @@ def _chart_unidad(unidad, df_r, df_p, df_pid, df_c, df_cp, df_dem, barra_dem,
 
     fig.add_trace(go.Scatter(
         x=df_u["fecha_hora"], y=df_u["gen_real_mw"], name="Real", mode="lines",
-        line=dict(color=SERIE["real"], width=1.8),
+        line=dict(color=SERIE["real"], width=2.4),
         hovertemplate="<b>Real</b> %{x|%d/%m %H:%M}<br>%{y:.1f} MW<extra></extra>",
     ), row=1, col=1)
 
@@ -59,11 +59,11 @@ def _chart_unidad(unidad, df_r, df_p, df_pid, df_c, df_cp, df_dem, barra_dem,
     if tiene_prog:
         fig.add_trace(go.Scatter(
             x=df_up["fecha_hora"], y=df_up["gen_programada_mw"], name="Programada PCP", mode="lines",
-            line=dict(color=SERIE["prog"], width=1.4, dash="dash"),
+            line=dict(color=SERIE["prog"], width=1.6, dash="dash"),
             hovertemplate="<b>Programada PCP</b> %{x|%d/%m %H:%M}<br>%{y:.1f} MW<extra></extra>",
         ), row=1, col=1)
 
-        if mostrar_desv:
+        if vis["desv"]:
             idx_real = df_u.set_index("fecha_hora")["gen_real_mw"]
             idx_prog = df_up.set_index("fecha_hora")["gen_programada_mw"]
             idx_com  = idx_real.index.union(idx_prog.index)
@@ -88,10 +88,10 @@ def _chart_unidad(unidad, df_r, df_p, df_pid, df_c, df_cp, df_dem, barra_dem,
                     name="Subgeneración", hoverinfo="skip"), row=1, col=1)
 
     # Overlay programada PID (intra-día): reajuste del PCP durante el día
-    if mostrar_prog and not df_upid.empty:
+    if vis["pid"] and not df_upid.empty:
         fig.add_trace(go.Scatter(
             x=df_upid["fecha_hora"], y=df_upid["gen_programada_mw"], name="Programada PID", mode="lines",
-            line=dict(color=SERIE["prog_pid"], width=1.4, dash="dot"),
+            line=dict(color=SERIE["prog_pid"], width=1.6, dash="dot"),
             hovertemplate="<b>Programada PID</b> %{x|%d/%m %H:%M}<br>%{y:.1f} MW<extra></extra>",
         ), row=1, col=1)
 
@@ -114,22 +114,22 @@ def _chart_unidad(unidad, df_r, df_p, df_pid, df_c, df_cp, df_dem, barra_dem,
     if tiene_cmg:
         fig.add_trace(go.Scatter(
             x=df_c["fecha_hora"], y=df_c["cmg_usd_mwh"], name=f"CMG real {nodo_label}", mode="lines",
-            line=dict(color=SERIE["cmg"], width=1.8), fill="tozeroy",
+            line=dict(color=SERIE["cmg"], width=2.2), fill="tozeroy",
             fillcolor=SERIE["cmg_fill"],
             hovertemplate="<b>CMG real</b> %{x|%d/%m %H:%M}<br>%{y:.1f} USD/MWh<extra></extra>",
         ), row=2, col=1)
         # Overlay CMG programado (PID), para comparar y tomar decisiones de programación
-        if df_cp is not None and not df_cp.empty:
+        if vis["cmg_prog"] and df_cp is not None and not df_cp.empty:
             fig.add_trace(go.Scatter(
                 x=df_cp["fecha_hora"], y=df_cp["cmg_usd_mwh"], name="CMG programado", mode="lines",
-                line=dict(color=SERIE["cmg_prog"], width=1.4, dash="dash"),
+                line=dict(color=SERIE["cmg_prog"], width=1.6, dash="dash"),
                 hovertemplate="<b>CMG programado</b> %{x|%d/%m %H:%M}<br>%{y:.1f} USD/MWh<extra></extra>",
             ), row=2, col=1)
         # Overlay demanda pronosticada (eje secundario): alta demanda anticipa CMG alto
         if tiene_dem:
             fig.add_trace(go.Scatter(
                 x=df_dem["fecha_hora"], y=df_dem["energia_mwh"], name=f"Demanda {barra_dem}", mode="lines",
-                line=dict(color="#64748B", width=1.2, dash="dot"),
+                line=dict(color=SERIE["demanda"], width=1.4, dash="dot"),
                 hovertemplate="<b>Demanda</b> %{x|%d/%m %H:%M}<br>%{y:,.0f} MWh<extra></extra>",
             ), row=2, col=1, secondary_y=True)
         prom_cmg = df_c["cmg_usd_mwh"].mean()
@@ -164,7 +164,7 @@ def _chart_unidad(unidad, df_r, df_p, df_pid, df_c, df_cp, df_dem, barra_dem,
     st.plotly_chart(fig, use_container_width=True,
                     config={"displayModeBar": False, "responsive": True}, key=f"chart_unidad_{unidad}")
 
-    if mostrar_prog and df_up.empty:
+    if vis["pcp"] and df_up.empty:
         st.caption("Sin datos de programada — se importan automáticamente desde CEN PCP cada hora. "
                    "El ingreso manual está disponible más abajo.")
 
@@ -191,9 +191,29 @@ def render_gen_unidad(df_r, df_p, df_c, mostrar_prog, mostrar_cmg, nodo_cmg, s=N
     nl = NOMBRES_NODO.get(nodo_cmg, "Crucero 220kV")
     st.markdown(f'<div class="sec">POTENCIA REAL vs PROGRAMADA + CMG {nl.upper()} · POR UNIDAD</div>', unsafe_allow_html=True)
 
-    mostrar_desv = False
-    if not df_p.empty and mostrar_prog:
-        mostrar_desv = st.checkbox("Mostrar área de desviación (Real vs Programada)", value=True)
+    # ── Control de series visibles ──────────────────────────────────────────
+    # La línea Real siempre se muestra; el resto se activa/desactiva aquí para
+    # evitar saturar el gráfico. Los valores del sidebar actúan como default.
+    with st.expander("Series visibles", expanded=False):
+        c1, c2, c3 = st.columns(3)
+        with c1:
+            st.caption("Generación")
+            v_pcp  = st.checkbox("Programada PCP", value=mostrar_prog, key="vis_pcp")
+            v_pid  = st.checkbox("Programada PID", value=False, key="vis_pid")
+            v_desv = st.checkbox("Área de desviación", value=True, key="vis_desv",
+                                 disabled=not v_pcp)
+        with c2:
+            st.caption("Costo marginal")
+            v_cmg  = st.checkbox("CMG real", value=mostrar_cmg, key="vis_cmg")
+            v_cmgp = st.checkbox("CMG programado", value=False, key="vis_cmgp",
+                                 disabled=not v_cmg)
+        with c3:
+            st.caption("Contexto")
+            v_dem  = st.checkbox("Demanda pronosticada", value=False, key="vis_dem",
+                                 disabled=not v_cmg)
+
+    vis = {"pcp": v_pcp, "pid": v_pid, "desv": v_desv and v_pcp,
+           "cmg": v_cmg, "cmg_prog": v_cmgp, "demanda": v_dem}
 
     st.session_state.setdefault("unidad_sel", "ANG1")
     cols_btn = st.columns(4)
@@ -206,14 +226,13 @@ def render_gen_unidad(df_r, df_p, df_c, mostrar_prog, mostrar_cmg, nodo_cmg, s=N
                 st.rerun()
 
     u_act = st.session_state["unidad_sel"]
-    df_cp  = load_cmg_prog(s, e, nodo_cmg) if (mostrar_cmg and s and e) else None
-    df_pid = load_prog_pid(s, e) if (mostrar_prog and s and e) else None
+    df_cp  = load_cmg_prog(s, e, nodo_cmg) if (vis["cmg_prog"] and s and e) else None
+    df_pid = load_prog_pid(s, e) if (vis["pid"] and s and e) else None
     barra_dem = CMG_A_DEMANDA.get(nodo_cmg, "Crucero220")
-    df_dem = load_pronostico_demanda(s, e, barra_dem) if (mostrar_cmg and s and e) else None
+    df_dem = load_pronostico_demanda(s, e, barra_dem) if (vis["demanda"] and s and e) else None
     st.markdown(
         f'<p style="color:#334155;font-weight:600;font-size:0.9rem;margin:0.4rem 0 0.3rem">'
         f'{LABELS[u_act]} · Real vs Programada (MW) + CMG {nl} (USD/MWh)</p>',
         unsafe_allow_html=True,
     )
-    _chart_unidad(u_act, df_r, df_p, df_pid, df_c, df_cp, df_dem, barra_dem,
-                  mostrar_prog, mostrar_cmg, mostrar_desv, nl)
+    _chart_unidad(u_act, df_r, df_p, df_pid, df_c, df_cp, df_dem, barra_dem, vis, nl)
