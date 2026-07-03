@@ -26,7 +26,7 @@ def _limitacion_activa(df_lim, unidad):
 
 
 def render_kpis(df_r, df_lim=None):
-    st.markdown('<div class="sec">GENERACIÓN REAL · PROMEDIO DEL PERÍODO</div>', unsafe_allow_html=True)
+    st.markdown('<div class="sec">Generación real · promedio del período</div>', unsafe_allow_html=True)
 
     # ── Detección de trips (último dato en 0) + cruce con limitaciones ───────
     trips = []

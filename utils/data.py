@@ -191,6 +191,15 @@ def load_solicitudes(s, e):
         en_part = (pd_ >= sd) & (pd_ < ed)
         df = df[solapa | en_part].sort_values("fecha_inicio", ascending=False)
         df = df.drop(columns=[c for c in ["partition_date"] if c in df.columns])
+
+    # Relevancia CTM: solo solicitudes vinculadas a las instalaciones del complejo
+    # o su entorno de transmisión (Angamos, Cochrane, S/E Laberinto, Kapatur, Crucero).
+    if not df.empty:
+        claves = ("ANGAMOS", "COCHRANE", "LABERINTO", "KAPATUR", "CRUCERO")
+        campos = [c for c in ("empresa_nombre", "instalacion_nombre") if c in df.columns]
+        if campos:
+            texto = df[campos].fillna("").agg(" ".join, axis=1).str.upper()
+            df = df[texto.apply(lambda t: any(k in t for k in claves))]
     return df
 
 

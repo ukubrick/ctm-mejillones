@@ -19,7 +19,7 @@ _SQL_UP_REAL = """INSERT INTO generacion_real (unidad, gen_real_mw, fecha_hora, 
 
 
 def render_programada_manual(s, e, hoy):
-    st.markdown('<div class="sec">POTENCIA PROGRAMADA · CEN PCP + INGRESO MANUAL</div>', unsafe_allow_html=True)
+    st.markdown('<div class="sec">Potencia programada · PCP e ingreso manual</div>', unsafe_allow_html=True)
     st.info("Los datos de programación se importan automáticamente desde la API CEN (PCP) cada hora. "
             "El ingreso manual **tiene prioridad**: si cargas un valor manual para una unidad/hora, "
             "ese valor prevalece sobre el PCP y no lo pisa la adquisición automática.")
@@ -73,7 +73,7 @@ def render_programada_manual(s, e, hoy):
 
 
 def render_real_manual(s, e, hoy):
-    st.markdown('<div class="sec">GENERACIÓN REAL · INGRESO MANUAL DE RESPALDO</div>', unsafe_allow_html=True)
+    st.markdown('<div class="sec">Generación real · ingreso manual de respaldo</div>', unsafe_allow_html=True)
     st.info("Los datos de generación real se importan automáticamente desde la API CEN (SIPUB) cada hora. "
             "El ingreso manual **tiene prioridad**: la hora que cargues queda marcada como MANUAL y "
             "la adquisición automática ya no la sobreescribe (útil para reemplazos/correcciones forzadas). "

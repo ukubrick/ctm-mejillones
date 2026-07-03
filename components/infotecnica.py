@@ -51,7 +51,7 @@ def _ficha(unidad, datos, fuente):
 
 
 def render_infotecnica():
-    st.markdown('<div class="sec">INFOTÉCNICA · MAESTRO DE UNIDADES CEN</div>', unsafe_allow_html=True)
+    st.markdown('<div class="sec">Infotécnica · maestro de unidades</div>', unsafe_allow_html=True)
     st.caption("Datos técnicos declarados ante el Coordinador (/unidades-generadoras/v4). "
                "Si aún no hay datos adquiridos, se muestran los valores de referencia del proyecto.")
 

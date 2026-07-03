@@ -39,7 +39,7 @@ def _cards(df_view):
 
 
 def render_solicitudes(s, e):
-    st.markdown('<div class="sec">SOLICITUDES DE TRABAJO — AES ANDES</div>', unsafe_allow_html=True)
+    st.markdown('<div class="sec">Solicitudes de trabajo</div>', unsafe_allow_html=True)
     df = load_solicitudes(s, e)
     if df.empty:
         st.info("Sin solicitudes de trabajo registradas para el período seleccionado.")

@@ -26,7 +26,7 @@ _CUERPO_GUIA = (
 
 
 def render_sscc(s, e):
-    st.markdown('<div class="sec">SERVICIOS COMPLEMENTARIOS (SSCC)</div>', unsafe_allow_html=True)
+    st.markdown('<div class="sec">Servicios complementarios (SSCC)</div>', unsafe_allow_html=True)
     render_guia("Guía de instrucciones SSCC — CSF, CPF, CT, CTF", _CUERPO_GUIA)
 
     df = load_sscc(s, e)

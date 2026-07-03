@@ -22,7 +22,7 @@ _CUERPO_GUIA = (
 
 
 def render_despacho_cmg(s, e):
-    st.markdown('<div class="sec">INSTRUCCIONES DE DESPACHO (CMG)</div>', unsafe_allow_html=True)
+    st.markdown('<div class="sec">Instrucciones de despacho (CMG)</div>', unsafe_allow_html=True)
     render_guia("Guía de instrucciones de despacho CMG", _CUERPO_GUIA)
 
     df = load_instrucciones_cmg(s, e)

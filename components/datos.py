@@ -10,7 +10,7 @@ from utils.data import load_bit
 
 
 def render_datos_horarios(df_r, df_c, s):
-    st.markdown('<div class="sec">DATOS HORARIOS</div>', unsafe_allow_html=True)
+    st.markdown('<div class="sec">Datos horarios</div>', unsafe_allow_html=True)
     if not st.checkbox("Ver tabla completa", value=False):
         return
     df_pv = df_r.pivot_table(index="fecha_hora", columns="unidad", values="gen_real_mw", aggfunc="mean").reset_index()
@@ -23,7 +23,7 @@ def render_datos_horarios(df_r, df_c, s):
 
 
 def render_bitacora(s, e):
-    st.markdown('<div class="sec">BITÁCORA DE NOVEDADES OPERACIONALES</div>', unsafe_allow_html=True)
+    st.markdown('<div class="sec">Bitácora de novedades operacionales</div>', unsafe_allow_html=True)
     tab1, tab2 = st.tabs(["Ver registros", "Nueva novedad"])
     with tab1:
         fu = st.radio("Filtrar", ["Todas"] + UNIDADES, horizontal=True, label_visibility="collapsed")

@@ -16,7 +16,7 @@ from components._common import metricas_precision
 
 
 def render_estadisticas(df_r, df_p, df_c, s=None, e=None):
-    st.markdown('<div class="sec">ESTADÍSTICOS · APORTE, PRECISIÓN Y PRECIOS</div>',
+    st.markdown('<div class="sec">Estadísticos · aporte, precisión y precios</div>',
                 unsafe_allow_html=True)
 
     if df_r.empty:

@@ -10,7 +10,6 @@ from zoneinfo import ZoneInfo
 import streamlit as st
 import pandas as pd
 
-from config import NOMBRES_NODO
 from utils.db import test_conn, last_ts
 from utils.data import load_real, load_prog, load_cmg, load_sscc, load_limitaciones
 from utils.reports import generar_pdf, generar_ppt
@@ -74,9 +73,9 @@ def render_sidebar():
     """Renderiza el sidebar y devuelve dict de filtros."""
     with st.sidebar:
         st.markdown(
-            '<div style="font-size:22px;font-weight:800;color:white;letter-spacing:-0.5px;margin-bottom:2px">Complejo Térmico</div>'
-            '<div style="font-size:22px;font-weight:800;color:#4DC8DC;letter-spacing:-0.5px;margin-bottom:6px">Mejillones</div>'
-            '<p style="font-size:0.72rem;color:rgba(255,255,255,0.55);margin-bottom:0.3rem;font-weight:500;letter-spacing:0.04em">AES Andes · Monitoreo Operacional</p>',
+            '<div style="font-size:23px;font-weight:800;color:white;letter-spacing:-0.6px;line-height:1.05">Complejo Térmico</div>'
+            '<div style="font-size:23px;font-weight:800;color:#5FE0C8;letter-spacing:-0.6px;margin-bottom:7px">Mejillones</div>'
+            '<p style="font-size:0.7rem;color:rgba(255,255,255,0.6);margin:0 0 0.2rem;font-weight:600;letter-spacing:0.14em;text-transform:uppercase">Monitoreo Operacional</p>',
             unsafe_allow_html=True,
         )
 
@@ -131,8 +130,9 @@ def render_sidebar():
         """, unsafe_allow_html=True)
 
         st.markdown("---")
-        st.markdown('<p style="font-size:0.72rem;font-weight:700;letter-spacing:0.06em;'
-                    'color:#E2E8F0;margin-bottom:2px">PERÍODO</p>', unsafe_allow_html=True)
+        st.markdown('<p style="font-size:0.66rem;font-weight:700;letter-spacing:0.14em;'
+                    'color:#C7D2FE;margin-bottom:4px;text-transform:uppercase">Período de análisis</p>',
+                    unsafe_allow_html=True)
         hoy = date.today()
         fi = st.date_input("Desde", value=hoy - timedelta(days=7), max_value=hoy)
         ff = st.date_input("Hasta", value=hoy, max_value=hoy)
@@ -140,37 +140,30 @@ def render_sidebar():
             st.error("Fecha inicio > fin")
             st.stop()
 
-        st.markdown("---")
-        mostrar_prog = st.checkbox("Mostrar programada", value=True)
-        mostrar_cmg  = st.checkbox("Mostrar CMG en gráficos", value=True)
-        nodo_cmg = "CRUCERO_______220"
-        if mostrar_cmg:
-            nodo_cmg = st.radio(
-                "Nodo CMG", list(NOMBRES_NODO.keys()),
-                format_func=lambda x: NOMBRES_NODO[x], key="nodo_cmg_sel",
-            )
-
-        st.markdown("---")
-        if st.button("Actualizar datos"):
+        # Bloque de acciones agrupado (botones juntos y centrados).
+        st.markdown("<div style='height:14px'></div>", unsafe_allow_html=True)
+        if st.button("↻  Actualizar datos"):
             st.cache_data.clear()
             st.rerun()
-
-        st.markdown("---")
-        st.markdown('<p style="font-size:0.72rem;font-weight:600;color:#E2E8F0">EXPORTAR REPORTE</p>', unsafe_allow_html=True)
+        st.markdown('<p style="font-size:0.62rem;font-weight:700;letter-spacing:0.14em;'
+                    'color:#C7D2FE;margin:6px 0 2px;text-transform:uppercase;text-align:center">Exportar reporte</p>',
+                    unsafe_allow_html=True)
         _render_export(fi, ff)
 
+        # El nodo CMG ahora se elige en la vista Resumen; se persiste en session_state.
+        nodo_cmg = st.session_state.get("nodo_cmg", "CRUCERO_______220")
+
         st.markdown(f"""
-        <div style="border-top:1px solid rgba(255,255,255,0.12);padding-top:10px;margin-top:4px;text-align:center;font-size:0.68rem;color:rgba(255,255,255,0.45)">
-            {datetime.now().strftime("%d/%m/%Y %H:%M")}<br>
-            Dashboard creado por<br>
-            <b style="color:rgba(255,255,255,0.70)">Erick Herrera</b><br>AES Andes
+        <div style="border-top:1px solid rgba(255,255,255,0.14);padding-top:12px;margin-top:16px;text-align:center;font-size:0.68rem;color:rgba(255,255,255,0.5)">
+            {datetime.now().strftime("%d/%m/%Y · %H:%M")}<br>
+            Creado por <b style="color:rgba(255,255,255,0.8)">Erick Herrera</b>
         </div>
         """, unsafe_allow_html=True)
 
     return {
         "fi": fi, "ff": ff, "hoy": hoy,
         "s": fi.strftime("%Y-%m-%d"), "e": ff.strftime("%Y-%m-%d"),
-        "mostrar_prog": mostrar_prog, "mostrar_cmg": mostrar_cmg, "nodo_cmg": nodo_cmg,
+        "mostrar_prog": True, "mostrar_cmg": True, "nodo_cmg": nodo_cmg,
     }
 
 

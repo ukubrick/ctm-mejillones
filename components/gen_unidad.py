@@ -220,8 +220,18 @@ def _chart_unidad(unidad, df_r, df_p, df_pid, df_c, df_cp, df_dem, barra_dem,
 
 
 def render_gen_unidad(df_r, df_p, df_c, mostrar_prog, mostrar_cmg, nodo_cmg, s=None, e=None):
+    st.markdown('<div class="sec">Generación por unidad · real vs programada y costo marginal</div>',
+                unsafe_allow_html=True)
+
+    # Selector de nodo CMG (antes en el sidebar). Persiste en session_state["nodo_cmg"]
+    # → app.py lo lee para cargar df_c en la próxima corrida.
+    _nodos = list(NOMBRES_NODO.keys())
+    sc1, _ = st.columns([1, 2])
+    with sc1:
+        nodo_cmg = st.radio("Nodo CMG", _nodos,
+                            index=_nodos.index(nodo_cmg) if nodo_cmg in _nodos else 0,
+                            format_func=lambda x: NOMBRES_NODO[x], horizontal=True, key="nodo_cmg")
     nl = NOMBRES_NODO.get(nodo_cmg, "Crucero 220kV")
-    st.markdown(f'<div class="sec">POTENCIA REAL vs PROGRAMADA + CMG {nl.upper()} · POR UNIDAD</div>', unsafe_allow_html=True)
 
     # ── Control de series visibles ──────────────────────────────────────────
     # La línea Real siempre se muestra; el resto se activa/desactiva aquí para

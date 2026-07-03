@@ -30,7 +30,7 @@ def render_novedades(s, e):
     df_d = load_instrucciones_cmg(s, e)
     df_s = load_sscc(s, e)
 
-    st.markdown('<div class="sec">NOVEDADES POR UNIDAD · ESTADO ACTUAL</div>', unsafe_allow_html=True)
+    st.markdown('<div class="sec">Novedades por unidad · estado actual</div>', unsafe_allow_html=True)
     cols = st.columns(4)
     for col, u in zip(cols, UNIDADES):
         c = COLORES[u]["line"]

@@ -50,7 +50,7 @@ def _card_html(row):
 
 
 def render_limitaciones(s, e):
-    st.markdown('<div class="sec">LIMITACIONES DE TRANSMISIÓN — ANG / CCR</div>', unsafe_allow_html=True)
+    st.markdown('<div class="sec">Limitaciones de transmisión</div>', unsafe_allow_html=True)
     df_lim = load_limitaciones(s, e)
     if df_lim.empty:
         st.info("Sin limitaciones registradas para el período seleccionado.")

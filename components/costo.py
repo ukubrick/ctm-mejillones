@@ -13,7 +13,7 @@ from utils.plotly_theme import hex_to_rgba
 
 
 def render_costo(df_r, df_c, s=None, e=None, nodo_cmg="CRUCERO_______220", df_p=None):
-    st.markdown('<div class="sec">ANÁLISIS DE COSTO · CMG × GENERACIÓN</div>', unsafe_allow_html=True)
+    st.markdown('<div class="sec">Análisis de costo · CMG × generación</div>', unsafe_allow_html=True)
 
     if df_c.empty:
         st.info("Sin datos de CMG para calcular estadísticos de costo.")

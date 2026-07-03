@@ -75,7 +75,7 @@ def _kpi(col, val, lbl, color=AES_AZUL):
 
 # ══════════════════════════════════════════════════════════════════════════════
 def render_ml():
-    st.markdown('<div class="sec">ANÁLISIS PREDICTIVO · MODELOS ML</div>', unsafe_allow_html=True)
+    st.markdown('<div class="sec">Análisis predictivo · modelos ML</div>', unsafe_allow_html=True)
     st.caption("Modelos entrenados sobre el histórico de Supabase (se recargan cada hora). "
                "El forecast de CMG anticipa el precio; la detección de anomalías vigila la operación.")
     sub = st.radio("Modelo", ["Forecast CMG", "Anomalías de generación"],

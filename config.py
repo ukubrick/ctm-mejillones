@@ -275,15 +275,19 @@ p,span,div,label {{ font-family:'Inter',sans-serif; }}
 .kpi-sub {{ font-size:0.75rem; color:var(--muted); margin-top:0.4rem; }}
 .kpi-delta {{ font-size:0.78rem; margin-top:0.5rem; font-weight:600; }}
 
-/* ── Títulos de sección (subrayado con degradado AES) ─────────────────── */
+/* ── Títulos de sección (sentence case + acento degradado corto) ──────── */
 .sec {{
-  font-size:0.82rem; font-weight:800; letter-spacing:0.12em; text-transform:uppercase;
-  color:#334155; padding-bottom:0.5rem; margin:1.8rem 0 1rem; position:relative;
-  border-bottom:none;
+  font-size:1.05rem; font-weight:700; letter-spacing:-0.01em; text-transform:none;
+  color:#1E293B; padding-bottom:0.55rem; margin:1.9rem 0 1.1rem; position:relative;
+  border-bottom:1px solid var(--bord);
 }}
 .sec::after {{
-  content:""; position:absolute; left:0; bottom:0; height:3px; width:100%;
-  background:{AES_GRAD}; border-radius:2px; opacity:0.9;
+  content:""; position:absolute; left:0; bottom:-1px; height:3px; width:54px;
+  background:{AES_GRAD_BTN}; border-radius:2px;
+}}
+.sec .sec-sub {{
+  display:block; font-size:0.76rem; font-weight:500; color:var(--muted);
+  letter-spacing:0; margin-top:2px;
 }}
 
 /* ── Dots de estado ───────────────────────────────────────────────────── */

@@ -43,6 +43,15 @@ st.markdown(get_css(), unsafe_allow_html=True)
 VISTAS = ["Resumen", "Análisis", "Restricciones", "Datos"]
 
 
+def fecha_es(s):
+    """'YYYY-MM-DD' → 'dd/mm/yyyy' (sin dependencias de locale)."""
+    try:
+        y, m, d = s.split("-")
+        return f"{d}/{m}/{y}"
+    except Exception:
+        return s
+
+
 def _navegacion():
     """Barra de navegación plana (segmented control). Devuelve la vista activa."""
     vista = st.session_state.get("vista", VISTAS[0])
@@ -70,15 +79,17 @@ def main():
 
     nodo_nombre = NOMBRES_NODO.get(f["nodo_cmg"], "Crucero 220kV")
     st.markdown(
-        '<h1 style="font-size:30px;font-weight:800;letter-spacing:-0.5px;margin-bottom:2px;'
-        'background:linear-gradient(100deg,#22A95B 0%,#1FB6E5 45%,#3D53E8 72%,#7C4DE0 100%);'
+        '<h1 style="font-size:33px;font-weight:800;letter-spacing:-0.8px;margin-bottom:0;line-height:1.1;'
+        'background:linear-gradient(100deg,#22A95B 0%,#1FB6E5 42%,#3D53E8 70%,#7C4DE0 100%);'
         '-webkit-background-clip:text;background-clip:text;-webkit-text-fill-color:transparent;'
-        'display:inline-block">Dashboard Operacional — Complejo Térmico Mejillones</h1>',
+        'display:inline-block">Complejo Térmico Mejillones</h1>',
         unsafe_allow_html=True,
     )
     st.markdown(
-        f'<p style="color:#6B7280;font-size:0.85rem;margin-top:-0.3rem">Período {s} → {e} · '
-        f'Generación real + Programada PCP + CMG {nodo_nombre}</p>',
+        f'<p style="color:#334155;font-size:0.95rem;font-weight:600;margin:0.15rem 0 0">'
+        f'Panel operacional · Angamos &amp; Cochrane</p>'
+        f'<p style="color:#94A3B8;font-size:0.8rem;margin:0.1rem 0 0">'
+        f'{fecha_es(s)} → {fecha_es(e)} · Costo marginal nodo {nodo_nombre}</p>',
         unsafe_allow_html=True,
     )
 
@@ -128,7 +139,7 @@ def main():
     st.markdown("""
     <div style="margin-top:3rem;padding-top:1rem;border-top:1px solid #E2E8F0;
                 text-align:center;font-size:0.78rem;color:#94A3B8;">
-        Dashboard creado por <strong style="color:#64748B;">Erick Herrera</strong> · AES Andes
+        Dashboard creado por <strong style="color:#64748B;">Erick Herrera</strong>
     </div>
     """, unsafe_allow_html=True)
 
