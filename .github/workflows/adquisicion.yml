@@ -9,7 +9,10 @@ jobs:
   adquirir:
     name: Consulta API CEN y guarda en DB
     runs-on: ubuntu-latest
-    timeout-minutes: 50
+    # Repo público → minutos de Actions ilimitados. Holgura amplia para que la
+    # intermitencia del CEN (reintentos 10→20→40s en endpoints paginados lentos:
+    # PCP/PID/demanda/solicitudes) no cancele el job antes de terminar.
+    timeout-minutes: 120
     env:
       FORCE_JAVASCRIPT_ACTIONS_TO_NODE24: true
 
