@@ -307,12 +307,17 @@ SIDEBAR_GRAD = "linear-gradient(168deg,#0E7E93,#2A38C9,#4A25A0)"                
       viejo de experimentos ML, no usados por la app).
 - [ ] **Verificación operacional:** confirmar que el cron horario aligerado termina sin timeout,
       que la diaria corre bien (dispararla 1× manual) y que la columna `origen` se auto-creó.
-- [ ] **Endpoints CEN por reintentar** (intermitencia del servidor, NO error de parámetros):
-      `/net-power/v1/` (502) · `/potencia-activa-reactiva-unidad/v4` (504) ·
-      `/costo-combustible/v3` (502) · `/servicios-complementarios-programados-pcp/v4` (502) ·
-      `/instrucciones-operacionales-sscc/v4` (502).
-- [ ] `/reduccion/v1/generacion` requiere suscribir el recurso en 3scale (no disponible con la
-      key OPS actual).
+- [ ] **Endpoints CEN sondeados 2026-07-03 — revividos pero NO integrados** (costo > beneficio):
+      · `/potencia-activa-reactiva-unidad/v4` → **200**, pero SCADA-level (KVAR), `totalPages≈38.687`,
+        no filtra por central. Valor nicho, paginación masiva → descartado por ahora.
+      · `/servicios-complementarios-programados-pcp/v4` → **200** (SSCC programado, provisión MW por
+        tipo), pero `totalPages≈120.178` e **ignora `idCentral`** → paginar todo el sistema. Sería
+        el de mayor valor SI el CEN agregara filtro por central; hoy el costo no compensa.
+      · `/instrucciones-operacionales-sscc/v4` → **200** (172 págs), pero **duplica** el SSCC que ya
+        se trae vía Operaciones `/servicios-complementarios/v1`. Aporte marginal → descartado.
+- [ ] **Endpoints CEN no disponibles:** `/net-power/v1/findByDate` (404) · `/costo-combustible/v3`
+      (502 persistente) · `/reduccion/v1/generacion` (404 "No Mapping Rule" — requiere suscribir el
+      recurso en 3scale; la key OPS actual no lo tiene).
 
 Resueltos (histórico): PID integrado · Solicitudes integradas y filtradas · Pronóstico demanda
 integrado · Optimización PCP (1 llamada por rango) · RLS habilitado (2026-07-03) · Override
