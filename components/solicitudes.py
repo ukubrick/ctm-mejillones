@@ -51,12 +51,13 @@ def render_solicitudes(s, e):
     k3.metric("Ejecutadas", int((df["status"] == "ejecucion_exitosa").sum()))
     k4.metric("Desconexiones", int((df["tipo_solicitud"] == "desconexion").sum()))
 
-    tab_todas, tab_pend, tab_tabla = st.tabs(["Todas", "Pendientes", "Tabla completa"])
-    with tab_todas:
+    sub = st.radio("Sección", ["Todas", "Pendientes", "Tabla completa"], horizontal=True,
+                   label_visibility="collapsed", key="sol_sub")
+    if sub == "Todas":
         _cards(df)
-    with tab_pend:
+    elif sub == "Pendientes":
         _cards(df[df["status"] == "pendiente"])
-    with tab_tabla:
+    else:
         cols = ["correlativo", "empresa_nombre", "instalacion_nombre", "status",
                 "tipo_solicitud", "type", "fecha_inicio", "fecha_fin"]
         df_t = df[cols].copy()

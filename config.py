@@ -99,6 +99,19 @@ TYPE_LABEL = {"central_generadora": "Central", "subestacion": "Subestación", "l
 # Fondo y grilla de los gráficos Plotly
 BG = "#F5F7FA"
 GR = "#E5E7EB"
+BG_TRANSP = "rgba(0,0,0,0)"   # fondo transparente (gráficos de estadísticas)
+C_GRID    = "#E2E8F0"         # grilla clara
+C_MUTED   = "#94A3B8"         # ticks / anotaciones atenuadas
+C_TEXTO   = "#0F172A"         # títulos de gráfico
+
+# Sidebar púrpura (degradado) — identidad CTM dentro de la familia AES
+SIDEBAR_GRAD = "linear-gradient(160deg,#6D28D9 0%,#3b1470 55%,#1e0a3c 100%)"
+
+# Nodo CMG (barra_transf) → barra del pronóstico de demanda
+CMG_A_DEMANDA = {
+    "CRUCERO_______220": "Crucero220",
+    "TARAPACA______220": "Tarapaca220",
+}
 
 
 def get_css() -> str:
@@ -138,17 +151,17 @@ p,span,div,label {{ font-family:'Inter',sans-serif; }}
 #MainMenu {{ visibility:hidden; }}
 [data-testid="InputInstructions"] {{ display:none!important; }}
 
-/* ── Sidebar (gradiente cyan AES) ─────────────────────────────────────── */
+/* ── Sidebar (gradiente púrpura AES/CTM) ──────────────────────────────── */
 [data-testid="stSidebar"] {{
-  background:linear-gradient(160deg,#0e6e7e 0%,#074f5c 55%,#043840 100%)!important;
+  background:{SIDEBAR_GRAD}!important;
   box-shadow:4px 0 20px rgba(0,0,0,0.25)!important;
   border-right:none!important;
 }}
 [data-testid="stSidebar"] * {{ color:#E2E8F0!important; }}
 [data-testid="stSidebar"] hr {{ border-color:rgba(255,255,255,0.12)!important; }}
-[data-testid="stSidebar"] .stCheckbox label {{ color:#CBD5E1!important; }}
+[data-testid="stSidebar"] .stCheckbox label {{ color:#DDD6FE!important; }}
 [data-testid="stSidebar"] .stDateInput label,
-[data-testid="stSidebar"] .stRadio label {{ color:#94A3B8!important; font-size:0.75rem!important; }}
+[data-testid="stSidebar"] .stRadio label {{ color:#C4B5FD!important; font-size:0.75rem!important; }}
 [data-testid="stSidebar"] input {{ background:rgba(255,255,255,0.07)!important; color:#E2E8F0!important; border-color:rgba(255,255,255,0.15)!important; }}
 /* Filtros de fecha: caja blanca con texto oscuro y en negrita para legibilidad */
 [data-testid="stSidebar"] [data-testid="stDateInput"] div[data-baseweb="input"] {{ background:#FFFFFF!important; border-radius:8px!important; }}
@@ -160,7 +173,7 @@ p,span,div,label {{ font-family:'Inter',sans-serif; }}
   transition:all 0.2s cubic-bezier(0.4,0,0.2,1)!important;
 }}
 [data-testid="stSidebar"] .stButton>button:hover {{
-  background:rgba(77,200,220,0.22)!important; border-color:{AES_CYAN}!important; transform:translateX(3px)!important;
+  background:rgba(196,181,253,0.22)!important; border-color:#C4B5FD!important; transform:translateX(3px)!important;
 }}
 [data-testid="stSidebar"] [data-baseweb="select"]>div {{ color:#E2E8F0!important; background:rgba(255,255,255,0.07)!important; }}
 .status-box {{
@@ -186,6 +199,11 @@ p,span,div,label {{ font-family:'Inter',sans-serif; }}
   transition:transform 0.2s ease, box-shadow 0.2s ease; animation:fadeInUp 0.5s ease both;
 }}
 .kpi:hover {{ transform:translateY(-3px); box-shadow:0 8px 24px rgba(59,76,232,0.15); }}
+/* Delays escalonados (patrón Pulsar): las cards entran en cascada */
+[data-testid="stColumn"]:nth-child(1) .kpi, [data-testid="stColumn"]:nth-child(1) [data-testid="stMetric"] {{ animation-delay:0s; }}
+[data-testid="stColumn"]:nth-child(2) .kpi, [data-testid="stColumn"]:nth-child(2) [data-testid="stMetric"] {{ animation-delay:0.06s; }}
+[data-testid="stColumn"]:nth-child(3) .kpi, [data-testid="stColumn"]:nth-child(3) [data-testid="stMetric"] {{ animation-delay:0.12s; }}
+[data-testid="stColumn"]:nth-child(4) .kpi, [data-testid="stColumn"]:nth-child(4) [data-testid="stMetric"] {{ animation-delay:0.18s; }}
 .kpi-badge {{ display:inline-block; font-size:0.65rem; font-weight:700; letter-spacing:0.08em; text-transform:uppercase; padding:3px 10px; border-radius:20px; margin-bottom:0.7rem; }}
 .kpi-val {{ font-size:2rem; font-weight:800; color:var(--txt); line-height:1; }}
 .kpi-mw {{ font-size:1rem; font-weight:400; color:var(--muted); }}
@@ -253,6 +271,30 @@ p,span,div,label {{ font-family:'Inter',sans-serif; }}
 .stTabs [aria-selected="true"][data-baseweb="tab"] {{ background:linear-gradient(135deg,{AES_CYAN} 0%,#2ba8be 100%)!important; color:{AES_TEXTO}!important; font-weight:700!important; box-shadow:0 -2px 10px rgba(77,200,220,0.35)!important; }}
 .stTabs [data-baseweb="tab-panel"] [data-testid="stPlotlyChart"],
 .stTabs [data-baseweb="tab-panel"] .js-plotly-plot {{ width:100%!important; min-width:0!important; }}
+
+/* ── Sub-navegación (st.radio del área principal como segmented control) ──
+   Portado de Pulsar (estilos.py): sin círculo de radio, opción activa con
+   gradiente AES. Solo aplica al área principal, no al sidebar. */
+.block-container div[data-testid="stRadio"] [role="radiogroup"] {{
+  display:inline-flex; flex-wrap:wrap; gap:6px; background:{AES_BLANCO};
+  border:1px solid {AES_BORDE}; border-radius:12px; padding:5px;
+  box-shadow:0 2px 8px rgba(0,0,0,0.05);
+}}
+.block-container div[data-testid="stRadio"] label[data-baseweb="radio"] {{
+  margin:0; padding:8px 18px; border-radius:8px; border:1px solid transparent;
+  cursor:pointer; transition:all 0.18s cubic-bezier(0.4,0,0.2,1);
+}}
+.block-container div[data-testid="stRadio"] label[data-baseweb="radio"] > div:first-child {{ display:none; }}
+.block-container div[data-testid="stRadio"] label[data-baseweb="radio"] p {{
+  font-size:13px; font-weight:600; color:{AES_MUTED}; transition:color 0.18s ease;
+}}
+.block-container div[data-testid="stRadio"] label[data-baseweb="radio"]:hover {{ background:rgba(59,76,232,0.06); }}
+.block-container div[data-testid="stRadio"] label[data-baseweb="radio"]:hover p {{ color:{AES_AZUL}; }}
+.block-container div[data-testid="stRadio"] label[data-baseweb="radio"]:has(input:checked) {{
+  background:linear-gradient(135deg,{AES_AZUL} 0%,{AES_AZUL_OSC} 100%);
+  border-color:{AES_AZUL_OSC}; box-shadow:0 3px 10px rgba(59,76,232,0.30);
+}}
+.block-container div[data-testid="stRadio"] label[data-baseweb="radio"]:has(input:checked) p {{ color:#FFFFFF; }}
 
 /* ── Gráficos Plotly ──────────────────────────────────────────────────── */
 [data-testid="stPlotlyChart"] {{ border-radius:12px; overflow:hidden; box-shadow:0 2px 10px rgba(0,0,0,0.06); animation:fadeInUp 0.5s ease both; transition:box-shadow 0.2s ease; }}

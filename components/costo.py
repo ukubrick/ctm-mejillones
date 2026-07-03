@@ -4,14 +4,11 @@ import streamlit as st
 import pandas as pd
 import plotly.graph_objects as go
 
-from config import COLORES, LABELS, PMAX, UNIDADES, BG, GR, SERIE
+from config import (COLORES, LABELS, PMAX, UNIDADES, BG, GR, SERIE,
+                    BG_TRANSP, C_GRID, CMG_A_DEMANDA)
 from utils.data import load_cmg_prog, load_cmg_real, load_pronostico_demanda
-
-# Nodo CMG (barra_transf) → barra del pronóstico de demanda (para cruzar CMG vs demanda)
-CMG_A_DEMANDA = {
-    "CRUCERO_______220": "Crucero220",
-    "TARAPACA______220": "Tarapaca220",
-}
+from utils.plotly_theme import estilo_serie, hex_to_rgba, hover
+from components._common import metricas_precision
 
 
 def render_costo(df_r, df_c, s=None, e=None, nodo_cmg="CRUCERO_______220", df_p=None):
@@ -75,16 +72,16 @@ def render_costo(df_r, df_c, s=None, e=None, nodo_cmg="CRUCERO_______220", df_p=
     for col, (lbl, val, sub) in zip(cols, kpis):
         col.metric(lbl, val, sub)
 
-    tab_vis, tab_stat = st.tabs(["Gráficos", "Estadísticas"])
+    sub = st.radio("Sección", ["Gráficos", "Estadísticas"], horizontal=True,
+                   label_visibility="collapsed", key="costo_sub")
 
-    with tab_vis:
+    if sub == "Gráficos":
         gc1, gc2 = st.columns(2)
         with gc1:
             _grafico_barras_ingreso(ingreso_unit, energia_unit, unidades_ord)
         with gc2:
             _grafico_cmg_tiempo(df_c, cmg_prom, cmg_min, cmg_max, df_cp, df_cr, df_dem, barra_dem)
-
-    with tab_stat:
+    else:
         _estadisticas_costo(df_merge, df_c, ingreso_unit, energia_unit, ingreso_total, cmg_prom, unidades_ord)
         _grafico_precision(df_r, df_p, unidades_ord)
 
@@ -104,7 +101,7 @@ def _grafico_barras_ingreso(ingreso_unit, energia_unit, unidades_ord):
         val = y_vals[i]
         hex_c = COLORES[u]["line"]
         r_c, g_c, b_c = int(hex_c[1:3], 16), int(hex_c[3:5], 16), int(hex_c[5:7], 16)
-        col_front = f"rgba({r_c},{g_c},{b_c},0.88)"
+        col_front = hex_to_rgba(hex_c, 0.88)
         col_side  = f"rgba({max(0,r_c-55)},{max(0,g_c-55)},{max(0,b_c-55)},0.92)"
         col_top   = f"rgba({min(255,r_c+45)},{min(255,g_c+45)},{min(255,b_c+45)},1.0)"
         x0, x1 = i - bar_w/2, i + bar_w/2
@@ -195,7 +192,7 @@ def _grafico_cmg_tiempo(df_c, cmg_prom, cmg_min, cmg_max, df_cp=None, df_cr=None
 
 
 def _estadisticas_costo(df_merge, df_c, ingreso_unit, energia_unit, ingreso_total, cmg_prom, unidades_ord):
-    BG2, GR2 = "rgba(0,0,0,0)", "#E2E8F0"
+    BG2, GR2 = BG_TRANSP, C_GRID
     df_merge_t = df_merge.copy()
     df_merge_t["fecha_hora"] = pd.to_datetime(df_merge_t["fecha_hora"])
     df_merge_t = df_merge_t.sort_values("fecha_hora")
@@ -203,9 +200,9 @@ def _estadisticas_costo(df_merge, df_c, ingreso_unit, energia_unit, ingreso_tota
     fig_ingh = go.Figure()
     for u in unidades_ord:
         df_u2 = df_merge_t[df_merge_t["unidad"] == u]
-        r, g, b = int(COLORES[u]['line'][1:3], 16), int(COLORES[u]['line'][3:5], 16), int(COLORES[u]['line'][5:7], 16)
         fig_ingh.add_trace(go.Scatter(x=df_u2["fecha_hora"], y=df_u2["ingreso_usd"], name=LABELS[u], mode="lines",
-            line=dict(color=COLORES[u]["line"], width=1.8), fill="tozeroy", fillcolor=f"rgba({r},{g},{b},0.07)",
+            line=dict(color=COLORES[u]["line"], width=1.8), fill="tozeroy",
+            fillcolor=hex_to_rgba(COLORES[u]["line"], 0.07),
             hovertemplate="%{x|%d/%m %H:%M}<br><b>%{y:,.0f} USD</b><extra>" + LABELS[u] + "</extra>"))
     fig_ingh.update_layout(title=dict(text="Ingreso estimado por hora (USD)", font=dict(size=13, color="#0F172A"), x=0),
         height=300, margin=dict(l=10, r=10, t=50, b=10), plot_bgcolor=BG2, paper_bgcolor=BG2,
@@ -291,18 +288,12 @@ def _grafico_precision(df_r, df_p, unidades_ord):
     """Precisión de la programación PCP vs real: MAE y RMSE por unidad."""
     if df_p is None or df_p.empty:
         return
-    BG2, GR2 = "rgba(0,0,0,0)", "#E2E8F0"
+    BG2, GR2 = BG_TRANSP, C_GRID
     filas = []
     for u in unidades_ord:
-        ru = df_r[df_r["unidad"] == u][["fecha_hora", "gen_real_mw"]].sort_values("fecha_hora")
-        pu = df_p[df_p["unidad"] == u][["fecha_hora", "gen_programada_mw"]].sort_values("fecha_hora")
-        if ru.empty or pu.empty:
-            continue
-        m = pd.merge_asof(ru, pu, on="fecha_hora", direction="nearest", tolerance=pd.Timedelta("1h")).dropna()
-        if m.empty:
-            continue
-        err = m["gen_real_mw"] - m["gen_programada_mw"]
-        filas.append((u, err.abs().mean(), (err ** 2).mean() ** 0.5, err.mean()))
+        res = metricas_precision(df_r[df_r["unidad"] == u], df_p[df_p["unidad"] == u])
+        if res is not None:
+            filas.append((u, *res))
     if not filas:
         return
 

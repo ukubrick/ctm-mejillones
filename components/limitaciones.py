@@ -71,19 +71,19 @@ def render_limitaciones(s, e):
     df_lim["_unidad"] = df_lim["id_unidad"].apply(lambda x: ID_UNIDAD_LABEL.get(int(float(x)), "") if pd.notna(x) else "")
     df_sorted = df_lim.sort_values("fecha_perturbacion", ascending=False)
 
-    tabs = st.tabs(["ANG1", "ANG2", "CCR1", "CCR2", "Todas", "Estadísticas"])
-    for tab, unidad in zip(tabs[:4], UNIDADES):
-        with tab:
-            df_u = df_sorted[df_sorted["_unidad"] == unidad]
-            if df_u.empty:
-                st.info(f"Sin limitaciones para {unidad} en el período.")
-            else:
-                st.markdown("".join(_card_html(r) for _, r in df_u.head(MAX_CARDS).iterrows()), unsafe_allow_html=True)
-                if len(df_u) > MAX_CARDS:
-                    st.caption(f"+{len(df_u) - MAX_CARDS} más en «Todas»")
-    with tabs[4]:
+    sub = st.radio("Sección", ["ANG1", "ANG2", "CCR1", "CCR2", "Todas", "Estadísticas"],
+                   horizontal=True, label_visibility="collapsed", key="lim_sub")
+    if sub in UNIDADES:
+        df_u = df_sorted[df_sorted["_unidad"] == sub]
+        if df_u.empty:
+            st.info(f"Sin limitaciones para {sub} en el período.")
+        else:
+            st.markdown("".join(_card_html(r) for _, r in df_u.head(MAX_CARDS).iterrows()), unsafe_allow_html=True)
+            if len(df_u) > MAX_CARDS:
+                st.caption(f"+{len(df_u) - MAX_CARDS} más en «Todas»")
+    elif sub == "Todas":
         st.markdown("".join(_card_html(r) for _, r in df_sorted.iterrows()), unsafe_allow_html=True)
-    with tabs[5]:
+    else:
         _estadisticas(df_lim)
 
     _tabla_completa(df_sorted)

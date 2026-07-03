@@ -9,12 +9,11 @@ Modelos:
 import streamlit as st
 import pandas as pd
 import numpy as np
-import psycopg2
 import plotly.graph_objects as go
 from plotly.subplots import make_subplots
-import os
 
 from config import get_css, COLORES, LABELS, PMAX
+from utils.db import fetch, rest_enabled
 
 st.set_page_config(
     page_title="ML · CTM Mejillones",
@@ -48,41 +47,48 @@ st.markdown("""
 </style>
 """, unsafe_allow_html=True)
 
-# ── Conexión DB ────────────────────────────────────────────────────────────────
-
-@st.cache_resource(show_spinner=False)
-def get_conn():
-    return psycopg2.connect(st.secrets.get("DATABASE_URL", os.environ.get("DATABASE_URL", "")))
-
+# ── Datos (capa unificada REST/psycopg2 de utils/db) ──────────────────────────
 
 @st.cache_data(ttl=3600, show_spinner=False)
 def load_cmg() -> pd.DataFrame:
-    sql = """
-        SELECT fecha_hora, barra_transf, cmg_usd_mwh
-        FROM costo_marginal
-        WHERE barra_transf IN ('CRUCERO_______220','TARAPACA______220')
-        ORDER BY fecha_hora
-    """
-    df = pd.read_sql(sql, get_conn())
-    df["fecha_hora"] = pd.to_datetime(df["fecha_hora"])
+    df = fetch(
+        "costo_marginal", "fecha_hora,barra_transf,cmg_usd_mwh",
+        order="fecha_hora",
+        sql="SELECT fecha_hora, barra_transf, cmg_usd_mwh FROM costo_marginal "
+            "WHERE barra_transf IN ('CRUCERO_______220','TARAPACA______220') ORDER BY fecha_hora",
+    )
+    if not df.empty:
+        df = df[df["barra_transf"].isin(["CRUCERO_______220", "TARAPACA______220"])]
+        df["fecha_hora"] = pd.to_datetime(df["fecha_hora"])
+        df = df.sort_values("fecha_hora")
     return df
 
 
 @st.cache_data(ttl=3600, show_spinner=False)
 def load_gen() -> tuple[pd.DataFrame, pd.DataFrame]:
-    df_real = pd.read_sql("""
-        SELECT unidad, fecha_hora, gen_real_mw, potencia_maxima
-        FROM generacion_real ORDER BY fecha_hora
-    """, get_conn())
-    df_prog = pd.read_sql("""
-        SELECT DISTINCT ON (unidad, fecha_hora)
-            unidad, fecha_hora, gen_programada_mw
-        FROM generacion_programada
-        ORDER BY unidad, fecha_hora,
-            CASE fuente WHEN 'CEN_PCP' THEN 0 ELSE 1 END
-    """, get_conn())
-    df_real["fecha_hora"] = pd.to_datetime(df_real["fecha_hora"])
-    df_prog["fecha_hora"] = pd.to_datetime(df_prog["fecha_hora"])
+    df_real = fetch(
+        "generacion_real", "unidad,fecha_hora,gen_real_mw,potencia_maxima",
+        order="fecha_hora",
+        sql="SELECT unidad, fecha_hora, gen_real_mw, potencia_maxima "
+            "FROM generacion_real ORDER BY fecha_hora",
+    )
+    df_prog = fetch(
+        "generacion_programada", "unidad,fecha_hora,gen_programada_mw,fuente",
+        sql="SELECT DISTINCT ON (unidad, fecha_hora) unidad, fecha_hora, gen_programada_mw, fuente "
+            "FROM generacion_programada "
+            "ORDER BY unidad, fecha_hora, CASE fuente WHEN 'CEN_PCP' THEN 0 ELSE 1 END",
+    )
+    if not df_prog.empty and rest_enabled():
+        # Replica del DISTINCT ON priorizando CEN_PCP (la vía REST trae todo)
+        df_prog["_pri"] = (df_prog["fuente"] != "CEN_PCP").astype(int)
+        df_prog = (df_prog.sort_values(["unidad", "fecha_hora", "_pri"])
+                   .drop_duplicates(["unidad", "fecha_hora"], keep="first")
+                   .drop(columns="_pri"))
+    if not df_real.empty:
+        df_real["fecha_hora"] = pd.to_datetime(df_real["fecha_hora"])
+    if not df_prog.empty:
+        df_prog["fecha_hora"] = pd.to_datetime(df_prog["fecha_hora"])
+        df_prog = df_prog.drop(columns=[c for c in ["fuente"] if c in df_prog.columns])
     return df_real, df_prog
 
 

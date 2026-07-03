@@ -9,14 +9,10 @@ import pandas as pd
 import plotly.graph_objects as go
 from plotly.subplots import make_subplots
 
-from config import LABELS, NOMBRES_NODO, UNIDADES, BG, GR, POT_MIN_TECNICA, SERIE
+from config import LABELS, NOMBRES_NODO, UNIDADES, BG, GR, POT_MIN_TECNICA, SERIE, CMG_A_DEMANDA
 from utils.data import load_cmg_prog, load_prog_pid, load_pronostico_demanda
-
-# Nodo CMG (barra_transf) → barra del pronóstico de demanda
-CMG_A_DEMANDA = {
-    "CRUCERO_______220": "Crucero220",
-    "TARAPACA______220": "Tarapaca220",
-}
+from utils.plotly_theme import add_linea_ahora, estilo_serie, hover
+from components._common import metricas_precision
 
 
 def _chart_unidad(unidad, df_r, df_p, df_pid, df_c, df_cp, df_dem, barra_dem,
@@ -43,8 +39,8 @@ def _chart_unidad(unidad, df_r, df_p, df_pid, df_c, df_cp, df_dem, barra_dem,
 
     fig.add_trace(go.Scatter(
         x=df_u["fecha_hora"], y=df_u["gen_real_mw"], name="Real", mode="lines",
-        line=dict(color=SERIE["real"], width=2.4),
-        hovertemplate="<b>Real</b> %{x|%d/%m %H:%M}<br>%{y:.1f} MW<extra></extra>",
+        hovertemplate=hover("Real", "MW", "medición SCADA horaria"),
+        **estilo_serie("real"),
     ), row=1, col=1)
 
     # Línea de mínimo técnico — referencia de operación estable de la unidad
@@ -59,8 +55,8 @@ def _chart_unidad(unidad, df_r, df_p, df_pid, df_c, df_cp, df_dem, barra_dem,
     if tiene_prog:
         fig.add_trace(go.Scatter(
             x=df_up["fecha_hora"], y=df_up["gen_programada_mw"], name="Programada PCP", mode="lines",
-            line=dict(color=SERIE["prog"], width=1.6, dash="dash"),
-            hovertemplate="<b>Programada PCP</b> %{x|%d/%m %H:%M}<br>%{y:.1f} MW<extra></extra>",
+            hovertemplate=hover("Programada PCP", "MW", "programa diario declarado D-1 ante CEN"),
+            **estilo_serie("prog"),
         ), row=1, col=1)
 
         if vis["desv"]:
@@ -91,8 +87,8 @@ def _chart_unidad(unidad, df_r, df_p, df_pid, df_c, df_cp, df_dem, barra_dem,
     if vis["pid"] and not df_upid.empty:
         fig.add_trace(go.Scatter(
             x=df_upid["fecha_hora"], y=df_upid["gen_programada_mw"], name="Programada PID", mode="lines",
-            line=dict(color=SERIE["prog_pid"], width=1.6, dash="dot"),
-            hovertemplate="<b>Programada PID</b> %{x|%d/%m %H:%M}<br>%{y:.1f} MW<extra></extra>",
+            hovertemplate=hover("Programada PID", "MW", "reajuste intra-día del PCP"),
+            **estilo_serie("prog_pid"),
         ), row=1, col=1)
 
     # Marcar horas con programada bajo el mínimo técnico (rampas / pruebas especiales,
@@ -114,23 +110,22 @@ def _chart_unidad(unidad, df_r, df_p, df_pid, df_c, df_cp, df_dem, barra_dem,
     if tiene_cmg:
         fig.add_trace(go.Scatter(
             x=df_c["fecha_hora"], y=df_c["cmg_usd_mwh"], name=f"CMG real {nodo_label}", mode="lines",
-            line=dict(color=SERIE["cmg"], width=2.2), fill="tozeroy",
-            fillcolor=SERIE["cmg_fill"],
-            hovertemplate="<b>CMG real</b> %{x|%d/%m %H:%M}<br>%{y:.1f} USD/MWh<extra></extra>",
+            hovertemplate=hover("CMG real", "USD/MWh", "online S3, actualiza ~15 min"),
+            **estilo_serie("cmg"),
         ), row=2, col=1)
         # Overlay CMG programado (PID), para comparar y tomar decisiones de programación
         if vis["cmg_prog"] and df_cp is not None and not df_cp.empty:
             fig.add_trace(go.Scatter(
                 x=df_cp["fecha_hora"], y=df_cp["cmg_usd_mwh"], name="CMG programado", mode="lines",
-                line=dict(color=SERIE["cmg_prog"], width=1.6, dash="dash"),
-                hovertemplate="<b>CMG programado</b> %{x|%d/%m %H:%M}<br>%{y:.1f} USD/MWh<extra></extra>",
+                hovertemplate=hover("CMG programado", "USD/MWh", "programa PID del CEN"),
+                **estilo_serie("cmg_prog"),
             ), row=2, col=1)
         # Overlay demanda pronosticada (eje secundario): alta demanda anticipa CMG alto
         if tiene_dem:
             fig.add_trace(go.Scatter(
                 x=df_dem["fecha_hora"], y=df_dem["energia_mwh"], name=f"Demanda {barra_dem}", mode="lines",
-                line=dict(color=SERIE["demanda"], width=1.4, dash="dot"),
-                hovertemplate="<b>Demanda</b> %{x|%d/%m %H:%M}<br>%{y:,.0f} MWh<extra></extra>",
+                hovertemplate=hover("Demanda", "MWh", "pronóstico corto plazo CEN"),
+                **estilo_serie("demanda"),
             ), row=2, col=1, secondary_y=True)
         prom_cmg = df_c["cmg_usd_mwh"].mean()
         fig.add_hline(y=prom_cmg, line_color="#94A3B8", line_width=1, line_dash="dot",
@@ -147,8 +142,17 @@ def _chart_unidad(unidad, df_r, df_p, df_pid, df_c, df_cp, df_dem, barra_dem,
         hovermode="x unified",
         hoverlabel=dict(bgcolor="#1A1F36", font_color="#F5F7FA", bordercolor="#3B4CE8"),
     )
-    fig.update_yaxes(title_text="MW", gridcolor=GR, zeroline=False,
+    fig.update_yaxes(title_text="MW", gridcolor=GR, zeroline=False, rangemode="tozero",
                      tickfont=dict(color="#94A3B8", size=10), title_font=dict(color="#94A3B8", size=11), row=1, col=1)
+
+    # Línea "ahora": separa lo medido (real) de lo programado a futuro (PCP/PID)
+    xs = [df_u["fecha_hora"]]
+    if not df_up.empty:
+        xs.append(df_up["fecha_hora"])
+    if not df_upid.empty:
+        xs.append(df_upid["fecha_hora"])
+    x_all = pd.concat(xs)
+    add_linea_ahora(fig, x_all.min(), x_all.max())
     if tiene_cmg:
         fig.update_yaxes(title_text="USD/MWh", gridcolor=GR, zeroline=False,
                          tickfont=dict(color="#94A3B8", size=10), title_font=dict(color="#94A3B8", size=11),
@@ -170,16 +174,9 @@ def _chart_unidad(unidad, df_r, df_p, df_pid, df_c, df_cp, df_dem, barra_dem,
 
     # Precisión de la programación PCP vs generación real (MAE / RMSE / sesgo)
     if not df_up.empty:
-        m = pd.merge_asof(
-            df_u[["fecha_hora", "gen_real_mw"]].sort_values("fecha_hora"),
-            df_up[["fecha_hora", "gen_programada_mw"]].sort_values("fecha_hora"),
-            on="fecha_hora", direction="nearest", tolerance=pd.Timedelta("1h"),
-        ).dropna()
-        if not m.empty:
-            err  = m["gen_real_mw"] - m["gen_programada_mw"]
-            mae  = err.abs().mean()
-            rmse = (err ** 2).mean() ** 0.5
-            sesgo = err.mean()
+        res = metricas_precision(df_u, df_up)
+        if res is not None:
+            mae, rmse, sesgo = res
             st.caption("Precisión de la programación PCP vs real (menor = mejor)")
             k1, k2, k3 = st.columns(3)
             k1.metric("MAE", f"{mae:.1f} MW", help="Error absoluto medio |real − programada|")
