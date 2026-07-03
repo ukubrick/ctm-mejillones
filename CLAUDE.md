@@ -9,6 +9,40 @@ Desplegado en Streamlit Cloud. Código en GitHub (`ukubrick/ctm-mejillones`).
 Adquisición automática vía GitHub Actions cada hora (minuto 5 UTC) + corrida
 ligera de gen. real cada 30 min (minutos :25 y :55).
 
+## Rediseño + refactor + optimización (2026-07-03)
+
+- **Theme Plotly compartido** `utils/plotly_theme.py`: `apply_aes_layout()`, `estilo_serie()`
+  (convención Pulsar: Real sólida 2.5 + fill tozeroy α0.05, PCP dashed, PID dotted),
+  `hover(nombre, unidad, extra)` (hovertemplates con `<extra>` explicativo), `hex_to_rgba()`,
+  `add_linea_ahora()` (línea vertical "ahora", portada de Pulsar `components/graficos.py`).
+- **Helpers comunes** `components/_common.py`: `metricas_precision()` (MAE/RMSE/sesgo
+  merge_asof ±1h), `render_guia()`/`tabla_guia()` (guías `<details>`), `render_cards_unidad()`
+  (4 columnas × 5 cards). Usados por gen_unidad, costo, sscc, despacho_cmg.
+- **Sidebar púrpura degradado** (`config.SIDEBAR_GRAD`, `#6D28D9→#3b1470→#1e0a3c`) —
+  decisión del usuario; labels lila `#C4B5FD/#DDD6FE`.
+- **Radio-pills** (segmented control, CSS portado de Pulsar `estilos.py`): las sub-secciones
+  internas usan `st.radio` horizontal en vez de `st.tabs` (costo, sscc, despacho_cmg,
+  limitaciones, solicitudes) → además evita el bug Plotly width=0.
+- **Constantes centralizadas en config**: `C_MUTED/C_TEXTO/C_GRID/BG_TRANSP`,
+  `CMG_A_DEMANDA` (antes duplicado en gen_unidad y costo), `INFOTECNICA` (fallback estático).
+- **ml_analysis.py usa utils/db** (REST/443 con fallback psycopg2) — antes tenía su
+  propio psycopg2 y no funcionaba en redes que bloquean 5432.
+- **Adquisición**: `fetch_sscc(start, end)` y `fetch_instrucciones_cmg(start, end)` aceptan
+  RANGO (1 llamada por ventana en vez de 1/día; verificado exacto vs suma por día: 42=42, 61=61).
+  ⚠️ **gen-real v3 TRUNCA rangos multi-día** (rango de 4 días devolvió 146/192 con
+  totalPages=1, verificado 2026-07-03) → gen-real SIEMPRE por día. Sleeps 1.5→0.5 s y 0.3→0.15 s.
+- **Maestro técnico** tabla `unidades_maestro`: `/unidades-generadoras/v4/findByDate` (SIP,
+  1-indexado, limit=300, ~12 págs; números con coma decimal chilena → helper `_num_cl()`).
+  Las 4 fichas NO salen todas el mismo día → la migración barre 7 días
+  (`migracion_unidades_maestro.py`). Adquisición al final del job horario.
+- **Vista Infotécnica** (`components/infotecnica.py`, categoría Gestión de Datos): fichas
+  técnicas por unidad desde `unidades_maestro`, fallback `config.INFOTECNICA` + PMAX.
+- **Workflow `migracion.yml`** (workflow_dispatch, inputs script/arg): corre cualquier
+  `migracion_*.py` desde Actions — la red local bloquea 5432, Actions no.
+- **Sondeo endpoints 2026-07-03**: `/net-power/v1/` → 502 backend (la ruta existe, reintentar
+  otro día); `/reduccion/v1/generacion` → "No Mapping Rule matched" (NO disponible con la key
+  OPS actual; requeriría suscribir el recurso en 3scale). Ambos quedan pendientes.
+
 ## Workflows separados por concern (2026-06-24)
 
 Réplica del patrón Pulsar (`ernc-aes-dashboard`, Sesión 25). El job horario único se
