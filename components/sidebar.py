@@ -5,6 +5,7 @@ Devuelve los filtros seleccionados (rango de fechas, flags de programada/CMG,
 nodo CMG) que el resto de la app usa para cargar datos.
 """
 from datetime import date, datetime, timedelta
+from zoneinfo import ZoneInfo
 
 import streamlit as st
 import pandas as pd
@@ -13,6 +14,8 @@ from config import NOMBRES_NODO
 from utils.db import test_conn, last_ts
 from utils.data import load_real, load_prog, load_cmg, load_sscc, load_limitaciones
 from utils.reports import generar_pdf, generar_ppt
+
+TZ_CHILE = ZoneInfo("America/Santiago")
 
 
 def _fmt(v, fmt="%d/%m %H:%M"):
@@ -26,6 +29,45 @@ def _fmt(v, fmt="%d/%m %H:%M"):
         return pd.to_datetime(txt).strftime(fmt)
     except Exception:
         return txt[:16]
+
+
+def _edad_fuente(v, hoy):
+    """(clase_dot, etiqueta) según frescura del último dato de una fuente continua.
+
+    Verde = dato de hoy (o futuro, p.ej. programada que llega a mañana);
+    ámbar = de ayer; rojo = más antiguo o sin datos.
+    """
+    try:
+        dt = pd.to_datetime(str(v))
+    except Exception:
+        return "dot-r", "sin datos"
+    delta = (hoy - dt.date()).days
+    hm = dt.strftime("%H:%M")
+    if delta < 0:
+        return "dot-g", f"mañana {hm}"
+    if delta == 0:
+        return "dot-g", f"hoy {hm}"
+    if delta == 1:
+        return "dot-y", f"ayer {hm}"
+    return "dot-r", dt.strftime("%d/%m %H:%M")
+
+
+def _row_cont(nombre, v, hoy):
+    dot, lbl = _edad_fuente(v, hoy)
+    return (
+        '<div style="display:flex;align-items:center;justify-content:space-between;padding:3px 0">'
+        f'<span style="color:rgba(255,255,255,0.82)"><span class="dot-status {dot}"></span>{nombre}</span>'
+        f'<span style="font-variant-numeric:tabular-nums;color:#FFFFFF;font-weight:600;font-size:0.68rem">{lbl}</span></div>'
+    )
+
+
+def _row_evt(nombre, v, con_hora=True):
+    txt = _fmt(v, "%d/%m %H:%M" if con_hora else "%d/%m")
+    return (
+        '<div style="display:flex;align-items:center;justify-content:space-between;padding:2px 0">'
+        f'<span style="color:rgba(255,255,255,0.55)">{nombre}</span>'
+        f'<span style="font-variant-numeric:tabular-nums;color:rgba(255,255,255,0.72);font-size:0.68rem">{txt}</span></div>'
+    )
 
 
 def render_sidebar():
@@ -57,25 +99,34 @@ def render_sidebar():
             )
             st.stop()
 
-        # Fuentes más relevantes (núcleo horario) con fecha + hora de adquisición
-        str_r   = _fmt(last_ts("generacion_real", "fecha_hora"))
-        str_p   = _fmt(last_ts("generacion_programada", "fecha_hora", {"fuente": "CEN_PCP"}))
-        str_cmg = _fmt(last_ts("costo_marginal", "fecha_hora"))
-        str_lim = _fmt(last_ts("limitaciones_transmision", "modified"))
+        # ── Estado de adquisición ────────────────────────────────────────────
+        # Fuentes continuas (gen/CMG): el dot refleja la frescura real del último
+        # dato (verde=hoy, ámbar=ayer, rojo=más viejo). Fuentes por evento
+        # (despacho/SSCC/limitaciones): la ausencia de registros recientes es
+        # normal, así que se listan como "último registro" sin semántica de salud.
+        hoy_cl = datetime.now(TZ_CHILE).date()
+        ts_real = last_ts("generacion_real", "fecha_hora")
+        ts_prog = last_ts("generacion_programada", "fecha_hora", {"fuente": "CEN_PCP"})
+        ts_cmg  = last_ts("costo_marginal", "fecha_hora")
+        ts_desp = last_ts("instrucciones_cmg", "fecha_hora")
+        ts_sscc = last_ts("sscc_instrucciones", "fecha")
+        ts_lim  = last_ts("limitaciones_transmision", "modified")
 
         st.markdown(f"""
         <div class="status-box">
-            <div style="margin-bottom:8px">
+            <div style="display:flex;align-items:center;gap:6px;margin-bottom:10px">
                 <span class="dot-status {dot_db}"></span>
                 <span style="font-size:0.72rem;font-weight:600">{txt_db}</span>
             </div>
-            <div style="font-size:0.62rem;font-weight:700;letter-spacing:1.2px;color:#4DC8DC;text-transform:uppercase;margin-bottom:6px">ÚLTIMA ADQUISICIÓN · API CEN</div>
-            <div style="font-size:0.7rem;line-height:1.9">
-                <span class="dot-status dot-g"></span>Gen. real <b style="float:right">{str_r}</b><br>
-                <span class="dot-status dot-g"></span>Gen. programada <b style="float:right">{str_p}</b><br>
-                <span class="dot-status dot-g"></span>CMG <b style="float:right">{str_cmg}</b><br>
-                <span class="dot-status dot-g"></span>Limitaciones <b style="float:right">{str_lim}</b>
-            </div>
+            <div style="font-size:0.6rem;font-weight:700;letter-spacing:1.3px;color:#C4B5FD;text-transform:uppercase;margin-bottom:5px">Estado de adquisición · API CEN</div>
+            {_row_cont("Gen. real", ts_real, hoy_cl)}
+            {_row_cont("Gen. programada", ts_prog, hoy_cl)}
+            {_row_cont("CMG online", ts_cmg, hoy_cl)}
+            <div style="font-size:0.58rem;font-weight:700;letter-spacing:1.1px;color:rgba(255,255,255,0.4);text-transform:uppercase;margin:8px 0 3px;border-top:1px solid rgba(255,255,255,0.1);padding-top:7px">Último registro</div>
+            {_row_evt("Despacho CMG", ts_desp)}
+            {_row_evt("SSCC", ts_sscc, con_hora=False)}
+            {_row_evt("Limitaciones", ts_lim)}
+            <div style="font-size:0.6rem;color:rgba(255,255,255,0.4);margin-top:8px;text-align:center;font-style:italic">Adquisición automática cada 30 min</div>
         </div>
         """, unsafe_allow_html=True)
 

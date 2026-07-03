@@ -71,14 +71,16 @@ def apply_aes_layout(fig, title=None, height=300, transparent=True,
 # Convención de series de tiempo (patrón Pulsar): la Real es la línea
 # protagonista (sólida, gruesa, con fill suave); PCP dashed, PID dotted.
 def estilo_serie(tipo: str) -> dict:
+    # Jerarquía de trazo: Real sólida y gruesa (protagonista, con área) >
+    # PID ámbar discontinua (programa operativo) > PCP gris punteada (referencia).
     estilos = {
-        "real":     dict(line=dict(color=SERIE["real"], width=2.5),
-                         fill="tozeroy", fillcolor=hex_to_rgba(SERIE["real"], 0.05)),
-        "prog":     dict(line=dict(color=SERIE["prog"], width=1.8, dash="dash")),
-        "prog_pid": dict(line=dict(color=SERIE["prog_pid"], width=1.6, dash="dot")),
-        "cmg":      dict(line=dict(color=SERIE["cmg"], width=2.2),
+        "real":     dict(line=dict(color=SERIE["real"], width=2.6, shape="spline", smoothing=0.4),
+                         fill="tozeroy", fillcolor=hex_to_rgba(SERIE["real"], 0.07)),
+        "prog":     dict(line=dict(color=SERIE["prog"], width=1.6, dash="dot")),
+        "prog_pid": dict(line=dict(color=SERIE["prog_pid"], width=2.2, dash="dash")),
+        "cmg":      dict(line=dict(color=SERIE["cmg"], width=2.4, shape="spline", smoothing=0.4),
                          fill="tozeroy", fillcolor=SERIE["cmg_fill"]),
-        "cmg_prog": dict(line=dict(color=SERIE["cmg_prog"], width=1.6, dash="dash")),
+        "cmg_prog": dict(line=dict(color=SERIE["cmg_prog"], width=1.8, dash="dash")),
         "demanda":  dict(line=dict(color=SERIE["demanda"], width=1.4, dash="dot")),
     }
     return estilos[tipo]

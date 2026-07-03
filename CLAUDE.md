@@ -9,6 +9,25 @@ Desplegado en Streamlit Cloud. Código en GitHub (`ukubrick/ctm-mejillones`).
 Adquisición automática vía GitHub Actions cada hora (minuto 5 UTC) + corrida
 ligera de gen. real cada 30 min (minutos :25 y :55).
 
+## Series de tiempo por unidad + panel de adquisición (2026-07-03, tarde)
+
+- **Defaults de la vista Resumen**: por defecto se muestran **PID** (programa operativo),
+  **área de desviación real vs PID**, **CMG real** y **CMG programado**. PCP queda como
+  referencia secundaria opcional. Fallback: si no hay datos PID en la ventana, se usa PCP.
+- **Paleta de series (validada con skill dataviz)**: Real = azul profundo `#1E5AA8` sólido
+  con área (protagonista); "programado" habla un solo lenguaje = **ámbar-oro `#C98500`
+  discontinuo** (PID gen y CMG programado); PCP = gris pizarra `#94A3B8` punteado, recesivo;
+  CMG real = violeta `#6D28D9` con área. Separación CVD ΔE>80.
+- **Área de desviación** (`_banda_desviacion` en gen_unidad.py): bicolor verde/rojo (real ≷
+  programa de referencia). ⚠️ usa `interpolate("time", limit_area="inside")` para NO
+  extrapolar al futuro (donde hay PID pero aún no hay real medida). Se dibuja detrás de las
+  líneas; leyenda ordenada con `legendrank` (Real→PID→PCP→desviación→CMG).
+- **Panel de adquisición del sidebar** (`components/sidebar.py`): fuentes **continuas**
+  (Gen. real / programada / CMG) con dot de salud real por frescura (`_edad_fuente`:
+  verde=hoy/futuro, ámbar=ayer, rojo=más viejo); fuentes **por evento** (Despacho CMG, SSCC,
+  Limitaciones) bajo "Último registro" sin semántica de salud (su ausencia reciente es normal).
+  Acento lavanda `#C4B5FD` (coherente con sidebar púrpura). Nota "Adquisición automática cada 30 min".
+
 ## Rediseño + refactor + optimización (2026-07-03)
 
 - **Theme Plotly compartido** `utils/plotly_theme.py`: `apply_aes_layout()`, `estilo_serie()`

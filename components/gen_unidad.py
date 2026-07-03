@@ -15,6 +15,37 @@ from utils.plotly_theme import add_linea_ahora, estilo_serie, hover
 from components._common import metricas_precision
 
 
+def _banda_desviacion(fig, df_real, df_ref, ref_nombre):
+    """Área bicolor entre la generación real y el programa de referencia.
+
+    Verde = real por encima del programa (sobregeneración); rojo = real por
+    debajo (subgeneración). Se dibuja ANTES que las líneas para quedar detrás.
+    """
+    idx_real = df_real.set_index("fecha_hora")["gen_real_mw"]
+    idx_ref  = df_ref.set_index("fecha_hora")["gen_programada_mw"]
+    idx_com  = idx_real.index.union(idx_ref.index)
+    # limit_area="inside": interpola solo huecos internos, nunca extrapola. Así la
+    # banda no invade el futuro (donde hay PID pero aún no hay real medida).
+    real_ri  = idx_real.reindex(idx_com).interpolate("time", limit_area="inside")
+    ref_ri   = idx_ref.reindex(idx_com).interpolate("time", limit_area="inside")
+    dfm = pd.DataFrame({"real": real_ri, "ref": ref_ri}).dropna()
+    if dfm.empty:
+        return
+    x = dfm.index.to_numpy()
+    over  = dfm[["real", "ref"]].max(axis=1)   # techo → sobregeneración
+    under = dfm[["real", "ref"]].min(axis=1)   # piso  → subgeneración
+    fig.add_trace(go.Scatter(x=x, y=dfm["ref"], mode="lines",
+        line=dict(width=0), hoverinfo="skip", showlegend=False), row=1, col=1)
+    fig.add_trace(go.Scatter(x=x, y=over, mode="lines", fill="tonexty",
+        fillcolor=SERIE["over"], line=dict(width=0), legendrank=4,
+        name=f"Real > {ref_nombre}", hoverinfo="skip"), row=1, col=1)
+    fig.add_trace(go.Scatter(x=x, y=dfm["ref"], mode="lines",
+        line=dict(width=0), hoverinfo="skip", showlegend=False), row=1, col=1)
+    fig.add_trace(go.Scatter(x=x, y=under, mode="lines", fill="tonexty",
+        fillcolor=SERIE["under"], line=dict(width=0), legendrank=5,
+        name=f"Real < {ref_nombre}", hoverinfo="skip"), row=1, col=1)
+
+
 def _chart_unidad(unidad, df_r, df_p, df_pid, df_c, df_cp, df_dem, barra_dem,
                   vis, nodo_label):
     df_u   = df_r[df_r["unidad"] == unidad].sort_values("fecha_hora")
@@ -26,9 +57,25 @@ def _chart_unidad(unidad, df_r, df_p, df_pid, df_c, df_cp, df_dem, barra_dem,
         st.info(f"Sin datos para {LABELS[unidad]} en el período.")
         return
 
-    tiene_cmg  = vis["cmg"] and not df_c.empty
-    tiene_prog = vis["pcp"] and not df_up.empty
-    tiene_dem  = tiene_cmg and vis["demanda"] and df_dem is not None and not df_dem.empty
+    tiene_cmg = vis["cmg"] and not df_c.empty
+    tiene_pcp = vis["pcp"] and not df_up.empty
+    tiene_pid = vis["pid"] and not df_upid.empty
+    # Fallback: si se pidió PID pero aún no hay datos PID en la ventana, se muestra
+    # el PCP como referencia visible (así el gráfico nunca queda sin programa).
+    if vis["pid"] and not tiene_pid and not df_up.empty:
+        tiene_pcp = True
+    tiene_dem = tiene_cmg and vis["demanda"] and df_dem is not None and not df_dem.empty
+
+    # Programa de referencia del área de desviación: PID (intra-día, más fresco)
+    # si está visible; si no, PCP (día-ante). El área mide real vs ese programa.
+    if tiene_pid:
+        ref_df, ref_nombre = df_upid, "PID"
+    elif tiene_pcp:
+        ref_df, ref_nombre = df_up, "PCP"
+    else:
+        ref_df, ref_nombre = None, None
+    mostrar_banda = vis["desv"] and ref_df is not None
+
     n_rows  = 2 if tiene_cmg else 1
     heights = [0.62, 0.38] if n_rows == 2 else [1.0]
 
@@ -37,10 +84,18 @@ def _chart_unidad(unidad, df_r, df_p, df_pid, df_c, df_cp, df_dem, barra_dem,
     fig = make_subplots(rows=n_rows, cols=1, shared_xaxes=True, row_heights=heights,
                         vertical_spacing=0.12, specs=specs)
 
+    # 1) Área de desviación primero → queda detrás de las líneas
+    if mostrar_banda:
+        _banda_desviacion(fig, df_u, ref_df, ref_nombre)
+
+    # 2) Real (protagonista). Sin relleno a cero cuando hay banda (evita doble área)
+    real_style = estilo_serie("real")
+    if mostrar_banda:
+        real_style = {k: v for k, v in real_style.items() if k not in ("fill", "fillcolor")}
     fig.add_trace(go.Scatter(
         x=df_u["fecha_hora"], y=df_u["gen_real_mw"], name="Real", mode="lines",
-        hovertemplate=hover("Real", "MW", "medición SCADA horaria"),
-        **estilo_serie("real"),
+        hovertemplate=hover("Real", "MW", "medición SCADA horaria"), legendrank=1,
+        **real_style,
     ), row=1, col=1)
 
     # Línea de mínimo técnico — referencia de operación estable de la unidad
@@ -52,54 +107,30 @@ def _chart_unidad(unidad, df_r, df_p, df_pid, df_c, df_cp, df_dem, barra_dem,
             annotation_font_color="#64748B", annotation_font_size=10, row=1, col=1,
         )
 
-    if tiene_prog:
+    # 3) Programada PCP (día-ante) — referencia recesiva, punteada gris
+    if tiene_pcp:
         fig.add_trace(go.Scatter(
             x=df_up["fecha_hora"], y=df_up["gen_programada_mw"], name="Programada PCP", mode="lines",
             hovertemplate=hover("Programada PCP", "MW", "programa diario declarado D-1 ante CEN"),
-            **estilo_serie("prog"),
+            legendrank=3, **estilo_serie("prog"),
         ), row=1, col=1)
 
-        if vis["desv"]:
-            idx_real = df_u.set_index("fecha_hora")["gen_real_mw"]
-            idx_prog = df_up.set_index("fecha_hora")["gen_programada_mw"]
-            idx_com  = idx_real.index.union(idx_prog.index)
-            real_ri  = idx_real.reindex(idx_com).interpolate("time")
-            prog_ri  = idx_prog.reindex(idx_com).interpolate("time")
-            dfm = pd.DataFrame({"real": real_ri, "prog": prog_ri}).dropna()
-            if not dfm.empty:
-                x = dfm.index.tolist()
-                over  = dfm[["real", "prog"]].max(axis=1)  # techo → sobregeneración (real > prog)
-                under = dfm[["real", "prog"]].min(axis=1)  # piso  → subgeneración  (real < prog)
-                # Sobregeneración: verde, entre la línea programada y el máximo
-                fig.add_trace(go.Scatter(x=x, y=dfm["prog"], mode="lines",
-                    line=dict(width=0), hoverinfo="skip", showlegend=False), row=1, col=1)
-                fig.add_trace(go.Scatter(x=x, y=over, mode="lines", fill="tonexty",
-                    fillcolor=SERIE["over"], line=dict(width=0),
-                    name="Sobregeneración", hoverinfo="skip"), row=1, col=1)
-                # Subgeneración: rojo, entre la línea programada y el mínimo
-                fig.add_trace(go.Scatter(x=x, y=dfm["prog"], mode="lines",
-                    line=dict(width=0), hoverinfo="skip", showlegend=False), row=1, col=1)
-                fig.add_trace(go.Scatter(x=x, y=under, mode="lines", fill="tonexty",
-                    fillcolor=SERIE["under"], line=dict(width=0),
-                    name="Subgeneración", hoverinfo="skip"), row=1, col=1)
-
-    # Overlay programada PID (intra-día): reajuste del PCP durante el día
-    if vis["pid"] and not df_upid.empty:
+    # 4) Programada PID (intra-día) — programa operativo, ámbar discontinua prominente
+    if tiene_pid:
         fig.add_trace(go.Scatter(
             x=df_upid["fecha_hora"], y=df_upid["gen_programada_mw"], name="Programada PID", mode="lines",
             hovertemplate=hover("Programada PID", "MW", "reajuste intra-día del PCP"),
-            **estilo_serie("prog_pid"),
+            legendrank=2, **estilo_serie("prog_pid"),
         ), row=1, col=1)
 
-    # Marcar horas con programada bajo el mínimo técnico (rampas / pruebas especiales,
-    # operación sostenida bajo mínimo es excepcional). Se resalta para no confundirlo
-    # con operación normal.
-    if tiene_prog and pmin:
-        bajo = df_up[(df_up["gen_programada_mw"] > 0) & (df_up["gen_programada_mw"] < pmin)]
+    # Marcar horas con el programa de referencia bajo el mínimo técnico (rampas /
+    # pruebas especiales; operación sostenida bajo mínimo es excepcional).
+    if ref_df is not None and pmin:
+        bajo = ref_df[(ref_df["gen_programada_mw"] > 0) & (ref_df["gen_programada_mw"] < pmin)]
         if not bajo.empty:
             fig.add_trace(go.Scatter(
                 x=bajo["fecha_hora"], y=bajo["gen_programada_mw"], mode="markers",
-                name="Programada < mín técnico",
+                name="Programa < mín técnico", legendrank=8,
                 marker=dict(color="#F97316", size=9, symbol="diamond",
                             line=dict(color="#FFFFFF", width=1.2)),
                 hovertemplate="<b>Bajo mín técnico</b> %{x|%d/%m %H:%M}<br>"
@@ -111,14 +142,14 @@ def _chart_unidad(unidad, df_r, df_p, df_pid, df_c, df_cp, df_dem, barra_dem,
         fig.add_trace(go.Scatter(
             x=df_c["fecha_hora"], y=df_c["cmg_usd_mwh"], name=f"CMG real {nodo_label}", mode="lines",
             hovertemplate=hover("CMG real", "USD/MWh", "online S3, actualiza ~15 min"),
-            **estilo_serie("cmg"),
+            legendrank=6, **estilo_serie("cmg"),
         ), row=2, col=1)
         # Overlay CMG programado (PID), para comparar y tomar decisiones de programación
         if vis["cmg_prog"] and df_cp is not None and not df_cp.empty:
             fig.add_trace(go.Scatter(
                 x=df_cp["fecha_hora"], y=df_cp["cmg_usd_mwh"], name="CMG programado", mode="lines",
                 hovertemplate=hover("CMG programado", "USD/MWh", "programa PID del CEN"),
-                **estilo_serie("cmg_prog"),
+                legendrank=7, **estilo_serie("cmg_prog"),
             ), row=2, col=1)
         # Overlay demanda pronosticada (eje secundario): alta demanda anticipa CMG alto
         if tiene_dem:
@@ -138,6 +169,7 @@ def _chart_unidad(unidad, df_r, df_p, df_pid, df_c, df_cp, df_dem, barra_dem,
         template="plotly_white", plot_bgcolor=BG, paper_bgcolor="#FFFFFF",
         transition=dict(duration=300, easing="cubic-in-out"),
         legend=dict(orientation="h", yanchor="bottom", y=1.02, xanchor="left", x=0,
+                    traceorder="normal",
                     font=dict(color="#6B7280", size=11), bgcolor="rgba(0,0,0,0)"),
         hovermode="x unified",
         hoverlabel=dict(bgcolor="#1A1F36", font_color="#F5F7FA", bordercolor="#3B4CE8"),
@@ -172,12 +204,15 @@ def _chart_unidad(unidad, df_r, df_p, df_pid, df_c, df_cp, df_dem, barra_dem,
         st.caption("Sin datos de programada — se importan automáticamente desde CEN PCP cada hora. "
                    "El ingreso manual está disponible más abajo.")
 
-    # Precisión de la programación PCP vs generación real (MAE / RMSE / sesgo)
-    if not df_up.empty:
-        res = metricas_precision(df_u, df_up)
+    # Precisión de la programación vs generación real (MAE / RMSE / sesgo).
+    # Se mide contra el programa más fresco disponible: PID si existe, si no PCP.
+    metr_df, metr_nombre = ((df_upid, "PID") if not df_upid.empty
+                            else ((df_up, "PCP") if not df_up.empty else (None, None)))
+    if metr_df is not None:
+        res = metricas_precision(df_u, metr_df)
         if res is not None:
             mae, rmse, sesgo = res
-            st.caption("Precisión de la programación PCP vs real (menor = mejor)")
+            st.caption(f"Precisión de la programación {metr_nombre} vs real (menor = mejor)")
             k1, k2, k3 = st.columns(3)
             k1.metric("MAE", f"{mae:.1f} MW", help="Error absoluto medio |real − programada|")
             k2.metric("RMSE", f"{rmse:.1f} MW", help="Raíz del error cuadrático medio (penaliza desvíos grandes)")
@@ -195,21 +230,23 @@ def render_gen_unidad(df_r, df_p, df_c, mostrar_prog, mostrar_cmg, nodo_cmg, s=N
         c1, c2, c3 = st.columns(3)
         with c1:
             st.caption("Generación")
-            v_pcp  = st.checkbox("Programada PCP", value=mostrar_prog, key="vis_pcp")
-            v_pid  = st.checkbox("Programada PID", value=False, key="vis_pid")
+            v_pid  = st.checkbox("Programada PID", value=mostrar_prog, key="vis_pid",
+                                 help="Programa intra-día (operativo). Referencia del área de desviación.")
+            v_pcp  = st.checkbox("Programada PCP", value=False, key="vis_pcp",
+                                 help="Programa día-ante (referencia secundaria).")
             v_desv = st.checkbox("Área de desviación", value=True, key="vis_desv",
-                                 disabled=not v_pcp)
+                                 disabled=not (v_pid or v_pcp))
         with c2:
             st.caption("Costo marginal")
             v_cmg  = st.checkbox("CMG real", value=mostrar_cmg, key="vis_cmg")
-            v_cmgp = st.checkbox("CMG programado", value=False, key="vis_cmgp",
+            v_cmgp = st.checkbox("CMG programado", value=True, key="vis_cmgp",
                                  disabled=not v_cmg)
         with c3:
             st.caption("Contexto")
             v_dem  = st.checkbox("Demanda pronosticada", value=False, key="vis_dem",
                                  disabled=not v_cmg)
 
-    vis = {"pcp": v_pcp, "pid": v_pid, "desv": v_desv and v_pcp,
+    vis = {"pcp": v_pcp, "pid": v_pid, "desv": v_desv and (v_pid or v_pcp),
            "cmg": v_cmg, "cmg_prog": v_cmgp, "demanda": v_dem}
 
     st.session_state.setdefault("unidad_sel", "ANG1")

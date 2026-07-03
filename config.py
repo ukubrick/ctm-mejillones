@@ -37,16 +37,22 @@ LABELS = {"ANG1": "Angamos U1", "ANG2": "Angamos U2", "CCR1": "Cochrane U1", "CC
 # Paleta sobria y jerárquica: una sola "línea protagonista" (Real, azul profundo,
 # sólida y gruesa); el resto en tonos secundarios/atenuados y con trazo discontinuo
 # para que se lean como referencias y no compitan visualmente.
+# Jerarquía visual: la Real es la ÚNICA línea protagonista (azul profundo, sólida,
+# con área). "Programado / planificado" habla un solo lenguaje cromático: ámbar-oro
+# discontinuo (PID intra-día, prominente) y gris pizarra punteado (PCP día-ante,
+# recesivo). El CMG repite el patrón: violeta sólido = real, ámbar-oro = programado.
+# Paleta validada con el skill dataviz (separación CVD ΔE>80, contraste ~2.9:1 en
+# líneas con leyenda + hover + guion como codificación secundaria).
 SERIE = {
-    "real":     "#0B5394",            # azul profundo — línea protagonista (gen. real)
-    "prog":     "#9AA7B8",            # gris neutro, dashed — referencia (programada PCP)
-    "prog_pid": "#E8A33D",            # ámbar suave, dotted — programada PID (intra-día)
-    "cmg":      "#7C3AED",            # violeta — CMG real
-    "cmg_fill": "rgba(124,58,237,0.07)",
-    "cmg_prog": "#10B981",            # verde esmeralda, dashed — CMG programado
+    "real":     "#1E5AA8",            # azul profundo — línea protagonista (gen. real)
+    "prog":     "#94A3B8",            # gris pizarra, dotted — PCP (día-ante), recesivo
+    "prog_pid": "#C98500",            # ámbar-oro, dashed — PID (intra-día), referencia operativa
+    "cmg":      "#6D28D9",            # violeta — CMG real
+    "cmg_fill": "rgba(109,40,217,0.08)",
+    "cmg_prog": "#C98500",            # ámbar-oro, dashed — CMG programado (mismo lenguaje "plan")
     "demanda":  "#64748B",            # gris pizarra, dotted — demanda pronosticada
-    "over":     "rgba(16,185,129,0.16)",  # sobregeneración (real > prog)
-    "under":    "rgba(239,68,68,0.14)",   # subgeneración  (real < prog)
+    "over":     "rgba(12,163,12,0.14)",   # sobregeneración (real > programa)
+    "under":    "rgba(208,59,59,0.14)",   # subgeneración  (real < programa)
     "minimo":   "#CBD5E1",            # línea de mínimo técnico
 }
 
