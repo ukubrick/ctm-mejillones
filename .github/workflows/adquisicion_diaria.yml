@@ -1,17 +1,16 @@
-name: Adquisicion CEN Horaria
+name: Adquisicion CEN Diaria
 
+# Endpoints lentos que cambian poco (CMG real, pronóstico demanda, solicitudes,
+# maestro de unidades). Se sacaron del job horario para que no se pase del timeout.
 on:
   schedule:
-    - cron: "5 * * * *"
+    - cron: "20 8 * * *"   # 08:20 UTC ≈ 04:20 Chile (fuera de horas punta)
   workflow_dispatch:
 
 jobs:
   adquirir:
-    name: Consulta API CEN y guarda en DB
+    name: Adquisición diaria (lentos)
     runs-on: ubuntu-latest
-    # Job aligerado: solo su núcleo exclusivo (PCP/PID/CMG-programado) + gen-real/CMG
-    # de respaldo. Los endpoints lentos se movieron a Adquisicion_diaria.py. 60 min
-    # es holgura de sobra y detecta cuelgues del CEN sin esperar 2 horas.
     timeout-minutes: 60
     env:
       FORCE_JAVASCRIPT_ACTIONS_TO_NODE24: true
@@ -29,17 +28,17 @@ jobs:
       - name: Instalar dependencias
         run: pip install -r requirements.txt
 
-      - name: Ejecutar adquisicion.py
+      - name: Ejecutar Adquisicion_diaria.py
         env:
           CEN_USER_KEY: ${{ secrets.CEN_USER_KEY }}
           CEN_OPS_KEY:  ${{ secrets.CEN_OPS_KEY }}
-          DATABASE_URL:  ${{ secrets.DATABASE_URL }}
-        run: python3 Adquisicion.py
+          DATABASE_URL: ${{ secrets.DATABASE_URL }}
+        run: python3 Adquisicion_diaria.py
 
       - name: Subir log como artefacto
         if: always()
         uses: actions/upload-artifact@v5
         with:
-          name: log-adquisicion-${{ github.run_id }}
+          name: log-adquisicion-diaria-${{ github.run_id }}
           path: adquisicion.log
           retention-days: 7

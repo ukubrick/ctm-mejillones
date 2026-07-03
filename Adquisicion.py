@@ -1478,107 +1478,11 @@ def run():
     log_adquisicion("cmg_programado_pid", cmgp_end, nuevos, actualizados,
                     int((time.time() - t0) * 1000), err_str)
 
-    # ── CMG real oficial liquidado (Crucero/Tarapacá) ─────────
-    # Se liquida con rezago ~10 días → ventana de 16 a 5 días atrás.
-    cmgr_start = (hoy - timedelta(days=16)).strftime("%Y-%m-%d")
-    cmgr_end   = (hoy - timedelta(days=5)).strftime("%Y-%m-%d")
-    log.info(f"\n  ── CMG real {cmgr_start} → {cmgr_end}")
-    t0 = time.time()
-    err_str = None
-    try:
-        regs_cmgr            = fetch_cmg_real(cmgr_start, cmgr_end)
-        nuevos, actualizados = upsert_cmg_real(regs_cmgr)
-        log.info(f"  ✅ CMG real: {nuevos} nuevos, {actualizados} actualizados")
-    except Exception as e:
-        err_str = str(e); log.error(f"  ❌ CMG real: {e}"); nuevos = actualizados = 0
-    log_adquisicion("cmg_real", cmgr_end, nuevos, actualizados,
-                    int((time.time() - t0) * 1000), err_str)
-
-    # ── Pronóstico de demanda corto plazo (Crucero/Laberinto/Angamos/Mejillones) ──
-    # Pronóstico futuro: ventana hoy → +2 días. Contexto de demanda para anticipar CMG.
-    dem_start = hoy.strftime("%Y-%m-%d")
-    dem_end   = (hoy + timedelta(days=2)).strftime("%Y-%m-%d")
-    log.info(f"\n  ── Pronóstico demanda {dem_start} → {dem_end}")
-    t0 = time.time()
-    err_str = None
-    try:
-        regs_dem             = fetch_pronostico_demanda(dem_start, dem_end)
-        nuevos, actualizados = upsert_pronostico_demanda(regs_dem)
-        log.info(f"  ✅ Demanda: {nuevos} nuevos, {actualizados} actualizados")
-    except Exception as e:
-        err_str = str(e); log.error(f"  ❌ Demanda: {e}"); nuevos = actualizados = 0
-    log_adquisicion("pronostico_demanda", dem_end, nuevos, actualizados,
-                    int((time.time() - t0) * 1000), err_str)
-
-    # ── SSCC instrucciones (una llamada por rango, pageSize=-1) ──
-    log.info(f"\n  ── SSCC instrucciones {fechas[0]}→{fechas[-1]}")
-    t0 = time.time()
-    err_str = None
-    try:
-        regs_sscc            = fetch_sscc(fechas[0], fechas[-1])
-        nuevos, actualizados = upsert_sscc(regs_sscc)
-        log.info(f"  ✅ SSCC: {nuevos} nuevos, {actualizados} actualizados")
-    except Exception as e:
-        err_str = str(e); log.error(f"  ❌ SSCC: {e}"); nuevos = actualizados = 0
-    log_adquisicion("sscc_instrucciones", fechas[-1], nuevos, actualizados,
-                    int((time.time() - t0) * 1000), err_str)
-
-    # ── Instrucciones operacionales CMG (una paginación por rango) ────
-    log.info(f"\n  ── Instrucciones CMG {fechas[0]}→{fechas[-1]}")
-    t0 = time.time()
-    err_str = None
-    try:
-        regs_icmg            = fetch_instrucciones_cmg(fechas[0], fechas[-1])
-        nuevos, actualizados = upsert_instrucciones_cmg(regs_icmg)
-        log.info(f"  ✅ Instrucciones CMG: {nuevos} nuevos, {actualizados} actualizados")
-    except Exception as e:
-        err_str = str(e); log.error(f"  ❌ Instrucciones CMG: {e}"); nuevos = actualizados = 0
-    log_adquisicion("instrucciones_cmg", fechas[-1], nuevos, actualizados,
-                    int((time.time() - t0) * 1000), err_str)
-
-    # ── Limitaciones transmisión ANG/CCR (ventana amplia) ────────
-    lim_start = (hoy - timedelta(days=DIAS_VENTANA_LIM)).strftime("%Y-%m-%d")
-    lim_end   = hoy.strftime("%Y-%m-%d")
-    log.info(f"\n  ── Limitaciones transmisión {lim_start} → {lim_end}")
-    t0 = time.time()
-    err_str = None
-    try:
-        regs_lim             = fetch_limitaciones(lim_start, lim_end)
-        nuevos, actualizados = upsert_limitaciones(regs_lim)
-        log.info(f"  ✅ Limitaciones: {nuevos} nuevos, {actualizados} actualizados")
-    except Exception as e:
-        err_str = str(e); log.error(f"  ❌ Limitaciones: {e}"); nuevos = actualizados = 0
-    log_adquisicion("limitaciones_transmision", lim_end, nuevos, actualizados,
-                    int((time.time() - t0) * 1000), err_str)
-
-    # ── Solicitudes de trabajo AES/ANG/CCR (ventana 7 días) ──────
-    sol_start = (hoy - timedelta(days=7)).strftime("%Y-%m-%d")
-    sol_end   = hoy.strftime("%Y-%m-%d")
-    log.info(f"\n  ── Solicitudes de trabajo {sol_start} → {sol_end}")
-    t0 = time.time()
-    err_str = None
-    try:
-        regs_sol             = fetch_solicitudes(sol_start, sol_end)
-        nuevos, actualizados = upsert_solicitudes(regs_sol)
-        log.info(f"  ✅ Solicitudes: {nuevos} nuevos, {actualizados} actualizados")
-    except Exception as e:
-        err_str = str(e); log.error(f"  ❌ Solicitudes: {e}"); nuevos = actualizados = 0
-    log_adquisicion("solicitudes_trabajo", sol_end, nuevos, actualizados,
-                    int((time.time() - t0) * 1000), err_str)
-
-    # ── Maestro técnico de unidades (dato casi estático, ~12 págs) ──
-    ug_fecha = (hoy - timedelta(days=1)).strftime("%Y-%m-%d")
-    log.info(f"\n  ── Unidades generadoras (maestro) {ug_fecha}")
-    t0 = time.time()
-    err_str = None
-    try:
-        regs_ug              = fetch_unidades_generadoras(ug_fecha)
-        nuevos, actualizados = upsert_unidades_maestro(regs_ug)
-        log.info(f"  ✅ Unidades maestro: {nuevos} nuevos, {actualizados} actualizados")
-    except Exception as e:
-        err_str = str(e); log.error(f"  ❌ Unidades maestro: {e}"); nuevos = actualizados = 0
-    log_adquisicion("unidades_maestro", ug_fecha, nuevos, actualizados,
-                    int((time.time() - t0) * 1000), err_str)
+    # ── Endpoints movidos a otros jobs (evita el timeout del horario) ──────
+    #   · SSCC · Instrucciones CMG · Limitaciones  → Adquisicion_operaciones.py (cada 30 min)
+    #   · Gen. real · CMG S3                        → también en Adquisicion_potencia.py (cada 30 min)
+    #   · CMG real · Pronóstico demanda · Solicitudes · Unidades maestro (lentos, cambian poco)
+    #     → Adquisicion_diaria.py (1×/día). El horario conserva su núcleo: PCP/PID/CMG-programado.
 
     log.info(f"\n  Fin adquisición\n")
 
