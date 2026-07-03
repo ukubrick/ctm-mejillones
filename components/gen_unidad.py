@@ -184,7 +184,8 @@ def _chart_unidad(unidad, df_r, df_p, df_pid, df_c, df_cp, df_dem, barra_dem,
     if not df_upid.empty:
         xs.append(df_upid["fecha_hora"])
     x_all = pd.concat(xs)
-    add_linea_ahora(fig, x_all.min(), x_all.max())
+    x_min, x_max = x_all.min(), x_all.max()
+    add_linea_ahora(fig, x_min, x_max)
     if tiene_cmg:
         fig.update_yaxes(title_text="USD/MWh", gridcolor=GR, zeroline=False,
                          tickfont=dict(color="#94A3B8", size=10), title_font=dict(color="#94A3B8", size=11),
@@ -194,8 +195,11 @@ def _chart_unidad(unidad, df_r, df_p, df_pid, df_c, df_cp, df_dem, barra_dem,
                              tickfont=dict(color="#94A3B8", size=10), title_font=dict(color="#94A3B8", size=11),
                              row=2, col=1, secondary_y=True)
     for r in range(1, n_rows + 1):
+        # range explícito = las series llegan de borde a borde (sin el padding
+        # automático ~5% que dejaba franjas vacías a izquierda/derecha).
         fig.update_xaxes(showticklabels=True, tickformat="%d/%m\n%H:%M",
-                         tickfont=dict(color="#64748B", size=10), showgrid=False, row=r, col=1)
+                         tickfont=dict(color="#64748B", size=10), showgrid=False,
+                         range=[x_min, x_max], autorange=False, row=r, col=1)
 
     st.plotly_chart(fig, use_container_width=True,
                     config={"displayModeBar": False, "responsive": True}, key=f"chart_unidad_{unidad}")
