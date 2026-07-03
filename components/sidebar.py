@@ -155,7 +155,7 @@ def render_sidebar():
 
         st.markdown(f"""
         <div style="border-top:1px solid rgba(255,255,255,0.14);padding-top:12px;margin-top:16px;text-align:center;font-size:0.68rem;color:rgba(255,255,255,0.5)">
-            {datetime.now().strftime("%d/%m/%Y · %H:%M")}<br>
+            {datetime.now(TZ_CHILE).strftime("%d/%m/%Y · %H:%M")}<br>
             Creado por <b style="color:rgba(255,255,255,0.8)">Erick Herrera</b>
         </div>
         """, unsafe_allow_html=True)

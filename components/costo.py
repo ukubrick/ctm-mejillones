@@ -82,8 +82,6 @@ def render_costo(df_r, df_c, s=None, e=None, nodo_cmg="CRUCERO_______220", df_p=
         _grafico_barras_ingreso(ingreso_unit, energia_unit, unidades_ord)
     with gc2:
         _grafico_cmg_tiempo(df_c, cmg_prom, cmg_min, cmg_max, df_cp, df_cr, df_dem, barra_dem)
-    st.caption("¿Buscas distribución de precios, correlación, precisión de la programación o "
-               "factor de planta? Están consolidados en la vista **Estadísticas**.")
 
 
 def _grafico_barras_ingreso(ingreso_unit, energia_unit, unidades_ord):
