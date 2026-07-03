@@ -479,6 +479,22 @@ def get_conn():
     return psycopg2.connect(DATABASE_URL)
 
 
+_origen_col_ok = False
+
+
+def _ensure_origen_col(cur):
+    """Asegura la columna `origen` en generacion_real (idempotente, 1 vez/proceso).
+
+    Permite que un ingreso manual (origen='MANUAL') no sea sobreescrito por la
+    adquisición automática. Se auto-crea aquí para no depender de una migración
+    manual: en Actions el puerto 5432 no está bloqueado."""
+    global _origen_col_ok
+    if _origen_col_ok:
+        return
+    cur.execute("ALTER TABLE generacion_real ADD COLUMN IF NOT EXISTS origen text;")
+    _origen_col_ok = True
+
+
 def upsert_generacion_real(registros: list[dict]) -> tuple[int, int]:
     if not registros:
         return 0, 0
@@ -492,13 +508,15 @@ def upsert_generacion_real(registros: list[dict]) -> tuple[int, int]:
         ON CONFLICT (unidad, fecha_hora) DO UPDATE
             SET gen_real_mw = EXCLUDED.gen_real_mw,
                 potencia_maxima = EXCLUDED.potencia_maxima
-            WHERE generacion_real.gen_real_mw = 0
-               OR EXCLUDED.gen_real_mw > 0
+            WHERE generacion_real.origen IS DISTINCT FROM 'MANUAL'
+              AND (generacion_real.gen_real_mw = 0
+                   OR EXCLUDED.gen_real_mw > 0)
     """
     nuevos = dupes = 0
     try:
         with get_conn() as conn:
             with conn.cursor() as cur:
+                _ensure_origen_col(cur)
                 for rec in registros:
                     cur.execute(sql, rec)
                     if cur.rowcount == 1: nuevos += 1

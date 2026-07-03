@@ -36,8 +36,10 @@ def load_real(s, e):
 
 @st.cache_data(ttl=300)
 def load_prog(s, e):
-    """Programada 'oficial' por unidad/hora: PCP > MANUAL. Excluye el PID
-    (intra-día), que se consulta aparte con load_prog_pid para comparar."""
+    """Programada 'oficial' por unidad/hora: **MANUAL > PCP** (el ingreso manual
+    tiene prioridad para permitir reemplazos/correcciones que prevalecen sobre la
+    adquisición automática). Excluye el PID (intra-día), que se consulta aparte
+    con load_prog_pid para comparar."""
     df = fetch(
         "generacion_programada", "unidad,gen_programada_mw,fecha_hora,hora,fuente",
         gte={"fecha_hora": _ini(s)}, lte={"fecha_hora": _fin(e)},
@@ -47,19 +49,19 @@ def load_prog(s, e):
         FROM generacion_programada
         WHERE fecha_hora::date BETWEEN %s AND %s
           AND fuente <> 'CEN_PID'
-        ORDER BY unidad, fecha_hora, CASE fuente WHEN 'CEN_PCP' THEN 0 ELSE 1 END
+        ORDER BY unidad, fecha_hora, CASE fuente WHEN 'MANUAL' THEN 0 ELSE 1 END
         """,
         params=(s, e),
     )
     if df.empty:
         return df
-    # En la vía REST hay que filtrar el PID y deduplicar priorizando CEN_PCP
+    # En la vía REST hay que filtrar el PID y deduplicar priorizando MANUAL
     # (lo que el SQL hace con WHERE + DISTINCT ON).
     if rest_enabled():
         df = df[df["fuente"] != "CEN_PID"]
         if df.empty:
             return df
-        df["_pri"] = (df["fuente"] != "CEN_PCP").astype(int)
+        df["_pri"] = (df["fuente"] != "MANUAL").astype(int)
         df = (df.sort_values(["unidad", "fecha_hora", "_pri"])
                 .drop_duplicates(["unidad", "fecha_hora"], keep="first")
                 .drop(columns="_pri"))

@@ -130,11 +130,9 @@ def render_sidebar():
         </div>
         """, unsafe_allow_html=True)
 
-        st.markdown("<div style='margin-top:12px'></div>", unsafe_allow_html=True)
-        st.page_link("app.py", label="Aplicación")
-        st.page_link("pages/ml_analysis.py", label="Machine Learning Analysis")
-
         st.markdown("---")
+        st.markdown('<p style="font-size:0.72rem;font-weight:700;letter-spacing:0.06em;'
+                    'color:#E2E8F0;margin-bottom:2px">PERÍODO</p>', unsafe_allow_html=True)
         hoy = date.today()
         fi = st.date_input("Desde", value=hoy - timedelta(days=7), max_value=hoy)
         ff = st.date_input("Hasta", value=hoy, max_value=hoy)

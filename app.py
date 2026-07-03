@@ -22,6 +22,8 @@ from components.solicitudes import render_solicitudes
 from components.manual import render_programada_manual, render_real_manual
 from components.datos import render_datos_horarios, render_bitacora
 from components.infotecnica import render_infotecnica
+from components.estadisticas import render_estadisticas
+from components.ml import render_ml
 
 st.set_page_config(
     page_title="Complejo Térmico Mejillones",
@@ -35,46 +37,21 @@ st_autorefresh(interval=3_600_000, limit=None, key="autorefresh_horario")
 
 st.markdown(get_css(), unsafe_allow_html=True)
 
-# ── Navegación de 2 niveles (categoría → vista) ───────────────────────────────
-CATEGORIAS = {
-    "Operación":   ["Resumen", "Análisis de Costo"],
-    "Restricciones": ["Limitaciones", "SSCC", "Despacho CMG", "Solicitudes"],
-    "Gestión de Datos": ["Ingreso Manual", "Datos & Bitácora", "Infotécnica"],
-}
-VISTAS = [v for grupo in CATEGORIAS.values() for v in grupo]
+# ── Navegación plana (4 vistas · principio de simplicidad) ────────────────────
+# Se fusionaron las categorías: las sub-secciones viven dentro de cada vista con
+# radio-pills internos. Los estadísticos dispersos se consolidaron en «Análisis».
+VISTAS = ["Resumen", "Análisis", "Restricciones", "Datos"]
 
 
 def _navegacion():
-    """Navegación tipo barra de menú de escritorio. Devuelve la vista activa.
-
-    Cada categoría es un `st.popover` a todo el ancho que se despliega hacia abajo
-    mostrando sus vistas como botones (primary = vista activa). La categoría activa
-    muestra inline la vista seleccionada. Patrón replicado del dashboard Pulsar
-    (ernc-aes-dashboard). La categoría activa se deriva de la vista (sin estado
-    `_cat_abierta`) → un solo click, sin quedar fijo abierto.
-    """
+    """Barra de navegación plana (segmented control). Devuelve la vista activa."""
     vista = st.session_state.get("vista", VISTAS[0])
     if vista not in VISTAS:
         vista = VISTAS[0]
-
-    # Limpia estado heredado de la navegación de botones nativos anterior.
-    st.session_state.pop("_cat_abierta", None)
-
     st.markdown("<div class='menubar'>", unsafe_allow_html=True)
-    cols = st.columns(len(CATEGORIAS))
-    for col, (cat, vistas_cat) in zip(cols, CATEGORIAS.items()):
-        with col:
-            activa = vista in vistas_cat
-            etiqueta = f"{cat}  ·  {vista}" if activa else cat
-            with st.popover(etiqueta, use_container_width=True):
-                for v in vistas_cat:
-                    if st.button(v, key=f"nav_{v}", use_container_width=True,
-                                 type="primary" if v == vista else "secondary"):
-                        st.session_state["vista"] = v
-                        st.rerun()
-    st.markdown("</div>", unsafe_allow_html=True)
-
-    st.markdown("<div style='height:10px'></div>", unsafe_allow_html=True)
+    vista = st.radio("Navegación", VISTAS, index=VISTAS.index(vista),
+                     horizontal=True, label_visibility="collapsed", key="vista")
+    st.markdown("</div><div style='height:10px'></div>", unsafe_allow_html=True)
     return vista
 
 
@@ -93,8 +70,10 @@ def main():
 
     nodo_nombre = NOMBRES_NODO.get(f["nodo_cmg"], "Crucero 220kV")
     st.markdown(
-        '<h1 style="font-size:30px;font-weight:800;letter-spacing:-0.5px;color:#1A1F36;margin-bottom:2px">'
-        'Dashboard Operacional — Complejo Térmico Mejillones</h1>',
+        '<h1 style="font-size:30px;font-weight:800;letter-spacing:-0.5px;margin-bottom:2px;'
+        'background:linear-gradient(100deg,#22A95B 0%,#1FB6E5 45%,#3D53E8 72%,#7C4DE0 100%);'
+        '-webkit-background-clip:text;background-clip:text;-webkit-text-fill-color:transparent;'
+        'display:inline-block">Dashboard Operacional — Complejo Térmico Mejillones</h1>',
         unsafe_allow_html=True,
     )
     st.markdown(
@@ -111,24 +90,40 @@ def main():
     if vista == "Resumen":
         render_gen_unidad(df_r, df_p, df_c, f["mostrar_prog"], f["mostrar_cmg"], f["nodo_cmg"], s, e)
         render_novedades(s, e)
-    elif vista == "Análisis de Costo":
-        render_costo(df_r, df_c, s, e, f["nodo_cmg"], df_p)
-    elif vista == "Limitaciones":
-        render_limitaciones(s, e)
-    elif vista == "SSCC":
-        render_sscc(s, e)
-    elif vista == "Despacho CMG":
-        render_despacho_cmg(s, e)
-    elif vista == "Solicitudes":
-        render_solicitudes(s, e)
-    elif vista == "Ingreso Manual":
-        render_programada_manual(s, e, hoy)
-        render_real_manual(s, e, hoy)
-    elif vista == "Datos & Bitácora":
-        render_datos_horarios(df_r, df_c, s)
-        render_bitacora(s, e)
-    elif vista == "Infotécnica":
-        render_infotecnica()
+
+    elif vista == "Análisis":
+        seccion = st.radio("Sección", ["Costos", "Estadísticas", "Predicción (ML)"],
+                           horizontal=True, label_visibility="collapsed", key="analisis_sub")
+        if seccion == "Costos":
+            render_costo(df_r, df_c, s, e, f["nodo_cmg"], df_p)
+        elif seccion == "Estadísticas":
+            render_estadisticas(df_r, df_p, df_c, s, e)
+        else:
+            render_ml()
+
+    elif vista == "Restricciones":
+        seccion = st.radio("Sección", ["Limitaciones", "SSCC", "Despacho CMG", "Solicitudes"],
+                           horizontal=True, label_visibility="collapsed", key="restric_sub")
+        if seccion == "Limitaciones":
+            render_limitaciones(s, e)
+        elif seccion == "SSCC":
+            render_sscc(s, e)
+        elif seccion == "Despacho CMG":
+            render_despacho_cmg(s, e)
+        else:
+            render_solicitudes(s, e)
+
+    elif vista == "Datos":
+        seccion = st.radio("Sección", ["Ingreso Manual", "Datos & Bitácora", "Infotécnica"],
+                           horizontal=True, label_visibility="collapsed", key="datos_sub")
+        if seccion == "Ingreso Manual":
+            render_programada_manual(s, e, hoy)
+            render_real_manual(s, e, hoy)
+        elif seccion == "Datos & Bitácora":
+            render_datos_horarios(df_r, df_c, s)
+            render_bitacora(s, e)
+        else:
+            render_infotecnica()
 
     st.markdown("""
     <div style="margin-top:3rem;padding-top:1rem;border-top:1px solid #E2E8F0;

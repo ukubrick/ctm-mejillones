@@ -6,12 +6,16 @@ El monolito original tenía estas constantes y el CSS incrustados; aquí viven
 en un solo lugar para mantener consistencia visual.
 """
 
-# ── Paleta AES ────────────────────────────────────────────────────────────────
-AES_AZUL     = "#3B4CE8"
-AES_AZUL_OSC = "#2530B0"
-AES_CYAN     = "#4DC8DC"
-AES_VIOLETA  = "#9B6FD4"
-AES_VERDE    = "#5AB848"
+# ── Paleta corporativa AES Andes ──────────────────────────────────────────────
+# Espectro de marca (logo infinito/espiral): verde → teal → cyan → azul → violeta.
+# Todo el dashboard usa degradados con estas 5 anclas.
+AES_VERDE    = "#22A95B"   # verde AES (inicio del espectro)
+AES_TEAL     = "#12B2A0"   # teal / esmeralda
+AES_CYAN     = "#1FB6E5"   # cyan
+AES_AZUL     = "#3D53E8"   # azul AES (color de acción principal)
+AES_AZUL_OSC = "#2A38C9"
+AES_VIOLETA  = "#7C4DE0"   # violeta (fin del espectro)
+AES_VIOLETA_OSC = "#5B2FB0"
 AES_AMBAR    = "#F59E0B"
 AES_ROJO     = "#EF4444"
 AES_GRIS     = "#F5F7FA"
@@ -20,16 +24,24 @@ AES_MUTED    = "#6B7280"
 AES_BORDE    = "#E5E7EB"
 AES_BLANCO   = "#FFFFFF"
 
+# Degradado corporativo completo (verde→teal→cyan→azul→violeta) — usado en
+# barras de acento, KPI border-top, títulos y botones destacados.
+AES_GRAD      = ("linear-gradient(120deg,#22A95B 0%,#12B2A0 26%,"
+                 "#1FB6E5 52%,#3D53E8 76%,#7C4DE0 100%)")
+# Degradado de acción (azul→violeta) para botones/tabs activos.
+AES_GRAD_BTN  = "linear-gradient(135deg,#3D53E8 0%,#6A3FCC 100%)"
+
 # ── Unidades ────────────────────────────────────────────────────────────────
 UNIDADES = ["ANG1", "ANG2", "CCR1", "CCR2"]
 
-# Color por unidad (línea principal, programada clara, badge, texto)
+# Color por unidad — mapeadas sobre el espectro AES (violeta→azul→cyan→verde)
+# para que las 4 unidades "hablen" la paleta corporativa.
 COLORES = {
-    "ANG1": {"line": "#6D28D9", "prog": "#C4B5FD", "badge": "#EDE9FE", "text": "#6D28D9"},
-    "ANG2": {"line": "#2563EB", "prog": "#93C5FD", "badge": "#DBEAFE", "text": "#2563EB"},
-    "CCR1": {"line": "#0891B2", "prog": "#67E8F9", "badge": "#CFFAFE", "text": "#0891B2"},
-    "CCR2": {"line": "#16A34A", "prog": "#86EFAC", "badge": "#DCFCE7", "text": "#16A34A"},
-    "CMG":  {"line": "#6D28D9"},
+    "ANG1": {"line": "#7C4DE0", "prog": "#C9B5F2", "badge": "#EDE7FC", "text": "#6A3FCC"},  # violeta
+    "ANG2": {"line": "#3D53E8", "prog": "#AEB8F5", "badge": "#E2E7FD", "text": "#2A38C9"},  # azul
+    "CCR1": {"line": "#1FB6E5", "prog": "#A6E4F6", "badge": "#DBF3FC", "text": "#1391BC"},  # cyan
+    "CCR2": {"line": "#22A95B", "prog": "#A4E0BC", "badge": "#DCF5E7", "text": "#1B8B4A"},  # verde
+    "CMG":  {"line": "#7C4DE0"},
 }
 LABELS = {"ANG1": "Angamos U1", "ANG2": "Angamos U2", "CCR1": "Cochrane U1", "CCR2": "Cochrane U2"}
 
@@ -44,11 +56,11 @@ LABELS = {"ANG1": "Angamos U1", "ANG2": "Angamos U2", "CCR1": "Cochrane U1", "CC
 # Paleta validada con el skill dataviz (separación CVD ΔE>80, contraste ~2.9:1 en
 # líneas con leyenda + hover + guion como codificación secundaria).
 SERIE = {
-    "real":     "#1E5AA8",            # azul profundo — línea protagonista (gen. real)
+    "real":     "#2A38C9",            # azul AES profundo — línea protagonista (gen. real)
     "prog":     "#94A3B8",            # gris pizarra, dotted — PCP (día-ante), recesivo
     "prog_pid": "#C98500",            # ámbar-oro, dashed — PID (intra-día), referencia operativa
-    "cmg":      "#6D28D9",            # violeta — CMG real
-    "cmg_fill": "rgba(109,40,217,0.08)",
+    "cmg":      "#7C4DE0",            # violeta AES — CMG real
+    "cmg_fill": "rgba(124,77,224,0.08)",
     "cmg_prog": "#C98500",            # ámbar-oro, dashed — CMG programado (mismo lenguaje "plan")
     "demanda":  "#64748B",            # gris pizarra, dotted — demanda pronosticada
     "over":     "rgba(12,163,12,0.14)",   # sobregeneración (real > programa)
@@ -127,8 +139,9 @@ C_GRID    = "#E2E8F0"         # grilla clara
 C_MUTED   = "#94A3B8"         # ticks / anotaciones atenuadas
 C_TEXTO   = "#0F172A"         # títulos de gráfico
 
-# Sidebar púrpura (degradado) — identidad CTM dentro de la familia AES
-SIDEBAR_GRAD = "linear-gradient(160deg,#6D28D9 0%,#3b1470 55%,#1e0a3c 100%)"
+# Sidebar — degradado corporativo AES (teal→azul→violeta) con anclas oscuras
+# para mantener el texto blanco legible.
+SIDEBAR_GRAD = "linear-gradient(168deg,#0E7E93 0%,#2A38C9 52%,#4A25A0 100%)"
 
 # Nodo CMG (barra_transf) → barra del pronóstico de demanda
 CMG_A_DEMANDA = {
@@ -191,27 +204,56 @@ p,span,div,label {{ font-family:'Inter',sans-serif; }}
 [data-testid="stSidebar"] [data-testid="stDateInput"] input {{ background:#FFFFFF!important; color:#0F172A!important; font-weight:700!important; -webkit-text-fill-color:#0F172A!important; }}
 [data-testid="stSidebar"] [data-testid="stDateInput"] svg {{ fill:#475569!important; }}
 [data-testid="stSidebar"] .stButton>button {{
-  background:rgba(255,255,255,0.06)!important; border:1px solid rgba(255,255,255,0.12)!important;
-  border-radius:8px!important; color:#E2E8F0!important; font-weight:500!important;
-  transition:all 0.2s cubic-bezier(0.4,0,0.2,1)!important;
+  width:100%!important; background:rgba(255,255,255,0.08)!important;
+  border:1px solid rgba(255,255,255,0.16)!important;
+  border-radius:9px!important; color:#F1F5F9!important; font-weight:600!important;
+  justify-content:center!important; text-align:center!important; min-height:40px!important;
+  transition:all 0.18s cubic-bezier(0.4,0,0.2,1)!important;
 }}
 [data-testid="stSidebar"] .stButton>button:hover {{
-  background:rgba(196,181,253,0.22)!important; border-color:#C4B5FD!important; transform:translateX(3px)!important;
+  background:rgba(255,255,255,0.18)!important; border-color:rgba(255,255,255,0.5)!important;
+  transform:translateY(-1px)!important; box-shadow:0 4px 14px rgba(0,0,0,0.22)!important;
 }}
 [data-testid="stSidebar"] [data-baseweb="select"]>div {{ color:#E2E8F0!important; background:rgba(255,255,255,0.07)!important; }}
+/* Botón de descarga (export) también a ancho completo y centrado */
+[data-testid="stSidebar"] [data-testid="stDownloadButton"]>button {{
+  width:100%!important; justify-content:center!important;
+}}
 .status-box {{
-  background:rgba(255,255,255,0.07); border:1px solid rgba(255,255,255,0.12);
-  border-radius:8px; padding:0.6rem 0.8rem; margin-top:0.5rem; font-size:0.72rem;
+  background:rgba(255,255,255,0.08); border:1px solid rgba(255,255,255,0.14);
+  border-radius:10px; padding:0.7rem 0.9rem; margin-top:0.5rem; font-size:0.72rem;
+}}
+
+/* ── Radio del sidebar como segmented control (nodo CMG) ──────────────── */
+[data-testid="stSidebar"] div[data-testid="stRadio"] [role="radiogroup"] {{
+  display:flex; gap:5px; background:rgba(255,255,255,0.08);
+  border:1px solid rgba(255,255,255,0.14); border-radius:10px; padding:4px;
+}}
+[data-testid="stSidebar"] div[data-testid="stRadio"] label[data-baseweb="radio"] {{
+  flex:1; margin:0; padding:6px 10px; border-radius:7px; justify-content:center;
+  cursor:pointer; transition:all 0.18s ease;
+}}
+[data-testid="stSidebar"] div[data-testid="stRadio"] label[data-baseweb="radio"] > div:first-child {{ display:none; }}
+[data-testid="stSidebar"] div[data-testid="stRadio"] label[data-baseweb="radio"] p {{
+  font-size:12px!important; font-weight:600!important; color:rgba(255,255,255,0.7)!important; text-align:center;
+}}
+[data-testid="stSidebar"] div[data-testid="stRadio"] label[data-baseweb="radio"]:has(input:checked) {{
+  background:rgba(255,255,255,0.95);
+}}
+[data-testid="stSidebar"] div[data-testid="stRadio"] label[data-baseweb="radio"]:has(input:checked) p {{
+  color:{AES_AZUL_OSC}!important; font-weight:700!important;
 }}
 
 /* ── KPI nativos (st.metric) ──────────────────────────────────────────── */
+/* Borde superior con degradado corporativo AES (padding-box/border-box trick). */
 [data-testid="stMetric"] {{
-  background:{AES_BLANCO}; border:1px solid var(--bord); border-top:4px solid {AES_AZUL};
+  background:linear-gradient({AES_BLANCO},{AES_BLANCO}) padding-box, {AES_GRAD} border-box;
+  border:1px solid transparent; border-top-width:4px;
   border-radius:12px; padding:1rem 1.2rem;
-  box-shadow:0 2px 12px rgba(59,76,232,0.08);
+  box-shadow:0 2px 12px rgba(61,83,232,0.08);
   transition:transform 0.2s ease, box-shadow 0.2s ease; animation:fadeInUp 0.5s ease both;
 }}
-[data-testid="stMetric"]:hover {{ transform:translateY(-3px); box-shadow:0 8px 24px rgba(59,76,232,0.15); }}
+[data-testid="stMetric"]:hover {{ transform:translateY(-3px); box-shadow:0 8px 24px rgba(61,83,232,0.16); }}
 [data-testid="stMetricLabel"] p {{ font-size:0.72rem!important; color:var(--muted)!important; font-weight:700!important; text-transform:uppercase; letter-spacing:0.06em; }}
 [data-testid="stMetricValue"] {{ font-size:1.7rem!important; font-weight:800!important; color:var(--txt)!important; }}
 
@@ -233,10 +275,15 @@ p,span,div,label {{ font-family:'Inter',sans-serif; }}
 .kpi-sub {{ font-size:0.75rem; color:var(--muted); margin-top:0.4rem; }}
 .kpi-delta {{ font-size:0.78rem; margin-top:0.5rem; font-weight:600; }}
 
-/* ── Títulos de sección ───────────────────────────────────────────────── */
+/* ── Títulos de sección (subrayado con degradado AES) ─────────────────── */
 .sec {{
   font-size:0.82rem; font-weight:800; letter-spacing:0.12em; text-transform:uppercase;
-  color:#334155; border-bottom:2px solid var(--bord); padding-bottom:0.45rem; margin:1.8rem 0 1rem;
+  color:#334155; padding-bottom:0.5rem; margin:1.8rem 0 1rem; position:relative;
+  border-bottom:none;
+}}
+.sec::after {{
+  content:""; position:absolute; left:0; bottom:0; height:3px; width:100%;
+  background:{AES_GRAD}; border-radius:2px; opacity:0.9;
 }}
 
 /* ── Dots de estado ───────────────────────────────────────────────────── */
@@ -284,14 +331,14 @@ p,span,div,label {{ font-family:'Inter',sans-serif; }}
 .block-container .stButton button[kind="secondary"] {{ background:{AES_BLANCO}; color:{AES_MUTED}; border:1px solid var(--bord); }}
 .block-container .stButton button[kind="secondary"]:hover {{ background:rgba(59,76,232,0.06); color:{AES_AZUL}; border-color:{AES_AZUL}; }}
 .block-container .stButton button[kind="primary"] {{
-  background:linear-gradient(135deg,{AES_AZUL} 0%,{AES_AZUL_OSC} 100%); color:white;
-  border:1px solid {AES_AZUL_OSC}; box-shadow:0 4px 12px rgba(59,76,232,0.28);
+  background:{AES_GRAD_BTN}; color:white;
+  border:1px solid {AES_AZUL_OSC}; box-shadow:0 4px 12px rgba(61,83,232,0.28);
 }}
 
 /* ── Tabs (cyan) ──────────────────────────────────────────────────────── */
 .stTabs [data-baseweb="tab-list"] {{ gap:6px; background:{AES_BLANCO}; border-bottom:3px solid {AES_CYAN}; border-radius:8px 8px 0 0; box-shadow:0 2px 8px rgba(0,0,0,0.05); }}
 .stTabs [data-baseweb="tab"] {{ border-radius:8px 8px 0 0; font-weight:500; font-size:13px; color:var(--muted); padding:9px 24px!important; transition:all 0.2s cubic-bezier(0.4,0,0.2,1); }}
-.stTabs [aria-selected="true"][data-baseweb="tab"] {{ background:linear-gradient(135deg,{AES_CYAN} 0%,#2ba8be 100%)!important; color:{AES_TEXTO}!important; font-weight:700!important; box-shadow:0 -2px 10px rgba(77,200,220,0.35)!important; }}
+.stTabs [aria-selected="true"][data-baseweb="tab"] {{ background:linear-gradient(135deg,{AES_TEAL} 0%,{AES_CYAN} 100%)!important; color:#FFFFFF!important; font-weight:700!important; box-shadow:0 -2px 10px rgba(31,182,229,0.35)!important; }}
 .stTabs [data-baseweb="tab-panel"] [data-testid="stPlotlyChart"],
 .stTabs [data-baseweb="tab-panel"] .js-plotly-plot {{ width:100%!important; min-width:0!important; }}
 
@@ -314,8 +361,8 @@ p,span,div,label {{ font-family:'Inter',sans-serif; }}
 .block-container div[data-testid="stRadio"] label[data-baseweb="radio"]:hover {{ background:rgba(59,76,232,0.06); }}
 .block-container div[data-testid="stRadio"] label[data-baseweb="radio"]:hover p {{ color:{AES_AZUL}; }}
 .block-container div[data-testid="stRadio"] label[data-baseweb="radio"]:has(input:checked) {{
-  background:linear-gradient(135deg,{AES_AZUL} 0%,{AES_AZUL_OSC} 100%);
-  border-color:{AES_AZUL_OSC}; box-shadow:0 3px 10px rgba(59,76,232,0.30);
+  background:{AES_GRAD_BTN};
+  border-color:{AES_AZUL_OSC}; box-shadow:0 3px 10px rgba(61,83,232,0.30);
 }}
 .block-container div[data-testid="stRadio"] label[data-baseweb="radio"]:has(input:checked) p {{ color:#FFFFFF; }}
 

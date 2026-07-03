@@ -11,15 +11,18 @@ from utils.data import load_prog, load_real
 _SQL_UP_PROG = """INSERT INTO generacion_programada (unidad,gen_programada_mw,fecha_hora,hora,fuente)
     VALUES (%s,%s,%s,%s,%s)
     ON CONFLICT (unidad,fecha_hora,fuente) DO UPDATE SET gen_programada_mw=EXCLUDED.gen_programada_mw"""
-_SQL_UP_REAL = """INSERT INTO generacion_real (unidad, gen_real_mw, fecha_hora, hora)
-    VALUES (%s, %s, %s, %s)
-    ON CONFLICT (unidad, fecha_hora) DO UPDATE SET gen_real_mw=EXCLUDED.gen_real_mw"""
+# Marca origen='MANUAL' → la adquisición automática NO sobreescribe estas horas
+# (ver guard en Adquisicion.upsert_generacion_real). El ingreso manual prevalece.
+_SQL_UP_REAL = """INSERT INTO generacion_real (unidad, gen_real_mw, fecha_hora, hora, origen)
+    VALUES (%s, %s, %s, %s, 'MANUAL')
+    ON CONFLICT (unidad, fecha_hora) DO UPDATE SET gen_real_mw=EXCLUDED.gen_real_mw, origen='MANUAL'"""
 
 
 def render_programada_manual(s, e, hoy):
     st.markdown('<div class="sec">POTENCIA PROGRAMADA · CEN PCP + INGRESO MANUAL</div>', unsafe_allow_html=True)
     st.info("Los datos de programación se importan automáticamente desde la API CEN (PCP) cada hora. "
-            "El ingreso manual permite agregar o corregir valores de respaldo cuando no hay datos PCP disponibles.")
+            "El ingreso manual **tiene prioridad**: si cargas un valor manual para una unidad/hora, "
+            "ese valor prevalece sobre el PCP y no lo pisa la adquisición automática.")
 
     tab1, tab2 = st.tabs(["Por hora", "24 horas de una vez"])
     with tab1:
@@ -72,8 +75,9 @@ def render_programada_manual(s, e, hoy):
 def render_real_manual(s, e, hoy):
     st.markdown('<div class="sec">GENERACIÓN REAL · INGRESO MANUAL DE RESPALDO</div>', unsafe_allow_html=True)
     st.info("Los datos de generación real se importan automáticamente desde la API CEN (SIPUB) cada hora. "
-            "El ingreso manual permite agregar o corregir valores cuando la adquisición falla. "
-            "Si ya existe un registro para esa unidad/hora, el valor se sobreescribe.")
+            "El ingreso manual **tiene prioridad**: la hora que cargues queda marcada como MANUAL y "
+            "la adquisición automática ya no la sobreescribe (útil para reemplazos/correcciones forzadas). "
+            "Para volver al valor automático, elimina el registro manual abajo.")
 
     tab1, tab2 = st.tabs(["Por hora", "24 horas de una vez"])
     with tab1:
@@ -85,7 +89,7 @@ def render_real_manual(s, e, hoy):
         if st.button("Guardar hora real", key="btn_hr"):
             fh = f"{f} {int(h)-1:02d}:00:00"
             ok = write_upsert("generacion_real",
-                [{"unidad": u, "gen_real_mw": mw, "fecha_hora": fh, "hora": int(h)}],
+                [{"unidad": u, "gen_real_mw": mw, "fecha_hora": fh, "hora": int(h), "origen": "MANUAL"}],
                 "unidad,fecha_hora", sql=_SQL_UP_REAL, params_list=[(u, mw, fh, int(h))])
             if ok:
                 st.success(f"Guardado: {LABELS[u]} H{h} → {mw} MW"); st.cache_data.clear(); st.rerun()
@@ -103,7 +107,7 @@ def render_real_manual(s, e, hoy):
                 if len(valores) != 24:
                     st.error(f"Se esperan 24 valores, se ingresaron {len(valores)}.")
                 else:
-                    rows = [{"unidad": u, "gen_real_mw": mw, "fecha_hora": f"{f} {hh-1:02d}:00:00", "hora": hh}
+                    rows = [{"unidad": u, "gen_real_mw": mw, "fecha_hora": f"{f} {hh-1:02d}:00:00", "hora": hh, "origen": "MANUAL"}
                             for hh, mw in enumerate(valores, 1)]
                     params = [(u, mw, f"{f} {hh-1:02d}:00:00", hh) for hh, mw in enumerate(valores, 1)]
                     if write_upsert("generacion_real", rows, "unidad,fecha_hora", sql=_SQL_UP_REAL, params_list=params):
