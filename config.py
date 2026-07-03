@@ -96,6 +96,23 @@ STATUS_COLOR_SOL = {
 TIPO_LABEL = {"desconexion": "Desconexión", "intervencion": "Intervención"}
 TYPE_LABEL = {"central_generadora": "Central", "subestacion": "Subestación", "linea": "Línea"}
 
+# ── Infotécnica (fallback estático; la tabla unidades_maestro tiene prioridad) ──
+# Fuente: /unidades-generadoras/v4 (SIP) sondeado 2026-07-03 + PMAX declaradas.
+INFOTECNICA = {
+    "ANG1": {"propietario": "Empresa Eléctrica Angamos SpA", "tecnologia": "Termoeléctrica TV (carbón)",
+             "punto_conexion": "S/E Angamos 220 kV", "pot_max_bruta": 277.99, "pot_neta_efectiva": 252.2,
+             "pot_min_tecnica": 60.0, "min_tec_ctrl_frec": 87.0, "tension_nominal": 18.0},
+    "ANG2": {"propietario": "Empresa Eléctrica Angamos SpA", "tecnologia": "Termoeléctrica TV (carbón)",
+             "punto_conexion": "S/E Angamos 220 kV", "pot_max_bruta": 280.0, "pot_neta_efectiva": None,
+             "pot_min_tecnica": 60.0, "min_tec_ctrl_frec": None, "tension_nominal": 18.0},
+    "CCR1": {"propietario": "Empresa Eléctrica Cochrane SpA", "tecnologia": "Termoeléctrica TV (carbón)",
+             "punto_conexion": "S/E Cochrane 220 kV", "pot_max_bruta": 276.0, "pot_neta_efectiva": None,
+             "pot_min_tecnica": 60.0, "min_tec_ctrl_frec": None, "tension_nominal": None},
+    "CCR2": {"propietario": "Empresa Eléctrica Cochrane SpA", "tecnologia": "Termoeléctrica TV (carbón)",
+             "punto_conexion": "S/E Cochrane 220 kV", "pot_max_bruta": 276.0, "pot_neta_efectiva": None,
+             "pot_min_tecnica": 60.0, "min_tec_ctrl_frec": None, "tension_nominal": None},
+}
+
 # Fondo y grilla de los gráficos Plotly
 BG = "#F5F7FA"
 GR = "#E5E7EB"

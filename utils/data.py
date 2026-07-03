@@ -254,6 +254,19 @@ def load_pronostico_demanda(s, e, barra="Crucero220"):
     return df
 
 
+@st.cache_data(ttl=3600)
+def load_unidades_maestro():
+    """Maestro técnico de las 4 unidades (Pmax bruta/neta, mín técnico, etc.).
+    Silencioso si la tabla no existe; config.PMAX/POT_MIN_TECNICA son el fallback."""
+    try:
+        return fetch(
+            "unidades_maestro", "*",
+            sql="SELECT * FROM unidades_maestro ORDER BY unidad",
+        )
+    except Exception:
+        return pd.DataFrame()
+
+
 @st.cache_data(ttl=60)
 def load_bit(s, e, u=None):
     eq = {"unidad": u} if (u and u != "Todas") else None

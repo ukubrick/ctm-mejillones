@@ -1222,6 +1222,124 @@ def upsert_solicitudes(registros: list[dict]) -> tuple[int, int]:
     return nuevos, actualizados
 
 
+def _num_cl(v):
+    """Número con coma decimal chilena ('277,99') → float, o None."""
+    if v is None or v == "":
+        return None
+    try:
+        return float(str(v).replace(".", "").replace(",", ".")) if "," in str(v) else float(v)
+    except (ValueError, TypeError):
+        return None
+
+
+# id_unidad CEN → código interno (mismo mapeo que limitaciones)
+IDS_UNIDAD_MAESTRO = {1965: "ANG1", 1966: "ANG2", 1967: "CCR1", 1968: "CCR2"}
+
+
+def fetch_unidades_generadoras(fecha: str) -> list[dict]:
+    """
+    Maestro técnico de las 4 unidades desde /unidades-generadoras/v4/findByDate
+    (SIP, 1-indexado, ~12 págs con limit=300). El endpoint publica fichas por
+    fecha; no siempre aparecen las 4 unidades el mismo día → el upsert acumula.
+    Valores numéricos vienen con coma decimal ('277,99').
+    """
+    if not CEN_USER_KEY:
+        log.warning("  CEN_USER_KEY no configurada — saltando unidades generadoras")
+        return []
+    registros, page = [], 1
+    try:
+        while True:
+            r = _get_with_retry(
+                f"{API_BASE_SIP}/unidades-generadoras/v4/findByDate",
+                params={"user_key": CEN_USER_KEY, "startDate": fecha,
+                        "endDate": fecha, "page": page, "limit": 300},
+            )
+            body = r.json()
+            data = body.get("data", [])
+            if not data:
+                break
+            for rec in data:
+                unidad = IDS_UNIDAD_MAESTRO.get(rec.get("id_unidad"))
+                if unidad is None:
+                    continue
+                registros.append({
+                    "unidad":              unidad,
+                    "id_unidad":           rec.get("id_unidad"),
+                    "id_central":          rec.get("id_central"),
+                    "central":             rec.get("central"),
+                    "unidad_nombre":       rec.get("unidad_nombre"),
+                    "nemotecnico":         rec.get("unidad_nemotecnico"),
+                    "propietario":         rec.get("nombre_propietario"),
+                    "tecnologia":          rec.get("nombre_tecnologia"),
+                    "punto_conexion":      rec.get("punto_conexion"),
+                    "pot_max_bruta":       _num_cl(rec.get("pot_max_bruta")),
+                    "pot_neta_efectiva":   _num_cl(rec.get("pot_neta_efectiva")),
+                    "pot_min_tecnica":     _num_cl(rec.get("pot_min_tecnica")),
+                    "min_tec_ctrl_frec":   _num_cl(rec.get("min_tecnico_control_frecuencia")),
+                    "consumos_propios_pct": _num_cl(rec.get("%_consumos_propios")),
+                    "tension_nominal":     _num_cl(rec.get("tension_nominal")),
+                    "factor_pot_nominal":  _num_cl(rec.get("factor_pot_nominal")),
+                    "fecha_dato":          fecha,
+                })
+            total_pages = body.get("totalPages")
+            if total_pages is None or page >= int(total_pages):
+                break
+            page += 1
+            time.sleep(0.15)
+        # Dedup por unidad (el mismo registro se repite en varias páginas)
+        registros = list({r["unidad"]: r for r in registros}.values())
+        log.info(f"  Unidades generadoras ({fecha}): {len(registros)} fichas ANG/CCR")
+    except Exception as e:
+        log.error(f"  Error unidades generadoras: {e}")
+    return registros
+
+
+def upsert_unidades_maestro(registros: list[dict]) -> tuple[int, int]:
+    if not registros:
+        return 0, 0
+    sql = """
+        INSERT INTO unidades_maestro
+            (unidad, id_unidad, id_central, central, unidad_nombre, nemotecnico,
+             propietario, tecnologia, punto_conexion, pot_max_bruta, pot_neta_efectiva,
+             pot_min_tecnica, min_tec_ctrl_frec, consumos_propios_pct, tension_nominal,
+             factor_pot_nominal, fecha_dato)
+        VALUES
+            (%(unidad)s, %(id_unidad)s, %(id_central)s, %(central)s, %(unidad_nombre)s,
+             %(nemotecnico)s, %(propietario)s, %(tecnologia)s, %(punto_conexion)s,
+             %(pot_max_bruta)s, %(pot_neta_efectiva)s, %(pot_min_tecnica)s,
+             %(min_tec_ctrl_frec)s, %(consumos_propios_pct)s, %(tension_nominal)s,
+             %(factor_pot_nominal)s, %(fecha_dato)s)
+        ON CONFLICT (unidad) DO UPDATE SET
+            id_unidad            = EXCLUDED.id_unidad,
+            central              = EXCLUDED.central,
+            unidad_nombre        = EXCLUDED.unidad_nombre,
+            nemotecnico          = EXCLUDED.nemotecnico,
+            propietario          = EXCLUDED.propietario,
+            tecnologia           = EXCLUDED.tecnologia,
+            punto_conexion       = EXCLUDED.punto_conexion,
+            pot_max_bruta        = EXCLUDED.pot_max_bruta,
+            pot_neta_efectiva    = EXCLUDED.pot_neta_efectiva,
+            pot_min_tecnica      = EXCLUDED.pot_min_tecnica,
+            min_tec_ctrl_frec    = EXCLUDED.min_tec_ctrl_frec,
+            consumos_propios_pct = EXCLUDED.consumos_propios_pct,
+            tension_nominal      = EXCLUDED.tension_nominal,
+            factor_pot_nominal   = EXCLUDED.factor_pot_nominal,
+            fecha_dato           = EXCLUDED.fecha_dato
+    """
+    nuevos = actualizados = 0
+    try:
+        with get_conn() as conn:
+            with conn.cursor() as cur:
+                for rec in registros:
+                    cur.execute(sql, rec)
+                    if cur.rowcount == 1: nuevos      += 1
+                    else:                actualizados += 1
+            conn.commit()
+    except Exception as e:
+        log.error(f"  Error upsert unidades maestro: {e}")
+    return nuevos, actualizados
+
+
 def log_adquisicion(endpoint, fecha, nuevos, dupes, duracion_ms, error=None):
     sql = """
         INSERT INTO log_adquisicion
@@ -1428,6 +1546,20 @@ def run():
     except Exception as e:
         err_str = str(e); log.error(f"  ❌ Solicitudes: {e}"); nuevos = actualizados = 0
     log_adquisicion("solicitudes_trabajo", sol_end, nuevos, actualizados,
+                    int((time.time() - t0) * 1000), err_str)
+
+    # ── Maestro técnico de unidades (dato casi estático, ~12 págs) ──
+    ug_fecha = (hoy - timedelta(days=1)).strftime("%Y-%m-%d")
+    log.info(f"\n  ── Unidades generadoras (maestro) {ug_fecha}")
+    t0 = time.time()
+    err_str = None
+    try:
+        regs_ug              = fetch_unidades_generadoras(ug_fecha)
+        nuevos, actualizados = upsert_unidades_maestro(regs_ug)
+        log.info(f"  ✅ Unidades maestro: {nuevos} nuevos, {actualizados} actualizados")
+    except Exception as e:
+        err_str = str(e); log.error(f"  ❌ Unidades maestro: {e}"); nuevos = actualizados = 0
+    log_adquisicion("unidades_maestro", ug_fecha, nuevos, actualizados,
                     int((time.time() - t0) * 1000), err_str)
 
     log.info(f"\n  Fin adquisición\n")

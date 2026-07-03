@@ -1,0 +1,43 @@
+name: Migracion puntual
+
+# Ejecuta un script de migración (migracion_*.py) desde Actions, donde el
+# puerto 5432 de Supabase no está bloqueado (a diferencia de redes locales).
+
+on:
+  workflow_dispatch:
+    inputs:
+      script:
+        description: "Script de migración (p.ej. migracion_unidades_maestro.py)"
+        required: true
+      arg:
+        description: "Argumento opcional (p.ej. días hacia atrás)"
+        required: false
+        default: ""
+
+jobs:
+  migracion:
+    name: ${{ inputs.script }} ${{ inputs.arg }}
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    env:
+      FORCE_JAVASCRIPT_ACTIONS_TO_NODE24: true
+
+    steps:
+      - name: Checkout repositorio
+        uses: actions/checkout@v5
+
+      - name: Configurar Python 3.11
+        uses: actions/setup-python@v6
+        with:
+          python-version: "3.11"
+          cache: "pip"
+
+      - name: Instalar dependencias
+        run: pip install -r requirements.txt
+
+      - name: Ejecutar migración
+        env:
+          CEN_USER_KEY: ${{ secrets.CEN_USER_KEY }}
+          CEN_OPS_KEY:  ${{ secrets.CEN_OPS_KEY }}
+          DATABASE_URL: ${{ secrets.DATABASE_URL }}
+        run: python3 ${{ inputs.script }} ${{ inputs.arg }}

@@ -21,6 +21,7 @@ from components.novedades import render_novedades
 from components.solicitudes import render_solicitudes
 from components.manual import render_programada_manual, render_real_manual
 from components.datos import render_datos_horarios, render_bitacora
+from components.infotecnica import render_infotecnica
 
 st.set_page_config(
     page_title="Complejo Térmico Mejillones",
@@ -38,7 +39,7 @@ st.markdown(get_css(), unsafe_allow_html=True)
 CATEGORIAS = {
     "Operación":   ["Resumen", "Análisis de Costo"],
     "Restricciones": ["Limitaciones", "SSCC", "Despacho CMG", "Solicitudes"],
-    "Gestión de Datos": ["Ingreso Manual", "Datos & Bitácora"],
+    "Gestión de Datos": ["Ingreso Manual", "Datos & Bitácora", "Infotécnica"],
 }
 VISTAS = [v for grupo in CATEGORIAS.values() for v in grupo]
 
@@ -126,6 +127,8 @@ def main():
     elif vista == "Datos & Bitácora":
         render_datos_horarios(df_r, df_c, s)
         render_bitacora(s, e)
+    elif vista == "Infotécnica":
+        render_infotecnica()
 
     st.markdown("""
     <div style="margin-top:3rem;padding-top:1rem;border-top:1px solid #E2E8F0;
