@@ -161,7 +161,7 @@ def fetch_generacion_real(start: str, end: str) -> list[dict]:
             log.info(f"  Gen. real {nombre}: {len(registros)-antes} registros")
         except Exception as e:
             log.error(f"  Error gen. real {nombre}: {e}")
-        time.sleep(1.5)
+        time.sleep(0.5)
     return registros
 
 
@@ -296,7 +296,7 @@ def fetch_generacion_programada(start: str, end: str) -> list[dict]:
                 break
 
             page += 1
-            time.sleep(0.3)
+            time.sleep(0.15)
 
     except Exception as e:
         log.error(f"  Error gen. programada PCP: {e}")
@@ -386,7 +386,7 @@ def fetch_generacion_programada_pid(start: str, end: str) -> list[dict]:
             if total_pages is None or page >= int(total_pages):
                 break
             page += 1
-            time.sleep(0.3)
+            time.sleep(0.15)
 
     except Exception as e:
         log.error(f"  Error gen. programada PID: {e}")
@@ -696,7 +696,7 @@ def fetch_cmg_real(start: str, end: str) -> list[dict]:
             log.info(f"  CMG real {barra} ({start}→{end}): {len(registros)-antes} registros")
         except Exception as e:
             log.error(f"  Error CMG real {barra}: {e}")
-        time.sleep(1.5)
+        time.sleep(0.5)
     return registros
 
 
@@ -768,7 +768,7 @@ def fetch_pronostico_demanda(start: str, end: str) -> list[dict]:
             if total_pages is None or page + 1 >= int(total_pages):
                 break
             page += 1
-            time.sleep(0.3)
+            time.sleep(0.15)
     except Exception as e:
         log.error(f"  Error pronóstico demanda: {e}")
     log.info(f"  Pronóstico demanda ({start}→{end}): {len(registros)} registros "
@@ -804,22 +804,25 @@ def upsert_pronostico_demanda(registros: list[dict]) -> tuple[int, int]:
     return nuevos, actualizados
 
 
-def fetch_sscc(fecha: str) -> list[dict]:
+def fetch_sscc(start: str, end: str | None = None) -> list[dict]:
     """
     Trae instrucciones SSCC de ANG1/2 CCR1/2 desde la API CEN Operaciones.
-    Endpoint: /servicios-complementarios/v1 (pageSize=-1 para traer todo en una sola llamada).
+    Endpoint: /servicios-complementarios/v1 (pageSize=-1 para traer todo en una
+    sola llamada). Acepta rango initDate→endDate: una llamada cubre la ventana
+    completa en vez de una por día.
     """
     if not CEN_OPS_KEY:
         log.warning("  CEN_OPS_KEY no configurada — saltando SSCC")
         return []
+    end = end or start
 
     registros = []
     try:
         r = _get_with_retry(
             f"{API_BASE_OPS}/servicios-complementarios/v1",
-            params={"user_key": CEN_OPS_KEY, "initDate": fecha, "endDate": fecha,
+            params={"user_key": CEN_OPS_KEY, "initDate": start, "endDate": end,
                     "page": 0, "pageSize": -1},
-            timeout=30,
+            timeout=60,
         )
         content = r.json().get("content", [])
         log.info(f"  SSCC: {len(content)} registros totales del sistema")
@@ -852,7 +855,7 @@ def fetch_sscc(fecha: str) -> list[dict]:
                 "usuario":             rec.get("usuario"),
             })
 
-        log.info(f"  SSCC ANG/CCR ({fecha}): {len(registros)} registros")
+        log.info(f"  SSCC ANG/CCR ({start}→{end}): {len(registros)} registros")
     except Exception as e:
         log.error(f"  Error SSCC: {e}")
 
@@ -897,10 +900,11 @@ def upsert_sscc(registros: list[dict]) -> tuple[int, int]:
     return nuevos, actualizados
 
 
-def fetch_instrucciones_cmg(fecha: str) -> list[dict]:
+def fetch_instrucciones_cmg(start: str, end: str | None = None) -> list[dict]:
     """
     Trae instrucciones operacionales de despacho por CMG de ANG1/2 CCR1/2.
     Endpoint: /instrucciones-operacionales-cmg/v4/findByDate (plan SIP, 1-indexado).
+    Acepta rango startDate→endDate (una paginación para toda la ventana).
     No filtra por central en el servidor → se pagina todo (~25 págs/día) y se
     filtra localmente por el campo `central` ∈ LLAVES_INSTR_CMG. id_central e
     id_unidad_generadora vienen vacíos en la respuesta, por eso se usa `central`.
@@ -908,6 +912,7 @@ def fetch_instrucciones_cmg(fecha: str) -> list[dict]:
     if not CEN_USER_KEY:
         log.warning("  CEN_USER_KEY no configurada — saltando instrucciones CMG")
         return []
+    end = end or start
 
     registros = []
     page  = 1   # 1-indexado
@@ -916,8 +921,8 @@ def fetch_instrucciones_cmg(fecha: str) -> list[dict]:
         while True:
             r = _get_with_retry(
                 f"{API_BASE_SIP}/instrucciones-operacionales-cmg/v4/findByDate",
-                params={"user_key": CEN_USER_KEY, "startDate": fecha,
-                        "endDate": fecha, "page": page, "limit": limit},
+                params={"user_key": CEN_USER_KEY, "startDate": start,
+                        "endDate": end, "page": page, "limit": limit},
             )
             body = r.json()
             data = body.get("data", [])
@@ -955,7 +960,7 @@ def fetch_instrucciones_cmg(fecha: str) -> list[dict]:
                 break
             page += 1
 
-        log.info(f"  Instrucciones CMG ({fecha}): {len(registros)} registros ANG/CCR")
+        log.info(f"  Instrucciones CMG ({start}→{end}): {len(registros)} registros ANG/CCR")
     except Exception as e:
         log.error(f"  Error instrucciones CMG: {e}")
     return registros
@@ -1253,6 +1258,9 @@ def run():
               for d in range(DIAS_VENTANA - 1, -1, -1)]
 
     # ── Generación real ───────────────────────────────────────
+    # ⚠️ SIEMPRE una llamada POR DÍA: el endpoint v3 TRUNCA los rangos multi-día
+    # (verificado 2026-07-03: un rango de 4 días devolvió 146 de 192 registros
+    # con totalPages=1 — el último día quedó cortado). No pasar rangos aquí.
     for fecha in fechas:
         log.info(f"\n  ── Gen. real {fecha}")
         t0 = time.time()
@@ -1366,33 +1374,31 @@ def run():
     log_adquisicion("pronostico_demanda", dem_end, nuevos, actualizados,
                     int((time.time() - t0) * 1000), err_str)
 
-    # ── SSCC instrucciones (ventana de días) ──────────────────
-    for fecha in fechas:
-        log.info(f"\n  ── SSCC instrucciones {fecha}")
-        t0 = time.time()
-        err_str = None
-        try:
-            regs_sscc            = fetch_sscc(fecha)
-            nuevos, actualizados = upsert_sscc(regs_sscc)
-            log.info(f"  ✅ SSCC: {nuevos} nuevos, {actualizados} actualizados")
-        except Exception as e:
-            err_str = str(e); log.error(f"  ❌ SSCC: {e}"); nuevos = actualizados = 0
-        log_adquisicion("sscc_instrucciones", fecha, nuevos, actualizados,
-                        int((time.time() - t0) * 1000), err_str)
+    # ── SSCC instrucciones (una llamada por rango, pageSize=-1) ──
+    log.info(f"\n  ── SSCC instrucciones {fechas[0]}→{fechas[-1]}")
+    t0 = time.time()
+    err_str = None
+    try:
+        regs_sscc            = fetch_sscc(fechas[0], fechas[-1])
+        nuevos, actualizados = upsert_sscc(regs_sscc)
+        log.info(f"  ✅ SSCC: {nuevos} nuevos, {actualizados} actualizados")
+    except Exception as e:
+        err_str = str(e); log.error(f"  ❌ SSCC: {e}"); nuevos = actualizados = 0
+    log_adquisicion("sscc_instrucciones", fechas[-1], nuevos, actualizados,
+                    int((time.time() - t0) * 1000), err_str)
 
-    # ── Instrucciones operacionales CMG (despacho por unidad) ────
-    for fecha in fechas:
-        log.info(f"\n  ── Instrucciones CMG {fecha}")
-        t0 = time.time()
-        err_str = None
-        try:
-            regs_icmg            = fetch_instrucciones_cmg(fecha)
-            nuevos, actualizados = upsert_instrucciones_cmg(regs_icmg)
-            log.info(f"  ✅ Instrucciones CMG: {nuevos} nuevos, {actualizados} actualizados")
-        except Exception as e:
-            err_str = str(e); log.error(f"  ❌ Instrucciones CMG: {e}"); nuevos = actualizados = 0
-        log_adquisicion("instrucciones_cmg", fecha, nuevos, actualizados,
-                        int((time.time() - t0) * 1000), err_str)
+    # ── Instrucciones operacionales CMG (una paginación por rango) ────
+    log.info(f"\n  ── Instrucciones CMG {fechas[0]}→{fechas[-1]}")
+    t0 = time.time()
+    err_str = None
+    try:
+        regs_icmg            = fetch_instrucciones_cmg(fechas[0], fechas[-1])
+        nuevos, actualizados = upsert_instrucciones_cmg(regs_icmg)
+        log.info(f"  ✅ Instrucciones CMG: {nuevos} nuevos, {actualizados} actualizados")
+    except Exception as e:
+        err_str = str(e); log.error(f"  ❌ Instrucciones CMG: {e}"); nuevos = actualizados = 0
+    log_adquisicion("instrucciones_cmg", fechas[-1], nuevos, actualizados,
+                    int((time.time() - t0) * 1000), err_str)
 
     # ── Limitaciones transmisión ANG/CCR (ventana amplia) ────────
     lim_start = (hoy - timedelta(days=DIAS_VENTANA_LIM)).strftime("%Y-%m-%d")

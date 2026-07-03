@@ -20,10 +20,10 @@ jobs:
 
     steps:
       - name: Checkout repositorio
-        uses: actions/checkout@v4
+        uses: actions/checkout@v5
 
       - name: Configurar Python 3.11
-        uses: actions/setup-python@v5
+        uses: actions/setup-python@v6
         with:
           python-version: "3.11"
           cache: "pip"
@@ -40,7 +40,7 @@ jobs:
 
       - name: Subir log como artefacto
         if: always()
-        uses: actions/upload-artifact@v4
+        uses: actions/upload-artifact@v5
         with:
           name: log-backfill-${{ inputs.start_date }}-${{ inputs.end_date }}
           path: adquisicion.log

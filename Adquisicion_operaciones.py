@@ -51,33 +51,31 @@ def run():
     fechas = [(hoy - timedelta(days=d)).strftime("%Y-%m-%d")
               for d in range(DIAS_VENTANA - 1, -1, -1)]
 
-    # ── SSCC instrucciones ────────────────────────────────────
-    for fecha in fechas:
-        log.info(f"\n  ── SSCC instrucciones {fecha}")
-        t0 = time.time()
-        err_str = None
-        try:
-            regs_sscc            = fetch_sscc(fecha)
-            nuevos, actualizados = upsert_sscc(regs_sscc)
-            log.info(f"  ✅ SSCC: {nuevos} nuevos, {actualizados} actualizados")
-        except Exception as e:
-            err_str = str(e); log.error(f"  ❌ SSCC: {e}"); nuevos = actualizados = 0
-        log_adquisicion("sscc_instrucciones", fecha, nuevos, actualizados,
-                        int((time.time() - t0) * 1000), err_str)
+    # ── SSCC instrucciones (una llamada por rango, pageSize=-1) ──
+    log.info(f"\n  ── SSCC instrucciones {fechas[0]}→{fechas[-1]}")
+    t0 = time.time()
+    err_str = None
+    try:
+        regs_sscc            = fetch_sscc(fechas[0], fechas[-1])
+        nuevos, actualizados = upsert_sscc(regs_sscc)
+        log.info(f"  ✅ SSCC: {nuevos} nuevos, {actualizados} actualizados")
+    except Exception as e:
+        err_str = str(e); log.error(f"  ❌ SSCC: {e}"); nuevos = actualizados = 0
+    log_adquisicion("sscc_instrucciones", fechas[-1], nuevos, actualizados,
+                    int((time.time() - t0) * 1000), err_str)
 
-    # ── Instrucciones operacionales CMG (despacho por unidad) ──
-    for fecha in fechas:
-        log.info(f"\n  ── Instrucciones CMG {fecha}")
-        t0 = time.time()
-        err_str = None
-        try:
-            regs_icmg            = fetch_instrucciones_cmg(fecha)
-            nuevos, actualizados = upsert_instrucciones_cmg(regs_icmg)
-            log.info(f"  ✅ Instrucciones CMG: {nuevos} nuevos, {actualizados} actualizados")
-        except Exception as e:
-            err_str = str(e); log.error(f"  ❌ Instrucciones CMG: {e}"); nuevos = actualizados = 0
-        log_adquisicion("instrucciones_cmg", fecha, nuevos, actualizados,
-                        int((time.time() - t0) * 1000), err_str)
+    # ── Instrucciones operacionales CMG (una paginación por rango) ──
+    log.info(f"\n  ── Instrucciones CMG {fechas[0]}→{fechas[-1]}")
+    t0 = time.time()
+    err_str = None
+    try:
+        regs_icmg            = fetch_instrucciones_cmg(fechas[0], fechas[-1])
+        nuevos, actualizados = upsert_instrucciones_cmg(regs_icmg)
+        log.info(f"  ✅ Instrucciones CMG: {nuevos} nuevos, {actualizados} actualizados")
+    except Exception as e:
+        err_str = str(e); log.error(f"  ❌ Instrucciones CMG: {e}"); nuevos = actualizados = 0
+    log_adquisicion("instrucciones_cmg", fechas[-1], nuevos, actualizados,
+                    int((time.time() - t0) * 1000), err_str)
 
     # ── Limitaciones transmisión ANG/CCR (ventana amplia) ─────
     lim_start = (hoy - timedelta(days=DIAS_VENTANA_LIM)).strftime("%Y-%m-%d")

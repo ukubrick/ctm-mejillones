@@ -49,6 +49,8 @@ def run():
     fechas = [(hoy - timedelta(days=d)).strftime("%Y-%m-%d")
               for d in range(DIAS_VENTANA_POT - 1, -1, -1)]
 
+    # ⚠️ SIEMPRE una llamada POR DÍA: el endpoint v3 trunca los rangos multi-día
+    # (verificado 2026-07-03). Ver nota en Adquisicion.run().
     total = 0
     for fecha in fechas:
         log.info(f"\n  ── Gen. real {fecha}")
