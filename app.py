@@ -18,6 +18,7 @@ from components.limitaciones import render_limitaciones
 from components.sscc import render_sscc
 from components.despacho_cmg import render_despacho_cmg
 from components.novedades import render_novedades
+from components.bitacora_auto import render_bitacora_auto
 from components.solicitudes import render_solicitudes
 from components.manual import render_programada_manual, render_real_manual
 from components.datos import render_datos_horarios, render_bitacora
@@ -32,8 +33,14 @@ st.set_page_config(
     initial_sidebar_state="expanded",
 )
 
-# Auto-refresh horario: mantiene la app despierta en Streamlit Cloud.
-st_autorefresh(interval=3_600_000, limit=None, key="autorefresh_horario")
+# Keep-alive: refresco periódico para mantener la app despierta en Streamlit Cloud.
+# Un intervalo de 1 h era demasiado largo: los navegadores estrangulan los timers
+# largos de pestañas en segundo plano (y la conexión WebSocket puede caer entre
+# refrescos), por lo que la app terminaba durmiéndose. 5 min es fiable y coincide
+# con el TTL de caché de datos (@st.cache_data ttl=300), así que no recarga de más.
+# NOTA: esto solo mantiene viva la app mientras haya al menos una pestaña abierta;
+# sin ningún cliente conectado, Streamlit Cloud la suspenderá igualmente.
+st_autorefresh(interval=300_000, limit=None, key="keepalive")
 
 st.markdown(get_css(), unsafe_allow_html=True)
 
@@ -101,6 +108,7 @@ def main():
     if vista == "Resumen":
         render_gen_unidad(df_r, df_p, df_c, f["mostrar_prog"], f["mostrar_cmg"], f["nodo_cmg"], s, e)
         render_novedades(s, e)
+        render_bitacora_auto(s, e)
 
     elif vista == "Análisis":
         seccion = st.radio("Sección", ["Costos", "Estadísticas", "Predicción (ML)"],

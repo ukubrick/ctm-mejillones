@@ -207,6 +207,7 @@ p,span,div,label {{ font-family:'Inter',sans-serif; }}
   width:100%!important; background:rgba(255,255,255,0.08)!important;
   border:1px solid rgba(255,255,255,0.16)!important;
   border-radius:9px!important; color:#F1F5F9!important; font-weight:600!important;
+  display:flex!important; align-items:center!important;
   justify-content:center!important; text-align:center!important; min-height:40px!important;
   transition:all 0.18s cubic-bezier(0.4,0,0.2,1)!important;
 }}
@@ -217,7 +218,8 @@ p,span,div,label {{ font-family:'Inter',sans-serif; }}
 [data-testid="stSidebar"] [data-baseweb="select"]>div {{ color:#E2E8F0!important; background:rgba(255,255,255,0.07)!important; }}
 /* Botón de descarga (export) también a ancho completo y centrado */
 [data-testid="stSidebar"] [data-testid="stDownloadButton"]>button {{
-  width:100%!important; justify-content:center!important; text-align:center!important;
+  width:100%!important; display:flex!important; align-items:center!important;
+  justify-content:center!important; text-align:center!important;
 }}
 /* Centrar el CONTENIDO interno del botón (Streamlit envuelve el texto en un
    markdown-container/<p> con su propia alineación). */
