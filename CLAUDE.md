@@ -1,7 +1,7 @@
 # CLAUDE.md — Dashboard CTM Mejillones
 > Contexto completo para Claude Code. Leer al inicio de cada sesión.
 > Autor: Erick Herrera — AES Andes, Antofagasta, Chile.
-> Última actualización: 2026-07-03 (rediseño AES + reorganización de adquisición + RLS).
+> Última actualización: 2026-07-06 (bitácora automática por unidad + fix Streamlit 1.58 + keep-alive).
 >
 > REGLA DE MANTENIMIENTO: la cabecera (todo lo anterior al HISTORIAL DE SESIONES) es la
 > ÚNICA fuente de verdad del estado actual; `config.py` manda sobre este markdown.
@@ -84,6 +84,19 @@ Destiladas de bugs y quirks reales del CEN/Streamlit:
 18. **Tras mover código entre módulos, correr `py_compile`/pyflakes** — detecta nombres que
     quedaron como globals del módulo original (NameError solo en runtime/Cloud). Ej.: `reports.py`
     referenciaba `datetime`/`qry` sin importar → PDF roto hasta el fix.
+19. **Fijar la versión de Streamlit en `requirements.txt` (`streamlit==1.58.0`).** Sin pin, un
+    redeploy trae la última versión y puede cambiar el DOM interno → rompe el CSS a medida SIN
+    error visible. 1.58 renombró el grupo de radios a `data-testid="stRadioGroup"` (antes solo
+    `[role="radiogroup"]` + `label[data-baseweb="radio"]`) → el segmented control quedó como radios
+    nativos. El CSS de radios ahora cubre ambos nombres.
+20. **No forzar `width/display:flex` en los HIJOS de un botón de Streamlit para centrar** — el
+    `<button>` ya es `inline-flex; justify-content:center` (se centra solo, como los botones del
+    área principal). Sobreescribir los hijos ROMPE ese centrado. Para el sidebar basta el estilo a
+    nivel de `button` + `text-align:center` en el `p`.
+21. **Keep-alive con `st_autorefresh`: usar intervalo corto (~5 min), no 1 h.** Los navegadores
+    estrangulan timers largos en pestañas en segundo plano y la WebSocket puede caer → la app se
+    duerme. Aun así SOLO mantiene viva la app mientras haya ≥1 pestaña abierta; sin cliente,
+    Streamlit Cloud la suspende igual (para evitarlo haría falta un pinger externo).
 
 ---
 
@@ -184,6 +197,8 @@ dashboard_api/
 │   ├── estadisticas.py             ← render_estadisticas — vista consolidada de estadísticos
 │   ├── ml.py                       ← render_ml — forecast CMG (XGBoost) + anomalías (Isolation Forest)
 │   ├── novedades.py                ← render_novedades — estado actual por unidad (bajo la serie CMG)
+│   ├── bitacora_auto.py            ← render_bitacora_auto — bitácora cronológica de la unidad activa
+│   │                                  (SSCC + despacho + limitaciones + novedades manuales), ayer x defecto
 │   ├── limitaciones.py / sscc.py / despacho_cmg.py / solicitudes.py   ← vistas de Restricciones
 │   ├── manual.py                   ← render_programada_manual / render_real_manual (CRUD + override)
 │   ├── datos.py                    ← render_datos_horarios / render_bitacora
@@ -206,7 +221,7 @@ Se abandonaron las categorías desplegables (popovers). El menú es un **segment
 
 | Vista | Sub-secciones |
 |-------|---------------|
-| **Resumen** | Gráfico por unidad (real/prog/CMG) + selector de nodo CMG + novedades |
+| **Resumen** | Gráfico por unidad (real/prog/CMG) + selector de nodo CMG + bitácora automática de la unidad + novedades |
 | **Análisis** | Costos · Estadísticas (consolidada) · Predicción (ML) |
 | **Restricciones** | Limitaciones · SSCC · Despacho CMG · Solicitudes |
 | **Datos** | Ingreso Manual · Datos & Bitácora · Infotécnica |
@@ -363,8 +378,20 @@ Limpieza de scripts probe/test/check.
   · Override manual con prioridad (MANUAL>PCP; `origen='MANUAL'` protege gen-real; auto-crea la
     columna). Job horario aligerado + nuevo `Adquisicion_diaria.py` (timeout 120→60).
   · Repo a privado y de vuelta a público (cuota de Actions). RLS habilitado en todas las tablas.
+- **2026-07-06 — Bitácora automática + fix Streamlit 1.58:**
+  · Nuevo `components/bitacora_auto.py`: bajo la serie de CMG (vista Resumen), tabla cronológica
+    de la UNIDAD ACTIVA (reacciona a los botones ANG/CCR). Consolida SSCC + despacho CMG +
+    limitaciones (trip/derrateo, fila roja) + novedades manuales de la tabla `bitacora`. Selector
+    de día CONTINUO (todos los días del período, sin saltos), ayer por defecto. Nota verde "Sin
+    limitaciones activas" solo si ese día no hubo limitación (se eliminó el banner de activas total).
+  · Novedades manuales (Datos > Bitácora) aparecen automáticamente en la bitácora automática con su
+    fecha/hora (tipo "Novedad", badge violeta).
+  · **Fix Streamlit 1.58** (redeploy trajo versión sin pin → rompió CSS): radios adaptados a
+    `data-testid="stRadioGroup"`; botones del sidebar centrados vía `justify-content` nativo (se
+    quitaron las reglas sobre hijos que lo rompían). `requirements.txt` fija `streamlit==1.58.0`.
+  · Keep-alive `st_autorefresh` bajado de 1 h → 5 min. Botones del sidebar por `data-testid`.
 
 ---
 
-*Actualizado 2026-07-03. Proyecto CTM Mejillones (4 térmicas ANG/CCR).*
+*Actualizado 2026-07-06. Proyecto CTM Mejillones (4 térmicas ANG/CCR).*
 *Stack: Streamlit + supabase-py/psycopg2 + GitHub Actions + API CEN (SIP/OPS) + CMG S3 + scikit-learn/xgboost.*
