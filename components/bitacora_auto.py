@@ -16,7 +16,7 @@ import pandas as pd
 import streamlit as st
 
 from config import COLORES, LABELS, ID_UNIDAD_LABEL
-from utils.data import load_sscc, load_instrucciones_cmg, load_limitaciones
+from utils.data import load_sscc, load_instrucciones_cmg, load_limitaciones, load_bit
 
 
 # Paleta por tipo de evento (badge de la columna «Tipo»)
@@ -24,6 +24,7 @@ _TIPO_COLOR = {
     "SSCC":       ("#0EA5E9", "#E0F2FE"),
     "Despacho":   ("#3D53E8", "#E2E7FD"),
     "Limitación": ("#DC2626", "#FEE2E2"),
+    "Novedad":    ("#7C3AED", "#EDE9FE"),
 }
 
 
@@ -96,6 +97,24 @@ def _eventos_limitaciones(df, eventos):
         eventos.append({"dt": dt, "unidad": u, "tipo": "Limitación", "desc": desc})
 
 
+def _eventos_bitacora(df, eventos):
+    """Novedades ingresadas manualmente (tabla bitacora) → aparecen automáticamente
+    en la bitácora con su fecha y hora exactas."""
+    if df is None or df.empty:
+        return
+    for _, r in df.iterrows():
+        u = r.get("unidad")
+        if u not in LABELS:
+            continue
+        dt = _dt(r.get("fecha"), r.get("hora"))
+        com = str(r.get("comentario") or "").strip()
+        autor = str(r.get("autor") or "").strip()
+        desc = f"Novedad · {com}"
+        if autor:
+            desc += f" <span style='color:#94A3B8'>— {autor}</span>"
+        eventos.append({"dt": dt, "unidad": u, "tipo": "Novedad", "desc": desc})
+
+
 def _fila_html(ev):
     tc, tb = _TIPO_COLOR.get(ev["tipo"], ("#475569", "#F1F5F9"))
     fh = ev["dt"].strftime("%d-%m-%Y %H:%M") if pd.notna(ev["dt"]) else "—"
@@ -132,12 +151,14 @@ def render_bitacora_auto(s, e, unidad):
     df_s = load_sscc(s, e)
     df_d = load_instrucciones_cmg(s, e)
     df_l = load_limitaciones(s, e)
+    df_b = load_bit(s, e, unidad)
 
     # ── Consolidación cronológica de eventos (solo la unidad activa) ────────────
     todos = []
     _eventos_sscc(df_s, todos)
     _eventos_despacho(df_d, todos)
     _eventos_limitaciones(df_l, todos)
+    _eventos_bitacora(df_b, todos)
     eventos_u = [ev for ev in todos if ev["unidad"] == unidad and pd.notna(ev["dt"])]
 
     # ── Selector de día: TODOS los días del período (sin saltos), ayer por defecto ──
