@@ -224,11 +224,12 @@ p,span,div,label {{ font-family:'Inter',sans-serif; }}
 [data-testid="stSidebar"] [data-testid="stButton"] button > *,
 [data-testid="stSidebar"] [data-testid="stDownloadButton"] button > * {{
   width:100%!important; display:flex!important; justify-content:center!important;
-  align-items:center!important;
+  align-items:center!important; margin:0 auto!important;
 }}
-[data-testid="stSidebar"] [data-testid="stButton"] button p,
-[data-testid="stSidebar"] [data-testid="stDownloadButton"] button p {{
-  width:100%!important; text-align:center!important; margin:0!important;
+/* Centrado universal del texto dentro del botón (cubre p/span/div según versión) */
+[data-testid="stSidebar"] [data-testid="stButton"] button *,
+[data-testid="stSidebar"] [data-testid="stDownloadButton"] button * {{
+  text-align:center!important; justify-content:center!important; margin-left:0!important; margin-right:0!important;
 }}
 [data-testid="stSidebar"] [data-baseweb="select"]>div {{ color:#E2E8F0!important; background:rgba(255,255,255,0.07)!important; }}
 .status-box {{
@@ -236,23 +237,34 @@ p,span,div,label {{ font-family:'Inter',sans-serif; }}
   border-radius:10px; padding:0.7rem 0.9rem; margin-top:0.5rem; font-size:0.72rem;
 }}
 
-/* ── Radio del sidebar como segmented control (nodo CMG) ──────────────── */
+/* ── Radio del sidebar como segmented control (nodo CMG) ──────────────────
+   Streamlit 1.58 renombró el grupo a data-testid="stRadioGroup"; se cubren el
+   nombre nuevo y el antiguo ([role="radiogroup"]) para no depender de la versión. */
+[data-testid="stSidebar"] [data-testid="stRadioGroup"],
 [data-testid="stSidebar"] div[data-testid="stRadio"] [role="radiogroup"] {{
-  display:flex; gap:5px; background:rgba(255,255,255,0.08);
+  display:flex!important; flex-wrap:wrap; gap:5px; background:rgba(255,255,255,0.08);
   border:1px solid rgba(255,255,255,0.14); border-radius:10px; padding:4px;
 }}
-[data-testid="stSidebar"] div[data-testid="stRadio"] label[data-baseweb="radio"] {{
-  flex:1; margin:0; padding:6px 10px; border-radius:7px; justify-content:center;
+[data-testid="stSidebar"] [data-testid="stRadioGroup"] > label,
+[data-testid="stSidebar"] div[data-testid="stRadio"] [role="radiogroup"] > label {{
+  flex:1; margin:0!important; padding:6px 10px; border-radius:7px;
+  display:flex!important; justify-content:center!important; align-items:center;
   cursor:pointer; transition:all 0.18s ease;
 }}
-[data-testid="stSidebar"] div[data-testid="stRadio"] label[data-baseweb="radio"] > div:first-child {{ display:none; }}
-[data-testid="stSidebar"] div[data-testid="stRadio"] label[data-baseweb="radio"] p {{
+/* ocultar el círculo nativo/baseweb (marca visual + input) */
+[data-testid="stSidebar"] [data-testid="stRadioGroup"] > label > div:first-child,
+[data-testid="stSidebar"] [data-testid="stRadioGroup"] > label input,
+[data-testid="stSidebar"] div[data-testid="stRadio"] [role="radiogroup"] > label > div:first-child {{ display:none!important; }}
+[data-testid="stSidebar"] [data-testid="stRadioGroup"] > label p,
+[data-testid="stSidebar"] div[data-testid="stRadio"] [role="radiogroup"] > label p {{
   font-size:12px!important; font-weight:600!important; color:rgba(255,255,255,0.7)!important; text-align:center;
 }}
-[data-testid="stSidebar"] div[data-testid="stRadio"] label[data-baseweb="radio"]:has(input:checked) {{
+[data-testid="stSidebar"] [data-testid="stRadioGroup"] > label:has(input:checked),
+[data-testid="stSidebar"] div[data-testid="stRadio"] [role="radiogroup"] > label:has(input:checked) {{
   background:rgba(255,255,255,0.95);
 }}
-[data-testid="stSidebar"] div[data-testid="stRadio"] label[data-baseweb="radio"]:has(input:checked) p {{
+[data-testid="stSidebar"] [data-testid="stRadioGroup"] > label:has(input:checked) p,
+[data-testid="stSidebar"] div[data-testid="stRadio"] [role="radiogroup"] > label:has(input:checked) p {{
   color:{AES_AZUL_OSC}!important; font-weight:700!important;
 }}
 
@@ -361,26 +373,36 @@ p,span,div,label {{ font-family:'Inter',sans-serif; }}
 /* ── Sub-navegación (st.radio del área principal como segmented control) ──
    Portado de Pulsar (estilos.py): sin círculo de radio, opción activa con
    gradiente AES. Solo aplica al área principal, no al sidebar. */
+[data-testid="stMain"] [data-testid="stRadioGroup"],
 .block-container div[data-testid="stRadio"] [role="radiogroup"] {{
-  display:inline-flex; flex-wrap:wrap; gap:6px; background:{AES_BLANCO};
+  display:inline-flex!important; flex-wrap:wrap; gap:6px; background:{AES_BLANCO};
   border:1px solid {AES_BORDE}; border-radius:12px; padding:5px;
   box-shadow:0 2px 8px rgba(0,0,0,0.05);
 }}
-.block-container div[data-testid="stRadio"] label[data-baseweb="radio"] {{
-  margin:0; padding:8px 18px; border-radius:8px; border:1px solid transparent;
+[data-testid="stMain"] [data-testid="stRadioGroup"] > label,
+.block-container div[data-testid="stRadio"] [role="radiogroup"] > label {{
+  margin:0!important; padding:8px 18px; border-radius:8px; border:1px solid transparent;
+  display:flex!important; align-items:center; justify-content:center;
   cursor:pointer; transition:all 0.18s cubic-bezier(0.4,0,0.2,1);
 }}
-.block-container div[data-testid="stRadio"] label[data-baseweb="radio"] > div:first-child {{ display:none; }}
-.block-container div[data-testid="stRadio"] label[data-baseweb="radio"] p {{
+[data-testid="stMain"] [data-testid="stRadioGroup"] > label > div:first-child,
+[data-testid="stMain"] [data-testid="stRadioGroup"] > label input,
+.block-container div[data-testid="stRadio"] [role="radiogroup"] > label > div:first-child {{ display:none!important; }}
+[data-testid="stMain"] [data-testid="stRadioGroup"] > label p,
+.block-container div[data-testid="stRadio"] [role="radiogroup"] > label p {{
   font-size:13px; font-weight:600; color:{AES_MUTED}; transition:color 0.18s ease;
 }}
-.block-container div[data-testid="stRadio"] label[data-baseweb="radio"]:hover {{ background:rgba(59,76,232,0.06); }}
-.block-container div[data-testid="stRadio"] label[data-baseweb="radio"]:hover p {{ color:{AES_AZUL}; }}
-.block-container div[data-testid="stRadio"] label[data-baseweb="radio"]:has(input:checked) {{
+[data-testid="stMain"] [data-testid="stRadioGroup"] > label:hover,
+.block-container div[data-testid="stRadio"] [role="radiogroup"] > label:hover {{ background:rgba(59,76,232,0.06); }}
+[data-testid="stMain"] [data-testid="stRadioGroup"] > label:hover p,
+.block-container div[data-testid="stRadio"] [role="radiogroup"] > label:hover p {{ color:{AES_AZUL}; }}
+[data-testid="stMain"] [data-testid="stRadioGroup"] > label:has(input:checked),
+.block-container div[data-testid="stRadio"] [role="radiogroup"] > label:has(input:checked) {{
   background:{AES_GRAD_BTN};
   border-color:{AES_AZUL_OSC}; box-shadow:0 3px 10px rgba(61,83,232,0.30);
 }}
-.block-container div[data-testid="stRadio"] label[data-baseweb="radio"]:has(input:checked) p {{ color:#FFFFFF; }}
+[data-testid="stMain"] [data-testid="stRadioGroup"] > label:has(input:checked) p,
+.block-container div[data-testid="stRadio"] [role="radiogroup"] > label:has(input:checked) p {{ color:#FFFFFF; }}
 
 /* ── Gráficos Plotly ──────────────────────────────────────────────────── */
 [data-testid="stPlotlyChart"] {{ border-radius:12px; overflow:hidden; box-shadow:0 2px 10px rgba(0,0,0,0.06); animation:fadeInUp 0.5s ease both; transition:box-shadow 0.2s ease; }}

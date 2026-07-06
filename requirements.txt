@@ -1,7 +1,7 @@
 requests
 psycopg2-binary
 python-dotenv
-streamlit
+streamlit==1.58.0
 pandas
 plotly
 matplotlib
