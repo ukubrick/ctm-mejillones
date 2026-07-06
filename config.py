@@ -203,7 +203,12 @@ p,span,div,label {{ font-family:'Inter',sans-serif; }}
 [data-testid="stSidebar"] [data-testid="stDateInput"] div[data-baseweb="input"] {{ background:#FFFFFF!important; border-radius:8px!important; }}
 [data-testid="stSidebar"] [data-testid="stDateInput"] input {{ background:#FFFFFF!important; color:#0F172A!important; font-weight:700!important; -webkit-text-fill-color:#0F172A!important; }}
 [data-testid="stSidebar"] [data-testid="stDateInput"] svg {{ fill:#475569!important; }}
-[data-testid="stSidebar"] .stButton>button {{
+/* Botones del sidebar (acciones + descarga): ancho completo y TODO centrado.
+   Se usa data-testid (estable entre versiones de Streamlit) en vez de .stButton,
+   y se fuerza el centrado en el botón y en todos sus descendientes (Streamlit
+   envuelve el texto en div[stMarkdownContainer] > p con su propia alineación). */
+[data-testid="stSidebar"] [data-testid="stButton"] button,
+[data-testid="stSidebar"] [data-testid="stDownloadButton"] button {{
   width:100%!important; background:rgba(255,255,255,0.08)!important;
   border:1px solid rgba(255,255,255,0.16)!important;
   border-radius:9px!important; color:#F1F5F9!important; font-weight:600!important;
@@ -211,28 +216,21 @@ p,span,div,label {{ font-family:'Inter',sans-serif; }}
   justify-content:center!important; text-align:center!important; min-height:40px!important;
   transition:all 0.18s cubic-bezier(0.4,0,0.2,1)!important;
 }}
-[data-testid="stSidebar"] .stButton>button:hover {{
+[data-testid="stSidebar"] [data-testid="stButton"] button:hover,
+[data-testid="stSidebar"] [data-testid="stDownloadButton"] button:hover {{
   background:rgba(255,255,255,0.18)!important; border-color:rgba(255,255,255,0.5)!important;
   transform:translateY(-1px)!important; box-shadow:0 4px 14px rgba(0,0,0,0.22)!important;
 }}
-[data-testid="stSidebar"] [data-baseweb="select"]>div {{ color:#E2E8F0!important; background:rgba(255,255,255,0.07)!important; }}
-/* Botón de descarga (export) también a ancho completo y centrado */
-[data-testid="stSidebar"] [data-testid="stDownloadButton"]>button {{
-  width:100%!important; display:flex!important; align-items:center!important;
-  justify-content:center!important; text-align:center!important;
-}}
-/* Centrar el CONTENIDO interno del botón (Streamlit envuelve el texto en un
-   markdown-container/<p> con su propia alineación). */
-[data-testid="stSidebar"] .stButton>button > div,
-[data-testid="stSidebar"] [data-testid="stDownloadButton"]>button > div {{
+[data-testid="stSidebar"] [data-testid="stButton"] button > *,
+[data-testid="stSidebar"] [data-testid="stDownloadButton"] button > * {{
   width:100%!important; display:flex!important; justify-content:center!important;
+  align-items:center!important;
 }}
-[data-testid="stSidebar"] .stButton>button p,
-[data-testid="stSidebar"] .stButton>button div[data-testid="stMarkdownContainer"],
-[data-testid="stSidebar"] [data-testid="stDownloadButton"]>button p,
-[data-testid="stSidebar"] [data-testid="stDownloadButton"]>button div[data-testid="stMarkdownContainer"] {{
-  width:100%!important; text-align:center!important;
+[data-testid="stSidebar"] [data-testid="stButton"] button p,
+[data-testid="stSidebar"] [data-testid="stDownloadButton"] button p {{
+  width:100%!important; text-align:center!important; margin:0!important;
 }}
+[data-testid="stSidebar"] [data-baseweb="select"]>div {{ color:#E2E8F0!important; background:rgba(255,255,255,0.07)!important; }}
 .status-box {{
   background:rgba(255,255,255,0.08); border:1px solid rgba(255,255,255,0.14);
   border-radius:10px; padding:0.7rem 0.9rem; margin-top:0.5rem; font-size:0.72rem;

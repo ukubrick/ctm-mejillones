@@ -107,8 +107,9 @@ def main():
 
     if vista == "Resumen":
         render_gen_unidad(df_r, df_p, df_c, f["mostrar_prog"], f["mostrar_cmg"], f["nodo_cmg"], s, e)
+        # Bitácora de la unidad activa, justo debajo de la serie de CMG.
+        render_bitacora_auto(s, e, st.session_state.get("unidad_sel", "ANG1"))
         render_novedades(s, e)
-        render_bitacora_auto(s, e)
 
     elif vista == "Análisis":
         seccion = st.radio("Sección", ["Costos", "Estadísticas", "Predicción (ML)"],
