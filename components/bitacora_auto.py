@@ -164,11 +164,15 @@ def render_bitacora_auto(s, e, unidad):
     # ── Estado de limitaciones activas de la unidad ese día ─────────────────────
     lim_activas = pd.DataFrame()
     if df_l is not None and not df_l.empty:
+        dia_ts = pd.Timestamp(dia)
         es_unidad = df_l["id_unidad"].apply(
             lambda x: pd.notna(x) and ID_UNIDAD_LABEL.get(int(float(x))) == unidad)
-        activa_dia = pd.to_datetime(df_l["fecha_perturbacion"], errors="coerce").dt.date <= dia
-        retorno = pd.to_datetime(df_l.get("fecha_efectiva_retorno"), errors="coerce").dt.date
-        sigue = retorno.isna() | (retorno >= dia)
+        pert = pd.to_datetime(df_l["fecha_perturbacion"], errors="coerce")
+        ret_col = (df_l["fecha_efectiva_retorno"] if "fecha_efectiva_retorno" in df_l.columns
+                   else pd.Series(pd.NaT, index=df_l.index))
+        retorno = pd.to_datetime(ret_col, errors="coerce")
+        activa_dia = pert.dt.normalize() <= dia_ts
+        sigue = retorno.isna() | (retorno.dt.normalize() >= dia_ts)
         lim_activas = df_l[es_unidad & activa_dia & sigue]
 
     if lim_activas.empty:
