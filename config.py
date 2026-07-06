@@ -221,15 +221,12 @@ p,span,div,label {{ font-family:'Inter',sans-serif; }}
   background:rgba(255,255,255,0.18)!important; border-color:rgba(255,255,255,0.5)!important;
   transform:translateY(-1px)!important; box-shadow:0 4px 14px rgba(0,0,0,0.22)!important;
 }}
-[data-testid="stSidebar"] [data-testid="stButton"] button > *,
-[data-testid="stSidebar"] [data-testid="stDownloadButton"] button > * {{
-  width:100%!important; display:flex!important; justify-content:center!important;
-  align-items:center!important; margin:0 auto!important;
-}}
-/* Centrado universal del texto dentro del botón (cubre p/span/div según versión) */
-[data-testid="stSidebar"] [data-testid="stButton"] button *,
-[data-testid="stSidebar"] [data-testid="stDownloadButton"] button * {{
-  text-align:center!important; justify-content:center!important; margin-left:0!important; margin-right:0!important;
+/* El texto se centra por el justify-content:center nativo del botón (igual que
+   los botones del área principal). No se fuerza width/flex en los hijos: hacerlo
+   rompía el centrado nativo. Solo se asegura text-align por si el label es block. */
+[data-testid="stSidebar"] [data-testid="stButton"] button p,
+[data-testid="stSidebar"] [data-testid="stDownloadButton"] button p {{
+  text-align:center!important; margin:0!important;
 }}
 [data-testid="stSidebar"] [data-baseweb="select"]>div {{ color:#E2E8F0!important; background:rgba(255,255,255,0.07)!important; }}
 .status-box {{
