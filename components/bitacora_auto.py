@@ -16,7 +16,8 @@ import pandas as pd
 import streamlit as st
 
 from config import COLORES, LABELS, ID_UNIDAD_LABEL
-from utils.data import load_sscc, load_instrucciones_cmg, load_limitaciones, load_bit
+from utils.data import (load_sscc, load_instrucciones_cmg, load_limitaciones,
+                        load_bit, load_solicitudes)
 
 
 # Paleta por tipo de evento (badge de la columna «Tipo»)
@@ -25,7 +26,11 @@ _TIPO_COLOR = {
     "Despacho":   ("#3D53E8", "#E2E7FD"),
     "Limitación": ("#DC2626", "#FEE2E2"),
     "Novedad":    ("#7C3AED", "#EDE9FE"),
+    "Solicitud":  ("#0F766E", "#CCFBF1"),
 }
+
+# Palabra clave de la solicitud → unidades del complejo a las que aplica.
+_SOLIC_UNIDADES = {"ANGAMOS": ("ANG1", "ANG2"), "COCHRANE": ("CCR1", "CCR2")}
 
 
 def _dt(fecha, hora=None):
@@ -115,6 +120,37 @@ def _eventos_bitacora(df, eventos):
         eventos.append({"dt": dt, "unidad": u, "tipo": "Novedad", "desc": desc})
 
 
+def _eventos_solicitudes(df, eventos):
+    """Solicitudes de trabajo que mencionan Angamos o Cochrane → se asignan a las
+    dos unidades de esa central (Angamos = ANG1/ANG2; Cochrane = CCR1/CCR2)."""
+    if df is None or df.empty:
+        return
+    for _, r in df.iterrows():
+        instal = str(r.get("instalacion_nombre") or "").strip()
+        empresa = str(r.get("empresa_nombre") or "").strip()
+        texto = f"{instal} {empresa}".upper()
+        unidades = set()
+        for clave, us in _SOLIC_UNIDADES.items():
+            if clave in texto:
+                unidades.update(us)
+        if not unidades:
+            continue
+        dt = _dt(r.get("fecha_inicio"))
+        tipo_sol = str(r.get("tipo_solicitud") or r.get("type") or "").strip()
+        status = str(r.get("status") or "").strip()
+        fin = _dt(r.get("fecha_fin"))
+        rango = ""
+        if pd.notna(dt) and pd.notna(fin):
+            rango = f" ({dt.strftime('%d-%m')}→{fin.strftime('%d-%m')})"
+        nombre = instal or empresa or "solicitud"
+        desc = f"Solicitud de trabajo · <b>{nombre[:60]}</b>{rango}"
+        detalle = " · ".join(x for x in (tipo_sol, status) if x)
+        if detalle:
+            desc += f" — {detalle[:80]}"
+        for u in unidades:
+            eventos.append({"dt": dt, "unidad": u, "tipo": "Solicitud", "desc": desc})
+
+
 def _fila_html(ev):
     tc, tb = _TIPO_COLOR.get(ev["tipo"], ("#475569", "#F1F5F9"))
     fh = ev["dt"].strftime("%d-%m-%Y %H:%M") if pd.notna(ev["dt"]) else "—"
@@ -152,6 +188,7 @@ def render_bitacora_auto(s, e, unidad):
     df_d = load_instrucciones_cmg(s, e)
     df_l = load_limitaciones(s, e)
     df_b = load_bit(s, e, unidad)
+    df_sol = load_solicitudes(s, e)
 
     # ── Consolidación cronológica de eventos (solo la unidad activa) ────────────
     todos = []
@@ -159,6 +196,7 @@ def render_bitacora_auto(s, e, unidad):
     _eventos_despacho(df_d, todos)
     _eventos_limitaciones(df_l, todos)
     _eventos_bitacora(df_b, todos)
+    _eventos_solicitudes(df_sol, todos)
     eventos_u = [ev for ev in todos if ev["unidad"] == unidad and pd.notna(ev["dt"])]
 
     # ── Selector de día: TODOS los días del período (sin saltos), ayer por defecto ──
