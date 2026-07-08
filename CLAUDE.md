@@ -1,7 +1,8 @@
 # CLAUDE.md — Dashboard CTM Mejillones
 > Contexto completo para Claude Code. Leer al inicio de cada sesión.
 > Autor: Erick Herrera — AES Andes, Antofagasta, Chile.
-> Última actualización: 2026-07-06 (bitácora automática por unidad + fix Streamlit 1.58 + keep-alive).
+> Última actualización: 2026-07-08 (rediseño Estadísticas/Costos/ML, ingreso por unidad + alerta
+>   potencia 0, contraseña en Datos, solicitudes en bitácora automática).
 >
 > REGLA DE MANTENIMIENTO: la cabecera (todo lo anterior al HISTORIAL DE SESIONES) es la
 > ÚNICA fuente de verdad del estado actual; `config.py` manda sobre este markdown.
@@ -97,6 +98,15 @@ Destiladas de bugs y quirks reales del CEN/Streamlit:
     estrangulan timers largos en pestañas en segundo plano y la WebSocket puede caer → la app se
     duerme. Aun así SOLO mantiene viva la app mientras haya ≥1 pestaña abierta; sin cliente,
     Streamlit Cloud la suspende igual (para evitarlo haría falta un pinger externo).
+22. **Diseño de gráficos (skill dataviz): NUNCA eje dual (dos escalas y).** Dos magnitudes de
+    escala distinta → dos gráficos, small multiples, o una dispersión (x vs y). El color sigue a
+    la ENTIDAD (unidad = tema categórico de orden fijo violeta/azul/cyan/verde, nunca cíclico);
+    las MAGNITUDES (CMG) usan rampa secuencial de un solo matiz (violeta claro→oscuro), nunca
+    arcoíris. La paleta de unidades AES tiene un par CVD-débil (violeta↔azul en protan) → SIEMPRE
+    va con leyenda + etiquetas directas (codificación secundaria) que la hacen admisible.
+23. **Potencia real < 5 MW = unidad detenida (trip/desconexión/mantención), NO 0 exacto.** La
+    medición SCADA rara vez marca 0.0; `UMBRAL_CERO`/`UMBRAL_TRIP = 5.0`. Se alerta en rojo en la
+    serie (gen_unidad.py) y en el tope (kpis.py cruza con limitaciones: baja programada vs trip).
 
 ---
 
@@ -191,14 +201,22 @@ dashboard_api/
 ├── components/
 │   ├── _common.py                  ← metricas_precision, render_guia/tabla_guia, render_cards_unidad
 │   ├── sidebar.py                  ← render_sidebar → filtros; estado de adquisición; export PDF/PPT
-│   ├── kpis.py                     ← render_kpis — cards por unidad + alarma de TRIP
-│   ├── gen_unidad.py               ← render_gen_unidad — series real/prog/CMG + selector de nodo CMG
-│   ├── costo.py                    ← render_costo — overview económico (KPIs + ingreso + CMG)
-│   ├── estadisticas.py             ← render_estadisticas — vista consolidada de estadísticos
-│   ├── ml.py                       ← render_ml — forecast CMG (XGBoost) + anomalías (Isolation Forest)
+│   ├── kpis.py                     ← render_kpis — cards por unidad + alarma de TRIP (UMBRAL_TRIP=5 MW)
+│   ├── gen_unidad.py               ← render_gen_unidad — series real/prog/CMG + selector nodo CMG +
+│   │                                  ingreso estimado por unidad (junto al MAE, delta vs semana pasada) +
+│   │                                  alerta potencia 0 (<5 MW = trip) en la serie (UMBRAL_CERO=5.0)
+│   ├── costo.py                    ← render_costo — deep-dive económico: benchmarking CMG (online/prog/
+│   │                                  real), elasticidad precio-demanda, ingreso diario, mapa de valor,
+│   │                                  cascada de ingreso, calidad del pronóstico CMG
+│   ├── estadisticas.py             ← render_estadisticas — heatmap CMG hora×día, curva de duración,
+│   │                                  ingreso acumulado, perfil horario gen, aporte/FP, correlación, precisión
+│   ├── ml.py                       ← render_ml — suite: forecast CMG probabilístico (XGBoost, banda
+│   │                                  P10-P90 + ingreso esperado 24h), anomalías (IsolationForest +
+│   │                                  severidad), regímenes operacionales (KMeans de perfiles diarios)
 │   ├── novedades.py                ← render_novedades — estado actual por unidad (bajo la serie CMG)
 │   ├── bitacora_auto.py            ← render_bitacora_auto — bitácora cronológica de la unidad activa
-│   │                                  (SSCC + despacho + limitaciones + novedades manuales), ayer x defecto
+│   │                                  (SSCC + despacho + limitaciones + novedades manuales + solicitudes
+│   │                                  que mencionan Angamos/Cochrane), ayer x defecto
 │   ├── limitaciones.py / sscc.py / despacho_cmg.py / solicitudes.py   ← vistas de Restricciones
 │   ├── manual.py                   ← render_programada_manual / render_real_manual (CRUD + override)
 │   ├── datos.py                    ← render_datos_horarios / render_bitacora
@@ -224,13 +242,17 @@ Se abandonaron las categorías desplegables (popovers). El menú es un **segment
 | **Resumen** | Gráfico por unidad (real/prog/CMG) + selector de nodo CMG + bitácora automática de la unidad + novedades |
 | **Análisis** | Costos · Estadísticas (consolidada) · Predicción (ML) |
 | **Restricciones** | Limitaciones · SSCC · Despacho CMG · Solicitudes |
-| **Datos** | Ingreso Manual · Datos & Bitácora · Infotécnica |
+| **Datos** | Ingreso Manual · Datos & Bitácora · Infotécnica (**las 2 primeras tras contraseña `jt`**) |
 
 - **El selector de nodo CMG vive en Resumen** (antes en el sidebar); persiste en
   `session_state["nodo_cmg"]` y `app.py` lo lee para cargar `df_c`.
-- **Estadísticos consolidados:** distribución CMG, correlación, precisión PCP, factor de planta,
-  participación de ingresos y aporte energético viven SOLO en Análisis → Estadísticas
-  (`components/estadisticas.py`). Costos quedó como overview.
+- **Contraseña en Datos:** Ingreso Manual y Datos & Bitácora piden clave `jt` (constante
+  `_CLAVE_DATOS` en `app.py`, gate `_acceso_restringido`, se recuerda en `session_state["datos_auth"]`).
+  Infotécnica queda libre. Es una verja de UI (no seguridad server-side).
+- **Estadísticos y Costos rediseñados (2026-07-08):** Estadísticas y Costos son ahora paneles
+  profundos y COMPLEMENTARIOS (no duplican gráficos). Estadísticas = operación/patrones; Costos =
+  dinero/precio. Regla dataviz aplicada: 1 solo eje por gráfico (sin ejes duales), categórico por
+  unidad + rampa secuencial violeta para magnitudes CMG.
 - **Solicitudes** se filtran por relevancia CTM: Angamos, Cochrane, S/E Laberinto, Kapatur,
   Crucero (`load_solicitudes` en utils/data.py).
 
@@ -390,8 +412,33 @@ Limpieza de scripts probe/test/check.
     `data-testid="stRadioGroup"`; botones del sidebar centrados vía `justify-content` nativo (se
     quitaron las reglas sobre hijos que lo rompían). `requirements.txt` fija `streamlit==1.58.0`.
   · Keep-alive `st_autorefresh` bajado de 1 h → 5 min. Botones del sidebar por `data-testid`.
+- **2026-07-08 — Rediseño analítico + alertas + contraseña:**
+  · **Ingreso por unidad junto al MAE** (`gen_unidad.py`): tarjeta "Ingreso estimado" (Σ gen×CMG del
+    período) a la izquierda del MAE, con delta % vs la semana previa (`[e-14d, e-7d]`, verde↑/rojo↓).
+  · **Contraseña `jt` en Datos** (`app.py` `_acceso_restringido`/`_CLAVE_DATOS`): gate para Ingreso
+    Manual y Datos & Bitácora; se recuerda en `session_state["datos_auth"]`. Infotécnica libre.
+  · **Rediseño completo de Estadísticas** (`estadisticas.py`): heatmap CMG hora×fecha, curva de
+    duración de precios, ingreso acumulado (área apilada), perfil horario medio de generación, +
+    aporte/FP/correlación/precisión pulidos. KPIs enriquecidos (disponibilidad, ingreso realizado).
+  · **Rediseño completo de Costos** (`costo.py`): dejó de ser overview → deep-dive económico
+    complementario a Estadísticas. Benchmarking CMG online/programado/real (un solo eje), elasticidad
+    precio-demanda (scatter, reemplaza el eje dual demanda), ingreso diario apilado, mapa de valor
+    (burbuja energía×precio), cascada de ingreso (waterfall), calidad del pronóstico CMG (hist. error).
+  · **Rediseño completo de ML** (`ml.py`): suite de 3 modelos. (1) Forecast CMG PROBABILÍSTICO
+    (XGBoost + banda P10-P90 por residuales, features de medias móviles) + INGRESO ESPERADO 24h
+    (CMG previsto × despacho programado/perfil típico). (2) Anomalías (IsolationForest) + índice de
+    severidad 0-100 con línea temporal. (3) NUEVO: Regímenes operacionales (KMeans sobre perfiles
+    horarios diarios de CMG, agrupa por FORMA, auto-nombra los "tipos de día", + calendario temporal).
+  · **Solicitudes en la bitácora automática** (`bitacora_auto.py`): solicitudes que mencionan
+    Angamos/Cochrane se asignan a ANG1/ANG2 o CCR1/CCR2 (badge teal "Solicitud", ancladas a
+    `fecha_inicio`).
+  · **Alerta de potencia 0** (`gen_unidad.py` + `kpis.py`): real < 5 MW = trip/desconexión/mantención.
+    Franjas rojas + marcadores "✕" en la serie + banner rojo sobre el gráfico; `UMBRAL_TRIP` del tope
+    subido 1→5 MW. (El usuario aclaró: <5 MW ya indica 0 en la práctica.)
+  · Nota operacional: dots ámbar del sidebar = último dato de AYER (verde=hoy, rojo=más viejo);
+    lógica en `_edad_fuente` (`sidebar.py`). No es necesariamente falla (rezago SCADA del CEN).
 
 ---
 
-*Actualizado 2026-07-06. Proyecto CTM Mejillones (4 térmicas ANG/CCR).*
+*Actualizado 2026-07-08. Proyecto CTM Mejillones (4 térmicas ANG/CCR).*
 *Stack: Streamlit + supabase-py/psycopg2 + GitHub Actions + API CEN (SIP/OPS) + CMG S3 + scikit-learn/xgboost.*
