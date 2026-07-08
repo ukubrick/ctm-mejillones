@@ -50,6 +50,24 @@ st.markdown(get_css(), unsafe_allow_html=True)
 VISTAS = ["Resumen", "Análisis", "Restricciones", "Datos"]
 
 
+_CLAVE_DATOS = "jt"
+
+
+def _acceso_restringido():
+    """Verja de contraseña para las subsecciones sensibles de Datos (ingreso
+    manual / datos & bitácora). Devuelve True si el acceso está concedido en esta
+    sesión. La clave se guarda en session_state para no re-pedirla por subsección."""
+    if st.session_state.get("datos_auth"):
+        return True
+    clave = st.text_input("Contraseña de acceso", type="password", key="datos_pwd")
+    if clave == _CLAVE_DATOS:
+        st.session_state["datos_auth"] = True
+        st.rerun()
+    elif clave:
+        st.error("Contraseña incorrecta.")
+    return False
+
+
 def fecha_es(s):
     """'YYYY-MM-DD' → 'dd/mm/yyyy' (sin dependencias de locale)."""
     try:
@@ -136,12 +154,14 @@ def main():
     elif vista == "Datos":
         seccion = st.radio("Sección", ["Ingreso Manual", "Datos & Bitácora", "Infotécnica"],
                            horizontal=True, label_visibility="collapsed", key="datos_sub")
-        if seccion == "Ingreso Manual":
-            render_programada_manual(s, e, hoy)
-            render_real_manual(s, e, hoy)
-        elif seccion == "Datos & Bitácora":
-            render_datos_horarios(df_r, df_c, s)
-            render_bitacora(s, e)
+        if seccion in ("Ingreso Manual", "Datos & Bitácora"):
+            if _acceso_restringido():
+                if seccion == "Ingreso Manual":
+                    render_programada_manual(s, e, hoy)
+                    render_real_manual(s, e, hoy)
+                else:
+                    render_datos_horarios(df_r, df_c, s)
+                    render_bitacora(s, e)
         else:
             render_infotecnica()
 
