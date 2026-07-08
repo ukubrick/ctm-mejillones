@@ -306,8 +306,10 @@ def load_desempeno_sscc(dias=210):
     except Exception:
         return pd.DataFrame()
     if not df.empty:
-        df["fecha_hora"] = pd.to_datetime(df["fecha_hora"])
-        df = df.sort_values(["unidad", "fecha_hora"])
+        # errors="coerce": el día del cambio de hora chileno el CEN emite hora 24
+        # (timestamp inválido) — se descarta en vez de romper la vista.
+        df["fecha_hora"] = pd.to_datetime(df["fecha_hora"], errors="coerce")
+        df = df.dropna(subset=["fecha_hora"]).sort_values(["unidad", "fecha_hora"])
     return df
 
 
@@ -327,8 +329,8 @@ def load_demanda_neta(s, e):
     except Exception:
         return pd.DataFrame()
     if not df.empty:
-        df["fecha_hora"] = pd.to_datetime(df["fecha_hora"])
-        df = df.sort_values("fecha_hora")
+        df["fecha_hora"] = pd.to_datetime(df["fecha_hora"], errors="coerce")
+        df = df.dropna(subset=["fecha_hora"]).sort_values("fecha_hora")
     return df
 
 

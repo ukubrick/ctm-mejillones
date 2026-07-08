@@ -58,8 +58,8 @@ def _load_dem_neta():
     except Exception:
         return pd.DataFrame()
     if not df.empty:
-        df["fecha_hora"] = pd.to_datetime(df["fecha_hora"])
-        df = df.dropna(subset=["demanda_neta_mwh"]).sort_values("fecha_hora")
+        df["fecha_hora"] = pd.to_datetime(df["fecha_hora"], errors="coerce")
+        df = df.dropna(subset=["fecha_hora", "demanda_neta_mwh"]).sort_values("fecha_hora")
     return df
 
 

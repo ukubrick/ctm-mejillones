@@ -1516,6 +1516,10 @@ def fetch_desempeno_sscc(fecha: str) -> list[dict]:
                         h = int(rec.get("hora") or 0)
                     except (TypeError, ValueError):
                         h = 0
+                    # Día del cambio de hora en Chile (25 horas): el CEN emite
+                    # hora '24', que no existe como timestamp naive → se omite.
+                    if h > 23:
+                        continue
                     sufijo = tipo.lower()
                     detalle = (rec.get("fact_csf") if tipo == "CSF"
                                else rec.get("equipo_registrador_validado"))

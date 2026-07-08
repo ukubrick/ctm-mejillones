@@ -121,6 +121,10 @@ Destiladas de bugs y quirks reales del CEN/Streamlit:
     las fechas del programa** → una ventana de 45 días hacia atrás captura mantenimientos futuros
     ya publicados. Sin id_central → filtro local por texto (CLAVES_MANT_CTM, incluye O'HIGGINS y
     MEJILLONES: el corredor de evacuación afecta a CTM sin intervenir sus unidades).
+27. **Día del cambio de hora chileno = 25 horas: el CEN emite `hora='24'`** en los endpoints
+    horarios (visto en CPF/CSF, 2026-04-04). `"... 24:00:00"` no es timestamp válido → rompe
+    `pd.to_datetime` de TODA la vista. Al adquirir, saltar `h > 23`; en loaders de tablas nuevas
+    usar `pd.to_datetime(..., errors="coerce")` + dropna como cinturón de seguridad.
 
 ---
 
