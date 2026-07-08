@@ -16,8 +16,12 @@ migracion_endpoints_ctm.py — Integración de endpoints CEN nuevos (2026-07-08)
    diaria vía dias_faltantes_desempeno() (sondea hasta 120 días faltantes/día).
 
 Ejecutar UNA vez vía el workflow `migracion.yml` (Actions no bloquea el 5432):
-    python migracion_endpoints_ctm.py
+    python migracion_endpoints_ctm.py            # todo (DDL + backfills)
+    python migracion_endpoints_ctm.py demanda_mix  # solo demanda neta + mix + PID
+    (modo parcial agregado tras dos corridas canceladas a mitad de backfill:
+     los pasos 1-3 ya habían quedado aplicados; esto evita repetir lo pesado)
 """
+import sys
 from datetime import date, timedelta
 
 from Adquisicion import (
@@ -99,28 +103,30 @@ ALTER TABLE desempeno_sscc         ENABLE ROW LEVEL SECURITY;
 
 
 def main():
-    print("1/6 · DDL (columna fuente + tablas nuevas + RLS)...")
-    with get_conn() as conn:
-        with conn.cursor() as cur:
-            cur.execute(DDL)
-        conn.commit()
-    print("   DDL listo.")
-
+    solo_livianos = len(sys.argv) > 1 and sys.argv[1] == "demanda_mix"
     hoy = date.today()
 
-    print("2/6 · Backfill CMG real 4 barras (rezago liquidación)...")
-    start = (hoy - timedelta(days=21)).strftime("%Y-%m-%d")
-    end   = (hoy - timedelta(days=5)).strftime("%Y-%m-%d")
-    regs = fetch_cmg_real(start, end)
-    n, a = upsert_cmg_real(regs)
-    print(f"   CMG real: {n} nuevos, {a} actualizados.")
+    if not solo_livianos:
+        print("1/6 · DDL (columna fuente + tablas nuevas + RLS)...")
+        with get_conn() as conn:
+            with conn.cursor() as cur:
+                cur.execute(DDL)
+            conn.commit()
+        print("   DDL listo.")
 
-    print("3/6 · Backfill CMG programado PCP (7 días)...")
-    regs = fetch_cmg_programado((hoy - timedelta(days=7)).strftime("%Y-%m-%d"),
-                                (hoy + timedelta(days=1)).strftime("%Y-%m-%d"),
-                                fuente="CEN_PCP")
-    n, a = upsert_cmg_programado(regs)
-    print(f"   CMG PCP: {n} nuevos, {a} actualizados.")
+        print("2/6 · Backfill CMG real 4 barras (rezago liquidación)...")
+        start = (hoy - timedelta(days=21)).strftime("%Y-%m-%d")
+        end   = (hoy - timedelta(days=5)).strftime("%Y-%m-%d")
+        regs = fetch_cmg_real(start, end)
+        n, a = upsert_cmg_real(regs)
+        print(f"   CMG real: {n} nuevos, {a} actualizados.")
+
+        print("3/6 · Backfill CMG programado PCP (7 días)...")
+        regs = fetch_cmg_programado((hoy - timedelta(days=7)).strftime("%Y-%m-%d"),
+                                    (hoy + timedelta(days=1)).strftime("%Y-%m-%d"),
+                                    fuente="CEN_PCP")
+        n, a = upsert_cmg_programado(regs)
+        print(f"   CMG PCP: {n} nuevos, {a} actualizados.")
 
     print("4/6 · Backfill CMG programado PID (3 días, incluye barras nuevas)...")
     regs = fetch_cmg_programado((hoy - timedelta(days=3)).strftime("%Y-%m-%d"),
