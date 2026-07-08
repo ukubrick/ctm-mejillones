@@ -10,7 +10,8 @@ import plotly.graph_objects as go
 from plotly.subplots import make_subplots
 
 from config import LABELS, NOMBRES_NODO, UNIDADES, BG, GR, POT_MIN_TECNICA, SERIE, CMG_A_DEMANDA
-from utils.data import load_cmg_prog, load_prog_pid, load_pronostico_demanda
+from utils.data import (load_cmg_prog, load_prog_pid, load_pronostico_demanda,
+                        load_real, load_cmg)
 from utils.plotly_theme import add_linea_ahora, estilo_serie, hover
 from components._common import metricas_precision
 
@@ -46,8 +47,36 @@ def _banda_desviacion(fig, df_real, df_ref, ref_nombre):
         name=f"Real < {ref_nombre}", hoverinfo="skip"), row=1, col=1)
 
 
+def _ingreso(df_real_u, df_cmg):
+    """Ingreso estimado (USD) = Σ gen_real × CMG (merge_asof ±1h). None si falta CMG."""
+    if df_real_u is None or df_real_u.empty or df_cmg is None or df_cmg.empty:
+        return None
+    m = pd.merge_asof(
+        df_real_u[["fecha_hora", "gen_real_mw"]].sort_values("fecha_hora"),
+        df_cmg[["fecha_hora", "cmg_usd_mwh"]].sort_values("fecha_hora"),
+        on="fecha_hora", direction="nearest", tolerance=pd.Timedelta("1h"),
+    ).dropna(subset=["cmg_usd_mwh"])
+    if m.empty:
+        return None
+    return float((m["gen_real_mw"] * m["cmg_usd_mwh"]).sum())
+
+
+def _ingreso_semana_pasada(unidad, nodo_cmg, e):
+    """Ingreso de la unidad en la semana previa a `e` ([e-14d, e-7d]) para comparar."""
+    if not e:
+        return None
+    e_ts = pd.Timestamp(e)
+    ini = (e_ts - pd.Timedelta(days=14)).strftime("%Y-%m-%d")
+    fin = (e_ts - pd.Timedelta(days=7)).strftime("%Y-%m-%d")
+    dr = load_real(ini, fin)
+    dc = load_cmg(ini, fin, nodo_cmg or "CRUCERO_______220")
+    if dr is None or dr.empty:
+        return None
+    return _ingreso(dr[dr["unidad"] == unidad], dc)
+
+
 def _chart_unidad(unidad, df_r, df_p, df_pid, df_c, df_cp, df_dem, barra_dem,
-                  vis, nodo_label):
+                  vis, nodo_label, nodo_cmg=None, s=None, e=None):
     df_u   = df_r[df_r["unidad"] == unidad].sort_values("fecha_hora")
     df_up  = df_p[df_p["unidad"] == unidad].sort_values("fecha_hora") if not df_p.empty else pd.DataFrame()
     df_upid = (df_pid[df_pid["unidad"] == unidad].sort_values("fecha_hora")
@@ -217,7 +246,21 @@ def _chart_unidad(unidad, df_r, df_p, df_pid, df_c, df_cp, df_dem, barra_dem,
         if res is not None:
             mae, rmse, sesgo = res
             st.caption(f"Precisión de la programación {metr_nombre} vs real (menor = mejor)")
-            k1, k2, k3 = st.columns(3)
+            # Ingreso estimado de la unidad (gen_real × CMG) + comparación semana pasada.
+            ingreso = _ingreso(df_u, df_c)
+            k0, k1, k2, k3 = st.columns(4)
+            if ingreso is not None:
+                prev = _ingreso_semana_pasada(unidad, nodo_cmg, e)
+                delta = None
+                if prev and prev > 0:
+                    # + verde = ingresó más que la semana pasada; − rojo = peor.
+                    delta = f"{(ingreso - prev) / prev * 100:+.1f}% vs semana pasada"
+                k0.metric("Ingreso estimado", f"${ingreso:,.0f}", delta,
+                          help="Σ generación real × CMG en el período (USD). "
+                               "Delta = variación vs la semana anterior.")
+            else:
+                k0.metric("Ingreso estimado", "—",
+                          help="Requiere datos de CMG en el período.")
             k1.metric("MAE", f"{mae:.1f} MW", help="Error absoluto medio |real − programada|")
             k2.metric("RMSE", f"{rmse:.1f} MW", help="Raíz del error cuadrático medio (penaliza desvíos grandes)")
             k3.metric("Sesgo", f"{sesgo:+.1f} MW", help="Promedio (real − programada): + sobregeneró, − subgeneró")
@@ -283,4 +326,5 @@ def render_gen_unidad(df_r, df_p, df_c, mostrar_prog, mostrar_cmg, nodo_cmg, s=N
         f'{LABELS[u_act]} · Real vs Programada (MW) + CMG {nl} (USD/MWh)</p>',
         unsafe_allow_html=True,
     )
-    _chart_unidad(u_act, df_r, df_p, df_pid, df_c, df_cp, df_dem, barra_dem, vis, nl)
+    _chart_unidad(u_act, df_r, df_p, df_pid, df_c, df_cp, df_dem, barra_dem, vis, nl,
+                  nodo_cmg=nodo_cmg, s=s, e=e)
