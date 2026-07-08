@@ -4,8 +4,9 @@ import streamlit as st
 
 from config import COLORES, LABELS, PMAX, UNIDADES, ID_UNIDAD_LABEL
 
-# Umbral (MW) bajo el cual se considera unidad detenida / desenganchada (trip)
-UMBRAL_TRIP = 1.0
+# Umbral (MW) bajo el cual se considera unidad detenida / desenganchada (trip).
+# < 5 MW en la práctica ya indica potencia 0 (unidad desenganchada).
+UMBRAL_TRIP = 5.0
 # unidad → id_unidad de la API CEN (inverso de ID_UNIDAD_LABEL)
 _UNIDAD_A_ID = {v: k for k, v in ID_UNIDAD_LABEL.items()}
 
@@ -34,7 +35,7 @@ def render_kpis(df_r, df_lim=None):
         df_u = df_r[df_r["unidad"] == u]
         if not df_u.empty:
             ult = df_u.sort_values("fecha_hora").iloc[-1]
-            if float(ult["gen_real_mw"]) <= UMBRAL_TRIP:
+            if float(ult["gen_real_mw"]) < UMBRAL_TRIP:
                 trips.append((u, str(ult["fecha_hora"])[:16]))
     if trips:
         partes = []

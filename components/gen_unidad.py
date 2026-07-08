@@ -15,6 +15,10 @@ from utils.data import (load_cmg_prog, load_prog_pid, load_pronostico_demanda,
 from utils.plotly_theme import add_linea_ahora, estilo_serie, hover
 from components._common import metricas_precision
 
+# MW bajo el cual se considera que la unidad está detenida (trip / desconexión).
+# < 5 MW en la práctica ya indica potencia 0 (unidad desenganchada).
+UMBRAL_CERO = 5.0
+
 
 def _banda_desviacion(fig, df_real, df_ref, ref_nombre):
     """Área bicolor entre la generación real y el programa de referencia.
@@ -86,6 +90,26 @@ def _chart_unidad(unidad, df_r, df_p, df_pid, df_c, df_cp, df_dem, barra_dem,
         st.info(f"Sin datos para {LABELS[unidad]} en el período.")
         return
 
+    # ── Detección de potencia real en 0 (trip / desconexión / mantención) ────
+    # Cualquier hora con gen_real ≤ umbral significa unidad detenida. Se resalta
+    # en rojo en la serie y con un mensaje de alerta sobre el gráfico.
+    df_cero = df_u[df_u["gen_real_mw"] < UMBRAL_CERO]
+    if not df_cero.empty:
+        n = len(df_cero)
+        ini = df_cero["fecha_hora"].min().strftime("%d-%m %H:%M")
+        fin = df_cero["fecha_hora"].max().strftime("%d-%m %H:%M")
+        rango = f"{ini}" if n == 1 else f"{ini} → {fin}"
+        st.markdown(
+            f'<div style="background:#FEF2F2;border:1px solid #FCA5A5;border-left:5px solid #DC2626;'
+            f'border-radius:8px;padding:10px 16px;margin:2px 0 10px;color:#991B1B;font-size:0.86rem;'
+            f'font-weight:600;display:flex;align-items:center;gap:9px">'
+            f'<span style="display:inline-block;width:10px;height:10px;border-radius:50%;'
+            f'background:#DC2626;animation:blink 1s infinite"></span>'
+            f'ALERTA · {LABELS[unidad]} con potencia en 0 MW en {n} hora(s) '
+            f'({rango}) — trip, desconexión programada o mantención.</div>',
+            unsafe_allow_html=True,
+        )
+
     tiene_cmg = vis["cmg"] and not df_c.empty
     tiene_pcp = vis["pcp"] and not df_up.empty
     tiene_pid = vis["pid"] and not df_upid.empty
@@ -126,6 +150,20 @@ def _chart_unidad(unidad, df_r, df_p, df_pid, df_c, df_cp, df_dem, barra_dem,
         hovertemplate=hover("Real", "MW", "medición SCADA horaria"), legendrank=1,
         **real_style,
     ), row=1, col=1)
+
+    # 2b) Resaltar en rojo las horas con potencia real en 0 (unidad detenida).
+    if not df_cero.empty:
+        for x0 in df_cero["fecha_hora"]:
+            fig.add_vrect(x0=x0 - pd.Timedelta(minutes=30), x1=x0 + pd.Timedelta(minutes=30),
+                          fillcolor="rgba(220,38,38,0.10)", line_width=0, row=1, col=1)
+        fig.add_trace(go.Scatter(
+            x=df_cero["fecha_hora"], y=df_cero["gen_real_mw"], name="Potencia 0 (detenida)",
+            mode="markers", legendrank=1,
+            marker=dict(color="#DC2626", size=11, symbol="x-thin",
+                        line=dict(color="#DC2626", width=2.5)),
+            hovertemplate="<b>UNIDAD DETENIDA</b> %{x|%d/%m %H:%M}<br>"
+                          "0 MW · trip / desconexión / mantención<extra></extra>",
+        ), row=1, col=1)
 
     # Línea de mínimo técnico — referencia de operación estable de la unidad
     pmin = POT_MIN_TECNICA.get(unidad)
