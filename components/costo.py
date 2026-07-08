@@ -1,29 +1,51 @@
-"""components/costo.py — Análisis de costo: aporte económico CMG × generación.
+"""components/costo.py — Análisis económico del complejo (rediseño 2026-07).
 
-Vista de overview (KPIs + ingreso por unidad + evolución del CMG). Los
-estadísticos profundos se consolidaron en components/estadisticas.py.
+Deep-dive económico y de precios, complementario a la vista «Estadísticas»
+(que cubre operación y patrones). Aquí el foco es el DINERO y el PRECIO:
+
+  · KPIs económicos: ingreso estimado y realizado (USD/MWh capturado),
+    CMG promedio, volatilidad, rango, y desvíos de pronóstico/liquidación.
+  · CMG en el tiempo: online vs programado (PID) vs real oficial liquidado
+    — benchmarking de precio en un solo eje (USD/MWh).
+  · Elasticidad precio-demanda: CMG vs demanda pronosticada (dispersión + ajuste).
+  · Ingreso diario por unidad (barra apilada) — estacionalidad del valor.
+  · Mapa de valor: energía vs precio capturado por unidad (burbuja = ingreso).
+  · Cascada de ingreso por unidad → total del complejo.
+  · Calidad del pronóstico CMG: distribución del error online − programado.
+
+Sin ejes duales (cada gráfico, un solo eje de magnitud). Paleta corporativa AES:
+unidades = tema categórico de orden fijo; CMG = violeta AES; programado = ámbar-oro;
+real oficial = teal. Grillas y ejes recesivos.
 """
-import streamlit as st
+import numpy as np
 import pandas as pd
 import plotly.graph_objects as go
+import streamlit as st
 
-from config import COLORES, LABELS, UNIDADES, BG, GR, SERIE, CMG_A_DEMANDA
+from config import (COLORES, LABELS, UNIDADES, BG_TRANSP, C_GRID, SERIE,
+                    AES_VIOLETA, AES_AZUL, AES_VERDE, AES_ROJO, CMG_A_DEMANDA)
 from utils.data import load_cmg_prog, load_cmg_real, load_pronostico_demanda
-from utils.plotly_theme import hex_to_rgba
+
+INK       = "#0F172A"
+INK_MUTED = "#64748B"
+INK_AXIS  = "#94A3B8"
+C_REAL_OF = "#0F766E"   # teal — CMG real oficial liquidado
 
 
 def render_costo(df_r, df_c, s=None, e=None, nodo_cmg="CRUCERO_______220", df_p=None):
-    st.markdown('<div class="sec">Análisis de costo · CMG × generación</div>', unsafe_allow_html=True)
+    st.markdown('<div class="sec">Análisis económico · precio, ingreso y pronóstico</div>',
+                unsafe_allow_html=True)
 
     if df_c.empty:
         st.info("Sin datos de CMG para calcular estadísticos de costo.")
         return
 
-    df_cp = load_cmg_prog(s, e, nodo_cmg) if s and e else None
-    df_cr = load_cmg_real(s, e, nodo_cmg) if s and e else None
+    df_cp  = load_cmg_prog(s, e, nodo_cmg) if s and e else None
+    df_cr  = load_cmg_real(s, e, nodo_cmg) if s and e else None
     barra_dem = CMG_A_DEMANDA.get(nodo_cmg, "Crucero220")
     df_dem = load_pronostico_demanda(s, e, barra_dem) if s and e else None
 
+    # ── Base económica: ingreso = generación × CMG (merge_asof ±1h) ──────────
     df_merge = pd.merge_asof(
         df_r[["unidad", "fecha_hora", "gen_real_mw"]].sort_values("fecha_hora"),
         df_c[["fecha_hora", "cmg_usd_mwh"]].sort_values("fecha_hora"),
@@ -32,158 +54,277 @@ def render_costo(df_r, df_c, s=None, e=None, nodo_cmg="CRUCERO_______220", df_p=
     df_merge["ingreso_usd"] = df_merge["gen_real_mw"] * df_merge["cmg_usd_mwh"]
     ingreso_unit  = df_merge.groupby("unidad")["ingreso_usd"].sum()
     energia_unit  = df_r.groupby("unidad")["gen_real_mw"].sum()
-    ingreso_total = ingreso_unit.sum()
-    energia_total = energia_unit.sum()
-    cmg_prom = df_c["cmg_usd_mwh"].mean()
-    cmg_min  = df_c["cmg_usd_mwh"].min()
-    cmg_max  = df_c["cmg_usd_mwh"].max()
-    unidades_ord = UNIDADES
 
-    # Desvío CMG real vs programado (si hay programado disponible)
-    desvio_cmg = None
-    if df_cp is not None and not df_cp.empty:
-        m = pd.merge_asof(
-            df_c[["fecha_hora", "cmg_usd_mwh"]].sort_values("fecha_hora"),
-            df_cp[["fecha_hora", "cmg_usd_mwh"]].rename(columns={"cmg_usd_mwh": "prog"}).sort_values("fecha_hora"),
-            on="fecha_hora", direction="nearest", tolerance=pd.Timedelta("1h"),
-        ).dropna()
-        if not m.empty:
-            desvio_cmg = (m["cmg_usd_mwh"] - m["prog"]).mean()
+    _kpis(df_c, df_cp, df_cr, ingreso_unit, energia_unit)
+    st.markdown("<div style='height:10px'></div>", unsafe_allow_html=True)
 
+    # ── Fila 1 · Precio: benchmarking temporal + elasticidad demanda ─────────
+    c1, c2 = st.columns(2)
+    with c1:
+        _cmg_tiempo(df_c, df_cp, df_cr)
+    with c2:
+        _cmg_vs_demanda(df_c, df_dem, barra_dem)
+
+    # ── Fila 2 · Ingreso: estacionalidad diaria + mapa de valor ──────────────
+    c3, c4 = st.columns(2)
+    with c3:
+        _ingreso_diario(df_merge)
+    with c4:
+        _mapa_valor(ingreso_unit, energia_unit)
+
+    # ── Fila 3 · Contribución + calidad del pronóstico ───────────────────────
+    c5, c6 = st.columns(2)
+    with c5:
+        _cascada_ingreso(ingreso_unit)
+    with c6:
+        _error_pronostico(df_c, df_cp)
+
+
+# ─────────────────────────────────────────────────────────────────────────────
+def _layout(fig, titulo, y_title=None, height=330, **kw):
+    fig.update_layout(
+        title=dict(text=titulo, font=dict(size=13, color=INK), x=0),
+        height=height, margin=dict(l=10, r=14, t=52, b=10),
+        plot_bgcolor=BG_TRANSP, paper_bgcolor=BG_TRANSP,
+        font=dict(family="Inter, sans-serif"),
+        xaxis=dict(showgrid=False, tickfont=dict(color="#475569", size=11)),
+        yaxis=dict(gridcolor=C_GRID, tickfont=dict(color=INK_AXIS, size=10),
+                   title=y_title, title_font=dict(color=INK_AXIS, size=10)),
+        **kw)
+    return fig
+
+
+def _show(fig):
+    st.plotly_chart(fig, use_container_width=True, config={"displayModeBar": False})
+
+
+# ─────────────────────────────────────────────────────────────────────────────
+# KPIs
+# ─────────────────────────────────────────────────────────────────────────────
+def _kpis(df_c, df_cp, df_cr, ingreso_unit, energia_unit):
+    cmg = df_c["cmg_usd_mwh"]
+    ing = ingreso_unit.sum()
+    ene = energia_unit.sum()
+    realizado = ing / ene if ene else 0
     kpis = [
-        ("Ingreso Total Est.", f"${ingreso_total:,.0f}", "USD en el período"),
-        ("Energía Total",      f"{energia_total:,.0f}",  "MWh generados"),
-        ("CMG Promedio",       f"{cmg_prom:.1f}",        "USD/MWh"),
-        ("Rango CMG",          f"{cmg_min:.1f} – {cmg_max:.1f}", "USD/MWh mín/máx"),
+        ("Ingreso estimado", f"${ing:,.0f}", "USD (gen × CMG)"),
+        ("Ingreso realizado", f"{realizado:.1f}", "USD/MWh capturado"),
+        ("CMG promedio", f"{cmg.mean():.1f}", "USD/MWh simple"),
+        ("Volatilidad CMG", f"{cmg.std():.1f}", "desv. estándar"),
+        ("Rango CMG", f"{cmg.min():.0f}–{cmg.max():.0f}", "mín–máx USD/MWh"),
     ]
-    if desvio_cmg is not None:
-        kpis.append(("Desvío CMG real vs prog.", f"{desvio_cmg:+.1f}", "USD/MWh medio"))
-
-    # Desvío CMG online (S3) vs real oficial liquidado (si hay datos en común)
+    # Sesgo de pronóstico (online − programado): + = precio salió más caro de lo previsto.
+    if df_cp is not None and not df_cp.empty:
+        m = _cruce(df_c, df_cp)
+        if not m.empty:
+            kpis.append(("Sesgo pronóstico", f"{(m['a'] - m['b']).mean():+.1f}",
+                         "USD/MWh online−prog"))
+    # Desvío online vs real oficial liquidado (rezago ~10 días).
     if df_cr is not None and not df_cr.empty:
-        mr = pd.merge_asof(
-            df_c[["fecha_hora", "cmg_usd_mwh"]].sort_values("fecha_hora"),
-            df_cr[["fecha_hora", "cmg_usd_mwh"]].rename(columns={"cmg_usd_mwh": "real"}).sort_values("fecha_hora"),
-            on="fecha_hora", direction="nearest", tolerance=pd.Timedelta("1h"),
-        ).dropna()
-        if not mr.empty:
-            kpis.append(("Desvío online vs real oficial",
-                         f"{(mr['cmg_usd_mwh'] - mr['real']).mean():+.1f}", "USD/MWh medio"))
+        m = _cruce(df_c, df_cr)
+        if not m.empty:
+            kpis.append(("Online vs real oficial", f"{(m['a'] - m['b']).mean():+.1f}",
+                         "USD/MWh medio"))
     cols = st.columns(len(kpis))
     for col, (lbl, val, sub) in zip(cols, kpis):
         col.metric(lbl, val, sub)
 
-    st.markdown("<div style='height:8px'></div>", unsafe_allow_html=True)
 
-    # Vista de aporte económico: ingreso por unidad + evolución del CMG.
-    # Los estadísticos profundos viven ahora en la vista «Estadísticas».
-    gc1, gc2 = st.columns(2)
-    with gc1:
-        _grafico_barras_ingreso(ingreso_unit, energia_unit, unidades_ord)
-    with gc2:
-        _grafico_cmg_tiempo(df_c, cmg_prom, cmg_min, cmg_max, df_cp, df_cr, df_dem, barra_dem)
-
-
-def _grafico_barras_ingreso(ingreso_unit, energia_unit, unidades_ord):
-    n_bars = len(unidades_ord)
-    bar_w, dx, dy_pct = 0.42, 0.13, 0.06
-    y_vals = [ingreso_unit.get(u, 0) for u in unidades_ord]
-    y_max  = max(y_vals) if y_vals else 1
-    dy     = y_max * dy_pct
-    e_vals = [energia_unit.get(u, 0) for u in unidades_ord]
-    e_max  = max(e_vals) if e_vals else 1
-    e_scale = y_max / e_max if e_max else 1
-
-    fig = go.Figure()
-    for i, u in enumerate(unidades_ord):
-        val = y_vals[i]
-        hex_c = COLORES[u]["line"]
-        r_c, g_c, b_c = int(hex_c[1:3], 16), int(hex_c[3:5], 16), int(hex_c[5:7], 16)
-        col_front = hex_to_rgba(hex_c, 0.88)
-        col_side  = f"rgba({max(0,r_c-55)},{max(0,g_c-55)},{max(0,b_c-55)},0.92)"
-        col_top   = f"rgba({min(255,r_c+45)},{min(255,g_c+45)},{min(255,b_c+45)},1.0)"
-        x0, x1 = i - bar_w/2, i + bar_w/2
-        fig.add_trace(go.Scatter(x=[x0, x1, x1, x0, x0], y=[0, 0, val, val, 0],
-            fill="toself", fillcolor=col_front, line=dict(color="rgba(255,255,255,0.6)", width=1),
-            mode="lines", showlegend=False,
-            hovertemplate=f"<b>{LABELS[u]}</b><br>${val:,.0f} USD<extra></extra>"))
-        fig.add_trace(go.Scatter(x=[x1, x1+dx, x1+dx, x1, x1], y=[0, dy, val+dy, val, 0],
-            fill="toself", fillcolor=col_side, line=dict(color="rgba(0,0,0,0.15)", width=0.8),
-            mode="lines", showlegend=False, hoverinfo="skip"))
-        fig.add_trace(go.Scatter(x=[x0, x1, x1+dx, x0+dx, x0], y=[val, val, val+dy, val+dy, val],
-            fill="toself", fillcolor=col_top, line=dict(color="rgba(255,255,255,0.7)", width=0.8),
-            mode="lines", showlegend=False, hoverinfo="skip"))
-        fig.add_annotation(x=i + dx/2, y=val + dy + y_max*0.025, text=f"${val:,.0f}",
-                           showarrow=False, font=dict(size=10, color="#334155"), xanchor="center")
-
-    e_scaled = [v * e_scale for v in e_vals]
-    fig.add_trace(go.Scatter(x=[i + dx/2 for i in range(n_bars)], y=e_scaled,
-        name="Energía (MWh)", mode="markers+lines",
-        marker=dict(size=10, color="#0F172A", symbol="diamond"),
-        line=dict(color="#0F172A", width=1.8, dash="dot"),
-        hovertemplate="<b>Energía</b><br>%{customdata:,.0f} MWh<extra></extra>", customdata=e_vals))
-    for i, ev in enumerate(e_vals):
-        fig.add_annotation(x=i + dx/2, y=e_scaled[i] + y_max*0.025, text=f"{ev:,.0f} MWh",
-                           showarrow=False, font=dict(size=8, color="#64748B"), xanchor="center")
-
-    fig.update_layout(
-        title=dict(text="Ingreso Estimado + Energía por Unidad", font=dict(size=13, color="#0F172A"), x=0),
-        height=360, margin=dict(l=10, r=20, t=60, b=40), plot_bgcolor=BG, paper_bgcolor="rgba(0,0,0,0)",
-        xaxis=dict(tickvals=list(range(n_bars)), ticktext=[LABELS[u] for u in unidades_ord],
-                   tickfont=dict(color="#475569", size=11), showgrid=False, zeroline=False, range=[-0.55, n_bars-0.25]),
-        yaxis=dict(gridcolor=GR, tickfont=dict(color="#94A3B8", size=10), title="USD",
-                   title_font=dict(color="#94A3B8", size=10), zeroline=True, zerolinecolor="#E2E8F0", range=[0, y_max*1.18]),
-        legend=dict(orientation="h", y=-0.12, x=0, font=dict(size=10, color="#475569")), showlegend=True)
-    st.plotly_chart(fig, use_container_width=True, config={"displayModeBar": False})
+def _cruce(df_a, df_b):
+    """merge_asof ±1h de dos series CMG. Devuelve columnas a (df_a) y b (df_b)."""
+    return pd.merge_asof(
+        df_a[["fecha_hora", "cmg_usd_mwh"]].rename(columns={"cmg_usd_mwh": "a"}).sort_values("fecha_hora"),
+        df_b[["fecha_hora", "cmg_usd_mwh"]].rename(columns={"cmg_usd_mwh": "b"}).sort_values("fecha_hora"),
+        on="fecha_hora", direction="nearest", tolerance=pd.Timedelta("1h"),
+    ).dropna(subset=["a", "b"])
 
 
-def _grafico_cmg_tiempo(df_c, cmg_prom, cmg_min, cmg_max, df_cp=None, df_cr=None, df_dem=None, barra_dem="Crucero220"):
+# ─────────────────────────────────────────────────────────────────────────────
+# Fila 1
+# ─────────────────────────────────────────────────────────────────────────────
+def _cmg_tiempo(df_c, df_cp, df_cr):
+    """CMG online vs programado (PID) vs real oficial. Un solo eje (USD/MWh).
+    Marca máximo/mínimo y la media del período."""
+    prom = df_c["cmg_usd_mwh"].mean()
     idx_max = df_c["cmg_usd_mwh"].idxmax()
     idx_min = df_c["cmg_usd_mwh"].idxmin()
+    cmg_max = df_c.loc[idx_max, "cmg_usd_mwh"]
+    cmg_min = df_c.loc[idx_min, "cmg_usd_mwh"]
+
     fig = go.Figure()
     fig.add_trace(go.Scatter(x=df_c["fecha_hora"], y=df_c["cmg_usd_mwh"], mode="none",
-        fill="tozeroy", fillcolor="rgba(109,40,217,0.08)", showlegend=False, hoverinfo="skip"))
-    fig.add_trace(go.Scatter(x=df_c["fecha_hora"], y=df_c["cmg_usd_mwh"], mode="lines", name="CMG online",
-        line=dict(color=SERIE["cmg"], width=1.8, shape="spline", smoothing=0.5), showlegend=True,
+        fill="tozeroy", fillcolor="rgba(124,77,224,0.08)", showlegend=False, hoverinfo="skip"))
+    fig.add_trace(go.Scatter(x=df_c["fecha_hora"], y=df_c["cmg_usd_mwh"], mode="lines",
+        name="Online", line=dict(color=SERIE["cmg"], width=2, shape="spline", smoothing=0.5),
         hovertemplate="<b>Online</b> %{x|%d/%m %H:%M}<br>%{y:.1f} USD/MWh<extra></extra>"))
-    # Overlay CMG programado (PID), si existe
     if df_cp is not None and not df_cp.empty:
-        fig.add_trace(go.Scatter(x=df_cp["fecha_hora"], y=df_cp["cmg_usd_mwh"], mode="lines", name="CMG programado",
-            line=dict(color=SERIE["cmg_prog"], width=1.4, dash="dash"),
+        fig.add_trace(go.Scatter(x=df_cp["fecha_hora"], y=df_cp["cmg_usd_mwh"], mode="lines",
+            name="Programado", line=dict(color=SERIE["cmg_prog"], width=1.4, dash="dash"),
             hovertemplate="<b>Programado</b> %{x|%d/%m %H:%M}<br>%{y:.1f} USD/MWh<extra></extra>"))
-    # Overlay CMG real oficial liquidado (rezago ~10 días), si existe
     if df_cr is not None and not df_cr.empty:
-        fig.add_trace(go.Scatter(x=df_cr["fecha_hora"], y=df_cr["cmg_usd_mwh"], mode="lines", name="CMG real oficial",
-            line=dict(color="#0F766E", width=1.6),
+        fig.add_trace(go.Scatter(x=df_cr["fecha_hora"], y=df_cr["cmg_usd_mwh"], mode="lines",
+            name="Real oficial", line=dict(color=C_REAL_OF, width=1.6),
             hovertemplate="<b>Real oficial</b> %{x|%d/%m %H:%M}<br>%{y:.1f} USD/MWh<extra></extra>"))
-    # Overlay demanda pronosticada (eje secundario): alta demanda anticipa CMG alto
-    if df_dem is not None and not df_dem.empty:
-        fig.add_trace(go.Scatter(x=df_dem["fecha_hora"], y=df_dem["energia_mwh"], mode="lines",
-            name=f"Demanda {barra_dem}", yaxis="y2",
-            line=dict(color="#64748B", width=1.2, dash="dot"),
-            hovertemplate="<b>Demanda</b> %{x|%d/%m %H:%M}<br>%{y:,.0f} MWh<extra></extra>"))
-    fig.add_hline(y=cmg_prom, line_color="#CBD5E1", line_width=1.2, line_dash="dot",
-        annotation_text=f"Prom: {cmg_prom:.1f}", annotation_position="right",
-        annotation_font_color="#64748B", annotation_font_size=10)
-    fig.add_trace(go.Scatter(x=[df_c.loc[idx_max, "fecha_hora"]], y=[cmg_max], mode="markers",
-        showlegend=False, hoverinfo="skip",
-        marker=dict(size=22, color="rgba(239,68,68,0.15)", symbol="circle", line=dict(color="rgba(239,68,68,0.4)", width=1.5))))
-    fig.add_trace(go.Scatter(x=[df_c.loc[idx_min, "fecha_hora"]], y=[cmg_min], mode="markers",
-        showlegend=False, hoverinfo="skip",
-        marker=dict(size=22, color="rgba(16,185,129,0.15)", symbol="circle", line=dict(color="rgba(16,185,129,0.4)", width=1.5))))
+    fig.add_hline(y=prom, line_color="#CBD5E1", line_width=1.2, line_dash="dot",
+        annotation_text=f"Prom {prom:.0f}", annotation_position="right",
+        annotation_font=dict(color=INK_MUTED, size=10))
     fig.add_trace(go.Scatter(x=[df_c.loc[idx_max, "fecha_hora"]], y=[cmg_max], mode="markers+text",
-        marker=dict(size=10, color="#EF4444", symbol="triangle-up", line=dict(color="#fff", width=1.5)),
-        text=[f"  Máx: {cmg_max:.1f}"], textposition="top right", textfont=dict(size=10, color="#EF4444"), showlegend=False))
+        marker=dict(size=9, color=AES_ROJO, symbol="triangle-up", line=dict(color="#fff", width=1.2)),
+        text=[f" máx {cmg_max:.0f}"], textposition="top center",
+        textfont=dict(size=9, color=AES_ROJO), showlegend=False, hoverinfo="skip"))
     fig.add_trace(go.Scatter(x=[df_c.loc[idx_min, "fecha_hora"]], y=[cmg_min], mode="markers+text",
-        marker=dict(size=10, color="#10B981", symbol="triangle-down", line=dict(color="#fff", width=1.5)),
-        text=[f"  Mín: {cmg_min:.1f}"], textposition="bottom right", textfont=dict(size=10, color="#10B981"), showlegend=False))
-    fig.update_layout(
-        title=dict(text="CMG online · programado · real oficial", font=dict(size=13, color="#0F172A"), x=0),
-        height=360, margin=dict(l=10, r=80, t=60, b=10), plot_bgcolor=BG, paper_bgcolor="rgba(0,0,0,0)",
-        legend=dict(orientation="h", yanchor="bottom", y=1.02, x=0, font=dict(size=10, color="#475569")),
-        yaxis=dict(title="USD/MWh", gridcolor=GR, tickfont=dict(color="#94A3B8", size=10), title_font=dict(color="#94A3B8", size=10)),
-        yaxis2=dict(title="Demanda MWh", overlaying="y", side="right", showgrid=False,
-                    tickfont=dict(color="#94A3B8", size=10), title_font=dict(color="#94A3B8", size=10)),
-        xaxis=dict(tickfont=dict(color="#94A3B8", size=10), tickformat="%d/%m\n%H:%M", showgrid=False),
-        hovermode="x unified", hoverlabel=dict(bgcolor="#1E293B", font_color="#F8FAFC", bordercolor="#334155"))
-    st.plotly_chart(fig, use_container_width=True, config={"displayModeBar": False})
+        marker=dict(size=9, color=AES_VERDE, symbol="triangle-down", line=dict(color="#fff", width=1.2)),
+        text=[f" mín {cmg_min:.0f}"], textposition="bottom center",
+        textfont=dict(size=9, color=AES_VERDE), showlegend=False, hoverinfo="skip"))
+    _layout(fig, "CMG en el tiempo · online vs programado vs real (USD/MWh)", "USD/MWh",
+            legend=dict(orientation="h", yanchor="bottom", y=1.02, x=0, font=dict(size=10)),
+            hovermode="x unified",
+            hoverlabel=dict(bgcolor="#1E293B", font_color="#F8FAFC", bordercolor="#334155"))
+    fig.update_xaxes(tickformat="%d/%m\n%H:%M", tickfont=dict(color=INK_AXIS, size=10))
+    _show(fig)
+    st.caption("Benchmarking del precio: la separación online↔programado mide el error "
+               "del pronóstico; online↔real oficial, el sesgo del dato preliminar.")
+
+
+def _cmg_vs_demanda(df_c, df_dem, barra_dem):
+    """Elasticidad precio-demanda: CMG online vs demanda pronosticada (una hora =
+    un punto). Un eje por variable (dispersión, no eje dual)."""
+    if df_dem is None or df_dem.empty:
+        st.caption(f"Elasticidad precio-demanda: sin pronóstico de demanda para {barra_dem}.")
+        return
+    m = pd.merge_asof(
+        df_c[["fecha_hora", "cmg_usd_mwh"]].sort_values("fecha_hora"),
+        df_dem[["fecha_hora", "energia_mwh"]].sort_values("fecha_hora"),
+        on="fecha_hora", direction="nearest", tolerance=pd.Timedelta("1h"),
+    ).dropna()
+    if len(m) < 3:
+        st.caption("Elasticidad precio-demanda: cruce insuficiente en el período.")
+        return
+    fig = go.Figure(go.Scatter(
+        x=m["energia_mwh"], y=m["cmg_usd_mwh"], mode="markers",
+        marker=dict(color=AES_AZUL, size=6, opacity=0.5, line=dict(color="#fff", width=0.4)),
+        hovertemplate="Demanda %{x:,.0f} MWh<br>CMG %{y:.1f} USD/MWh<extra></extra>"))
+    coef = np.polyfit(m["energia_mwh"], m["cmg_usd_mwh"], 1)
+    xl = [m["energia_mwh"].min(), m["energia_mwh"].max()]
+    fig.add_trace(go.Scatter(x=xl, y=[coef[0]*x + coef[1] for x in xl], mode="lines",
+        line=dict(color=INK_AXIS, dash="dot", width=1.5), showlegend=False, hoverinfo="skip"))
+    r = m["energia_mwh"].corr(m["cmg_usd_mwh"])
+    fig.add_annotation(xref="paper", yref="paper", x=0.98, y=0.05, showarrow=False,
+        text=f"r = {r:.2f}", font=dict(size=11, color=INK_MUTED), align="right")
+    _layout(fig, "Elasticidad precio-demanda · CMG vs demanda", "CMG USD/MWh")
+    fig.update_xaxes(title=f"Demanda pronosticada {barra_dem} (MWh)",
+                     title_font=dict(color=INK_AXIS, size=10), tickfont=dict(color=INK_AXIS, size=10))
+    _show(fig)
+    st.caption("Cada punto es una hora. Pendiente positiva = a más demanda, mayor precio "
+               "(señal de escasez); r cercano a 0 indica que el precio lo fija otro factor.")
+
+
+# ─────────────────────────────────────────────────────────────────────────────
+# Fila 2
+# ─────────────────────────────────────────────────────────────────────────────
+def _ingreso_diario(df_merge):
+    """Ingreso estimado diario por unidad (barra apilada). Estacionalidad del valor."""
+    d = df_merge.dropna(subset=["ingreso_usd"]).copy()
+    d["dia"] = d["fecha_hora"].dt.strftime("%d/%m")
+    orden = d.drop_duplicates("dia")["dia"].tolist()
+    piv = (d.pivot_table(index="dia", columns="unidad", values="ingreso_usd", aggfunc="sum")
+           .reindex(orden).fillna(0))
+    fig = go.Figure()
+    for u in UNIDADES:
+        if u not in piv.columns:
+            continue
+        fig.add_trace(go.Bar(x=piv.index, y=piv[u], name=LABELS[u],
+            marker=dict(color=COLORES[u]["line"], line=dict(color="#FFFFFF", width=0.4)),
+            hovertemplate=f"<b>{LABELS[u]}</b><br>%{{x}}<br>$%{{y:,.0f}}<extra></extra>"))
+    _layout(fig, "Ingreso estimado diario por unidad (USD)", "USD",
+            barmode="stack", bargap=0.25,
+            legend=dict(orientation="h", y=-0.18, font=dict(size=10)))
+    _show(fig)
+    st.caption("Ingreso (gen × CMG) agregado por día y apilado por unidad. Revela los "
+               "días de mayor captura de valor del complejo.")
+
+
+def _mapa_valor(ingreso_unit, energia_unit):
+    """Mapa de valor: energía (x) vs precio capturado (y), burbuja = ingreso.
+    Ubica cada unidad en el plano volumen-precio."""
+    us = [u for u in UNIDADES if energia_unit.get(u, 0) > 0]
+    if not us:
+        st.caption("Mapa de valor: sin generación en el período.")
+        return
+    xs = [energia_unit.get(u, 0) for u in us]
+    ings = [ingreso_unit.get(u, 0) for u in us]
+    ys = [ings[i] / xs[i] if xs[i] else 0 for i in range(len(us))]
+    ref = max(ings) or 1
+    fig = go.Figure()
+    for i, u in enumerate(us):
+        fig.add_trace(go.Scatter(
+            x=[xs[i]], y=[ys[i]], mode="markers+text", name=LABELS[u],
+            marker=dict(size=28 + 46 * (ings[i] / ref), color=COLORES[u]["line"],
+                        opacity=0.82, line=dict(color="#fff", width=1.5)),
+            text=[LABELS[u].replace("Angamos", "ANG").replace("Cochrane", "CCR")],
+            textposition="middle center", textfont=dict(size=9, color="#fff"),
+            hovertemplate=(f"<b>{LABELS[u]}</b><br>Energía %{{x:,.0f}} MWh<br>"
+                           f"Precio capturado %{{y:.1f}} USD/MWh<br>"
+                           f"Ingreso ${ings[i]:,.0f}<extra></extra>"),
+            showlegend=False))
+    _layout(fig, "Mapa de valor · volumen vs precio capturado", "USD/MWh capturado")
+    fig.update_xaxes(title="Energía generada (MWh)", title_font=dict(color=INK_AXIS, size=10),
+                     tickfont=dict(color=INK_AXIS, size=10))
+    _show(fig)
+    st.caption("Cada burbuja es una unidad; su tamaño = ingreso estimado. Arriba-derecha "
+               "= mucho volumen a buen precio (posición más rentable).")
+
+
+# ─────────────────────────────────────────────────────────────────────────────
+# Fila 3
+# ─────────────────────────────────────────────────────────────────────────────
+def _cascada_ingreso(ingreso_unit):
+    """Cascada: contribución de cada unidad al ingreso total del complejo."""
+    us = [u for u in UNIDADES if ingreso_unit.get(u, 0) > 0]
+    if not us:
+        st.caption("Cascada de ingreso: sin datos económicos.")
+        return
+    vals = [ingreso_unit.get(u, 0) for u in us]
+    total = sum(vals)
+    fig = go.Figure(go.Waterfall(
+        orientation="v", measure=["relative"] * len(us) + ["total"],
+        x=[LABELS[u] for u in us] + ["Total complejo"],
+        y=vals + [total],
+        text=[f"${v:,.0f}" for v in vals] + [f"${total:,.0f}"],
+        textposition="outside", textfont=dict(size=10, color="#475569"),
+        connector=dict(line=dict(color="#CBD5E1", width=1)),
+        increasing=dict(marker=dict(color=AES_VIOLETA)),
+        totals=dict(marker=dict(color=INK)),
+        hovertemplate="<b>%{x}</b><br>$%{y:,.0f}<extra></extra>"))
+    _layout(fig, "Cascada de ingreso · aporte de cada unidad al total (USD)", "USD")
+    fig.update_yaxes(range=[0, total * 1.15])
+    _show(fig)
+    st.caption("Cómo se construye el ingreso total del complejo sumando la contribución "
+               "de cada unidad.")
+
+
+def _error_pronostico(df_c, df_cp):
+    """Calidad del pronóstico CMG: distribución del error (online − programado).
+    Centrado en 0 = pronóstico insesgado; cola ancha = baja precisión."""
+    if df_cp is None or df_cp.empty:
+        st.caption("Calidad del pronóstico CMG: sin CMG programado en el período.")
+        return
+    m = _cruce(df_c, df_cp)
+    if m.empty:
+        st.caption("Calidad del pronóstico CMG: sin cruce disponible.")
+        return
+    err = (m["a"] - m["b"])
+    mae = err.abs().mean()
+    sesgo = err.mean()
+    fig = go.Figure(go.Histogram(x=err, nbinsx=25, marker_color=AES_VIOLETA, opacity=0.78,
+        hovertemplate="Error %{x:.0f} USD/MWh<br>Horas: %{y}<extra></extra>"))
+    fig.add_vline(x=0, line_color="#94A3B8", line_width=1.2)
+    fig.add_vline(x=sesgo, line_color=AES_ROJO, line_dash="dot",
+        annotation_text=f"Sesgo {sesgo:+.0f}", annotation_position="top right",
+        annotation_font=dict(color=AES_ROJO, size=10))
+    _layout(fig, "Calidad del pronóstico CMG · error online − programado", "Horas", bargap=0.05)
+    fig.update_xaxes(title="Error (USD/MWh)", title_font=dict(color=INK_AXIS, size=10),
+                     tickfont=dict(color=INK_AXIS, size=10))
+    _show(fig)
+    st.caption(f"MAE {mae:.1f} · sesgo {sesgo:+.1f} USD/MWh. Barras a la derecha del 0 = el "
+               "precio real superó al programado (subestimación del pronóstico).")
