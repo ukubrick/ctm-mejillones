@@ -1,8 +1,9 @@
 # CLAUDE.md — Dashboard CTM Mejillones
 > Contexto completo para Claude Code. Leer al inicio de cada sesión.
 > Autor: Erick Herrera — AES Andes, Antofagasta, Chile.
-> Última actualización: 2026-07-08 (rediseño Estadísticas/Costos/ML, ingreso por unidad + alerta
->   potencia 0, contraseña en Datos, solicitudes en bitácora automática).
+> Última actualización: 2026-07-08 (2ª sesión: integración de 6 endpoints CEN nuevos — CMG en
+>   barra de central Angamos/Cochrane, CMG programado PCP, mantenimiento mayor, desempeño SSCC
+>   CPF/CSF, demanda neta y mix diario; migración `migracion_endpoints_ctm.py`).
 >
 > REGLA DE MANTENIMIENTO: la cabecera (todo lo anterior al HISTORIAL DE SESIONES) es la
 > ÚNICA fuente de verdad del estado actual; `config.py` manda sobre este markdown.
@@ -55,7 +56,7 @@ Destiladas de bugs y quirks reales del CEN/Streamlit:
    la página (~96/día). Usar **`limit=50`** y paginar (al revés del PCP/PID que usan 2000).
 6. **CMG programado PID (`/cmg-programado-pid/v4`)**: es **1-indexado** (`page=0` → 502,
    empezar en `page=1`), `limit=2000` (5000 da 502 intermitente). No filtra por barra → paginar
-   y filtrar local por `llave_cmg ∈ {Crucero220, Tarapaca220}`.
+   y filtrar local por `llave_cmg ∈ CMG_PROG_BARRAS` (Crucero/Tarapacá + Angamos/Cochrane).
 7. **Limitaciones (`/limitaciones-transmision/v4/findByDate`)**: ruta **SIN** el prefijo
    `/sipub/api/rest/v4/`. Filtrar local por `id_central ∈ {377,379}` o nombre. `correlativo`
    llega como float → `int(float(v))`.
@@ -107,6 +108,19 @@ Destiladas de bugs y quirks reales del CEN/Streamlit:
 23. **Potencia real < 5 MW = unidad detenida (trip/desconexión/mantención), NO 0 exacto.** La
     medición SCADA rara vez marca 0.0; `UMBRAL_CERO`/`UMBRAL_TRIP = 5.0`. Se alerta en rojo en la
     serie (gen_unidad.py) y en el tope (kpis.py cruza con limitaciones: baja programada vs trip).
+24. **CMG en barra de central:** el CMG programado PCP/PID trae las llaves `Angamos220` y
+    `Cochrane220`, y el CMG real (`bar_transf`) acepta `ANGAMOS_______220` (7 letras+7 `_`) y
+    `COCHRANE______220` (8+6) SERVER-SIDE. El S3 online NO las trae (solo 8 barras) y la API
+    online con bar_transf da 429/500 → el online sigue en Crucero/Tarapacá. El PCP de CMG es
+    **1-indexado** como el PID (page=0 → 502).
+25. **CPF/CSF (`/indicador-desempeno-{cpf,csf}/v4`): filtrar por id_unidad 1965-1968, NUNCA por
+    texto** — 'ANG' calza con ANGOSTURA. `hora` viene 0-23 como string. Publican con rezago de
+    2-3 MESES y por bloques con huecos → la diaria sondea solo días faltantes
+    (`dias_faltantes_desempeno`), un día vacío cuesta 2 requests.
+26. **`/programas-mantenimiento-mayor/v4` filtra por fecha de PUBLICACIÓN (campo `date`), no por
+    las fechas del programa** → una ventana de 45 días hacia atrás captura mantenimientos futuros
+    ya publicados. Sin id_central → filtro local por texto (CLAVES_MANT_CTM, incluye O'HIGGINS y
+    MEJILLONES: el corredor de evacuación afecta a CTM sin intervenir sus unidades).
 
 ---
 
@@ -190,7 +204,9 @@ dashboard_api/
 ├── Adquisicion.py                  ← funciones fetch_/upsert_ + run() horario (núcleo PCP/PID/CMG-prog)
 ├── Adquisicion_potencia.py         ← cron :25/:55 — gen-real + CMG S3 (baja latencia)
 ├── Adquisicion_operaciones.py      ← cron :10/:40 — SSCC + Despacho CMG + Limitaciones
-├── Adquisicion_diaria.py           ← cron 08:20 UTC — CMG real, pronóstico demanda, solicitudes, maestro
+├── Adquisicion_diaria.py           ← cron 08:20 UTC — CMG real (4 barras) + CMG prog PCP, pronóstico
+│                                      demanda, solicitudes, maestro, mantenimiento mayor, demanda neta,
+│                                      mix diario, desempeño SSCC (días faltantes)
 ├── backfill_programada.py          ← utilidad puntual (recupera PCP por rango)
 ├── migracion_*.py                  ← migraciones puntuales (correr vía workflow migracion.yml)
 ├── utils/
@@ -218,6 +234,8 @@ dashboard_api/
 │   │                                  (SSCC + despacho + limitaciones + novedades manuales + solicitudes
 │   │                                  que mencionan Angamos/Cochrane), ayer x defecto
 │   ├── limitaciones.py / sscc.py / despacho_cmg.py / solicitudes.py   ← vistas de Restricciones
+│   │                                  (sscc.py incluye sub «Desempeño (CPF/CSF)» — panel de factores)
+│   ├── mantenimiento.py            ← render_mantenimiento — PMPM CTM: KPIs + timeline Gantt + tabla
 │   ├── manual.py                   ← render_programada_manual / render_real_manual (CRUD + override)
 │   ├── datos.py                    ← render_datos_horarios / render_bitacora
 │   └── infotecnica.py              ← fichas técnicas por unidad (unidades_maestro + fallback config)
@@ -241,7 +259,7 @@ Se abandonaron las categorías desplegables (popovers). El menú es un **segment
 |-------|---------------|
 | **Resumen** | Gráfico por unidad (real/prog/CMG) + selector de nodo CMG + bitácora automática de la unidad + novedades |
 | **Análisis** | Costos · Estadísticas (consolidada) · Predicción (ML) |
-| **Restricciones** | Limitaciones · SSCC · Despacho CMG · Solicitudes |
+| **Restricciones** | Limitaciones · SSCC (incl. Desempeño CPF/CSF) · Despacho CMG · Solicitudes · Mant. mayor |
 | **Datos** | Ingreso Manual · Datos & Bitácora · Infotécnica (**las 2 primeras tras contraseña `jt`**) |
 
 - **El selector de nodo CMG vive en Resumen** (antes en el sidebar); persiste en
@@ -268,7 +286,7 @@ PCP/PID (lentos paginados) → se separaron los endpoints rápidos y los lentos-
 | Horaria | `Adquisicion.py` | **Núcleo:** PCP · PID · CMG-programado (+ gen-real/CMG S3 de respaldo) | `:05` | 60 min |
 | Potencia | `Adquisicion_potencia.py` | gen-real + CMG S3 | `:25,:55` | — |
 | Operaciones | `Adquisicion_operaciones.py` | SSCC + Despacho CMG + Limitaciones | `:10,:40` | — |
-| Diaria | `Adquisicion_diaria.py` | CMG real + pronóstico demanda + solicitudes + maestro unidades | `08:20 UTC` | 60 min |
+| Diaria | `Adquisicion_diaria.py` | CMG real (4 barras) + CMG prog PCP + pronóstico demanda + solicitudes + maestro + mantenimiento mayor + demanda neta + mix diario + desempeño SSCC | `08:20 UTC` | 60 min |
 
 - Crons espaciados para no solaparse. Cada script reutiliza las funciones de `Adquisicion.py`
   (el guard `if __name__` evita correr `run()` al importar).
@@ -286,8 +304,12 @@ REST (service_role) desde el dashboard; psycopg2 (postgres) desde la adquisició
 | `generacion_real` | `(unidad, fecha_hora)` DO UPDATE | + col `origen` ('MANUAL' protege del upsert automático) |
 | `generacion_programada` | `(unidad, fecha_hora, fuente)` DO UPDATE | `fuente` ∈ CEN_PCP / CEN_PID / MANUAL. `load_prog`: MANUAL > PCP, excluye PID |
 | `costo_marginal` | `(barra_transf, fecha_hora)` DO UPDATE | CMG online S3. Nodos Crucero/Tarapacá 220 |
-| `costo_marginal_programado` | `(barra, fecha_hora)` | CMG PID. Migración `migracion_cmg_programado.py` |
-| `costo_marginal_real` | `(barra_transf, fecha_hora)` | CMG real liquidado, rezago ~10 días. `limit=50` |
+| `costo_marginal_programado` | `(barra, fecha_hora, fuente)` | CMG PID (horario) + PCP (diaria). 4 barras: + Angamos/Cochrane. `fuente` desde `migracion_endpoints_ctm.py` |
+| `costo_marginal_real` | `(barra_transf, fecha_hora)` | CMG real liquidado, rezago ~10 días. `limit=50`. 4 barras (+ ANGAMOS/COCHRANE 220) |
+| `mantenimiento_mayor` | `(correlativo, nombre_sub_instalacion, fecha_inicio_programa)` | PMPM filtrado por relevancia CTM (CLAVES_MANT_CTM) |
+| `desempeno_sscc` | `(unidad, tipo, fecha_hora)` | CPF/CSF horario por unidad; rezago 2-3 meses; diaria sondea días faltantes |
+| `demanda_neta` | `fecha_hora` | horaria SEN (gen bruta/ERV/neta) — feature del forecast CMG |
+| `mix_generacion_diaria` | `(fecha, tecnologia)` | getDailySum por tecnología — peso térmico en Costos |
 | `sscc_instrucciones` | `(fecha, id_configuracion, instruccion_sscc, inicio_periodo)` | Cochrane = CCH1/CCH2 |
 | `instrucciones_cmg` | `(id_instruccion, unidad)` | Despacho por CMG. `central`→unidad en `LLAVES_INSTR_CMG` |
 | `limitaciones_transmision` | `id` (hex API) | id_unidad 1965=ANG1 1966=ANG2 1967=CCR1 1968=CCR2 |
@@ -344,6 +366,11 @@ SIDEBAR_GRAD = "linear-gradient(168deg,#0E7E93,#2A38C9,#4A25A0)"                
       viejo de experimentos ML, no usados por la app).
 - [ ] **Verificación operacional:** confirmar que el cron horario aligerado termina sin timeout,
       que la diaria corre bien (dispararla 1× manual) y que la columna `origen` se auto-creó.
+- [ ] **Endpoints 2026-07-08:** verificar que `migracion_endpoints_ctm.py` corrió OK (Actions),
+      que la diaria nueva termina dentro del timeout (desempeño SSCC sondea ~120 días faltantes
+      la primera vez) y que Costos/SSCC/Restricciones muestran los paneles nuevos con datos.
+- [ ] **Desempeño SSCC:** cuando el CEN publique feb/may/jun 2026, la diaria los incorpora sola
+      (verificar en el panel). Evaluar sumarlo al PDF ejecutivo.
 - [ ] **Endpoints CEN sondeados 2026-07-03 — revividos pero NO integrados** (costo > beneficio):
       · `/potencia-activa-reactiva-unidad/v4` → **200**, pero SCADA-level (KVAR), `totalPages≈38.687`,
         no filtra por central. Valor nicho, paginación masiva → descartado por ahora.
@@ -437,6 +464,31 @@ Limpieza de scripts probe/test/check.
     subido 1→5 MW. (El usuario aclaró: <5 MW ya indica 0 en la práctica.)
   · Nota operacional: dots ámbar del sidebar = último dato de AYER (verde=hoy, rojo=más viejo);
     lógica en `_edad_fuente` (`sidebar.py`). No es necesariamente falla (rezago SCADA del CEN).
+- **2026-07-08 (2ª sesión) — Barrido de endpoints CEN + integración de 6 nuevos:**
+  · Barrido en vivo de 18+ endpoints del consolidado (4 planes) con las keys reales, cruzado con
+    los hallazgos de Pulsar. Muertos y descartados quedaron documentados en PENDIENTES VIVOS.
+  · **CMG en barra de central** (hallazgo mayor): llaves `Angamos220`/`Cochrane220` en CMG
+    programado PCP/PID (filtro local) y `bar_transf=ANGAMOS_______220`/`COCHRANE______220`
+    server-side en CMG real. `CMG_PROG_BARRAS` pasó a 4 barras; `fetch_cmg_programado` ahora
+    parametrizado por fuente (PID horario / PCP en la diaria); `costo_marginal_programado` ganó
+    columna `fuente` con UNIQUE (barra, fecha_hora, fuente).
+  · **Mantenimiento mayor** (`/programas-mantenimiento-mayor/v4`, vivo y barato): tabla
+    `mantenimiento_mayor` filtrada por relevancia CTM (CLAVES_MANT_CTM incluye el corredor
+    Mejillones–O'Higgins), vista nueva «Mant. mayor» en Restricciones (`components/mantenimiento.py`:
+    KPIs + timeline Gantt + tabla) y eventos en la bitácora automática (badge ámbar; corredor de
+    evacuación aplica a las 4 unidades).
+  · **Desempeño SSCC CPF/CSF** (`/indicador-desempeno-{cpf,csf}/v4`): tabla `desempeno_sscc`
+    (horario por unidad, factores de remuneración), la diaria sondea SOLO días faltantes
+    (`dias_faltantes_desempeno`, rezago CEN 2-3 meses con huecos), panel nuevo «Desempeño
+    (CPF/CSF)» dentro de la vista SSCC (serie diaria del factor por unidad + participación).
+  · **Demanda neta** (`/demanda-neta/v4`): tabla `demanda_neta` (horaria SEN) como feature
+    `dem_lag_24h` del forecast probabilístico de CMG en ml.py (disponible en todo el horizonte
+    de 24h; XGBoost tolera los NaN del rezago).
+  · **Mix diario** (`getDailySum`): tabla `mix_generacion_diaria`; gráfico «Peso térmico del SEN»
+    en Costos + gráfico «CMG programado en barra de central vs Crucero» con spread medio.
+  · Migración `migracion_endpoints_ctm.py` (DDL + RLS + backfills: CMG real 4 barras 21d, CMG
+    PCP 7d / PID 3d, demanda neta 120d, mantenimiento 60d, mix 60d); el desempeño SSCC se
+    puebla solo desde la diaria. Todos los fetch probados en vivo antes del commit.
 
 ---
 

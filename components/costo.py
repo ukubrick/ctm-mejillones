@@ -23,8 +23,10 @@ import plotly.graph_objects as go
 import streamlit as st
 
 from config import (COLORES, LABELS, UNIDADES, BG_TRANSP, C_GRID, SERIE,
-                    AES_VIOLETA, AES_AZUL, AES_VERDE, AES_ROJO, CMG_A_DEMANDA)
-from utils.data import load_cmg_prog, load_cmg_real, load_pronostico_demanda
+                    AES_VIOLETA, AES_AZUL, AES_VERDE, AES_ROJO, CMG_A_DEMANDA,
+                    NOMBRES_BARRA_CMG)
+from utils.data import (load_cmg_prog, load_cmg_real, load_pronostico_demanda,
+                        load_mix_diario)
 
 INK       = "#0F172A"
 INK_MUTED = "#64748B"
@@ -78,6 +80,13 @@ def render_costo(df_r, df_c, s=None, e=None, nodo_cmg="CRUCERO_______220", df_p=
         _cascada_ingreso(ingreso_unit)
     with c6:
         _error_pronostico(df_c, df_cp)
+
+    # ── Fila 4 · Precio en barra de central + contexto térmico del SEN ──────
+    c7, c8 = st.columns(2)
+    with c7:
+        _cmg_barras_central(s, e)
+    with c8:
+        _mix_termico(s, e)
 
 
 # ─────────────────────────────────────────────────────────────────────────────
@@ -301,6 +310,105 @@ def _cascada_ingreso(ingreso_unit):
     _show(fig)
     st.caption("Cómo se construye el ingreso total del complejo sumando la contribución "
                "de cada unidad.")
+
+
+# ─────────────────────────────────────────────────────────────────────────────
+# Fila 4 — barras de central + contexto térmico (integrado 2026-07-08)
+# ─────────────────────────────────────────────────────────────────────────────
+# Barras del CMG programado a comparar: las de las propias centrales vs el nodo
+# regional Crucero. Colores: entidades distintas → categórico fijo (no rampa).
+_BARRAS_CENTRAL = {
+    "ANGAMOS_______220": AES_AZUL,
+    "COCHRANE______220": "#1FB6E5",
+    "CRUCERO_______220": AES_VIOLETA,
+}
+
+
+def _cmg_barras_central(s, e):
+    """CMG programado (PID) en la barra de cada central vs el nodo regional
+    Crucero. La diferencia es el spread de localización: cuánto más (o menos)
+    vale la energía en el punto de conexión de Angamos/Cochrane."""
+    if not (s and e):
+        return
+    series = {b: load_cmg_prog(s, e, b) for b in _BARRAS_CENTRAL}
+    con_datos = {b: d for b, d in series.items() if d is not None and not d.empty}
+    if "ANGAMOS_______220" not in con_datos and "COCHRANE______220" not in con_datos:
+        st.caption("CMG en barra de central: aún sin datos de Angamos/Cochrane "
+                   "(la adquisición los incorpora automáticamente).")
+        return
+    fig = go.Figure()
+    for barra, color in _BARRAS_CENTRAL.items():
+        d = con_datos.get(barra)
+        if d is None:
+            continue
+        nombre = NOMBRES_BARRA_CMG.get(barra, barra)
+        fig.add_trace(go.Scatter(
+            x=d["fecha_hora"], y=d["cmg_usd_mwh"], mode="lines", name=nombre,
+            line=dict(color=color, width=2 if barra != "CRUCERO_______220" else 1.4,
+                      dash="solid" if barra != "CRUCERO_______220" else "dot"),
+            hovertemplate=f"<b>{nombre}</b> %{{x|%d/%m %H:%M}}<br>"
+                          "%{y:.1f} USD/MWh<extra></extra>"))
+    _layout(fig, "CMG programado en barra de central vs nodo Crucero (USD/MWh)",
+            "USD/MWh",
+            legend=dict(orientation="h", yanchor="bottom", y=1.02, x=0, font=dict(size=10)),
+            hovermode="x unified")
+    fig.update_xaxes(tickformat="%d/%m\n%H:%M", tickfont=dict(color=INK_AXIS, size=10))
+    _show(fig)
+    # Spread medio de localización respecto de Crucero.
+    spreads = []
+    cru = con_datos.get("CRUCERO_______220")
+    if cru is not None:
+        for barra in ("ANGAMOS_______220", "COCHRANE______220"):
+            d = con_datos.get(barra)
+            if d is None:
+                continue
+            m = _cruce(d, cru)
+            if not m.empty:
+                spreads.append(f"{NOMBRES_BARRA_CMG[barra]} {(m['a'] - m['b']).mean():+.1f}")
+    extra = f" Spread medio vs Crucero: {' · '.join(spreads)} USD/MWh." if spreads else ""
+    st.caption("El precio en el punto de conexión de cada central es el que valoriza "
+               f"su energía; Crucero es la referencia regional del CMG online.{extra}")
+
+
+def _mix_termico(s, e):
+    """Participación térmica del SEN por día (mix de generación). Contexto del
+    precio: cuando el sistema depende más de las térmicas, el CMG sube."""
+    if not (s and e):
+        return
+    df = load_mix_diario(s, e)
+    if df is None or df.empty:
+        st.caption("Peso térmico del SEN: aún sin datos de mix diario "
+                   "(la adquisición los incorpora automáticamente).")
+        return
+    piv = df.pivot_table(index="fecha", columns="tecnologia", values="energia_mwh",
+                         aggfunc="sum")
+    col_ter = next((c for c in piv.columns if "TÉRMICA" in str(c).upper()
+                    or "TERMICA" in str(c).upper()), None)
+    col_tot = next((c for c in piv.columns if "TOTAL GENERACI" in str(c).upper()), None)
+    if col_ter is None or col_tot is None:
+        st.caption("Peso térmico del SEN: mix diario sin columnas esperadas.")
+        return
+    share = (piv[col_ter] / piv[col_tot].replace(0, np.nan) * 100).dropna()
+    if share.empty:
+        st.caption("Peso térmico del SEN: sin días con mix completo en el período.")
+        return
+    etiquetas = [pd.to_datetime(f).strftime("%d/%m") for f in share.index]
+    fig = go.Figure(go.Bar(
+        x=etiquetas, y=share.values, marker_color=AES_VIOLETA, opacity=0.85,
+        text=[f"{v:.0f}%" for v in share.values], textposition="outside",
+        textfont=dict(size=9, color=INK_MUTED),
+        hovertemplate="%{x}<br>Térmicas: %{y:.1f}% del SEN<extra></extra>"))
+    fig.add_hline(y=float(share.mean()), line_color="#CBD5E1", line_width=1.2,
+                  line_dash="dot", annotation_text=f"Prom {share.mean():.0f}%",
+                  annotation_position="right",
+                  annotation_font=dict(color=INK_MUTED, size=10))
+    _layout(fig, "Peso térmico del SEN por día (% de la generación total)", "%",
+            bargap=0.3, showlegend=False)
+    fig.update_yaxes(range=[0, min(100, share.max() * 1.25)])
+    _show(fig)
+    st.caption("A mayor participación térmica (menos sol/viento/agua), unidades más "
+               "caras fijan el precio → CMG alto. Es el telón de fondo del precio "
+               "que capturan Angamos y Cochrane.")
 
 
 def _error_pronostico(df_c, df_cp):

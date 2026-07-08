@@ -3,8 +3,8 @@ import streamlit as st
 import pandas as pd
 import plotly.graph_objects as go
 
-from config import COLORES_SSCC, BADGE_SSCC, LABELS, UNIDADES
-from utils.data import load_sscc
+from config import COLORES_SSCC, BADGE_SSCC, COLORES, LABELS, UNIDADES
+from utils.data import load_sscc, load_desempeno_sscc
 from components._common import render_guia, tabla_guia, render_cards_unidad
 
 _FILAS_GUIA = [
@@ -29,6 +29,15 @@ def render_sscc(s, e):
     st.markdown('<div class="sec">Servicios complementarios (SSCC)</div>', unsafe_allow_html=True)
     render_guia("Guía de instrucciones SSCC — CSF, CPF, CT, CTF", _CUERPO_GUIA)
 
+    sub = st.radio("Sección", ["Por unidad", "Estadísticas", "Tabla completa", "Desempeño (CPF/CSF)"],
+                   horizontal=True, label_visibility="collapsed", key="sscc_sub")
+
+    # El desempeño usa su propia ventana (el CEN lo publica con rezago 2-3 meses),
+    # no el período del sidebar.
+    if sub == "Desempeño (CPF/CSF)":
+        _desempeno()
+        return
+
     df = load_sscc(s, e)
     if df.empty:
         st.info("Sin datos SSCC para el período seleccionado. Los datos se adquieren automáticamente cada hora.")
@@ -42,8 +51,6 @@ def render_sscc(s, e):
     k4.metric("Días con datos", dias)
     st.markdown("")
 
-    sub = st.radio("Sección", ["Por unidad", "Estadísticas", "Tabla completa"], horizontal=True,
-                   label_visibility="collapsed", key="sscc_sub")
     if sub == "Por unidad":
         _por_unidad(df)
     elif sub == "Estadísticas":
@@ -133,6 +140,122 @@ def _estadisticas(df, dias):
         c4.plotly_chart(fig_evol, use_container_width=True, config={"displayModeBar": False})
     else:
         st.plotly_chart(fig_dur, use_container_width=True, config={"displayModeBar": False})
+
+
+def _desempeno():
+    """Indicadores oficiales de desempeño SSCC (CPF/CSF) por unidad — la nota que
+    el Coordinador le pone a cada unidad por la prestación del servicio, y que
+    determina los factores de su remuneración. Fuente: /indicador-desempeno-{cpf,csf}/v4
+    (integrado 2026-07-08). Publica con rezago de 2-3 meses y por bloques."""
+    from config import BG_TRANSP as BG, C_GRID as GR
+
+    df = load_desempeno_sscc()
+    if df.empty:
+        st.info("Aún no hay indicadores de desempeño publicados en la ventana de "
+                "180 días. El CEN los libera con rezago de 2-3 meses; la adquisición "
+                "diaria los incorpora automáticamente cuando aparecen.")
+        return
+
+    ult = df["fecha_hora"].max()
+    st.caption(f"Indicadores oficiales del Coordinador (determinan la remuneración SSCC). "
+               f"Publicación con rezago de 2-3 meses — último dato disponible: "
+               f"{ult.strftime('%d-%m-%Y')}.")
+
+    tipo = st.radio("Servicio", ["CPF", "CSF"], horizontal=True, key="sscc_desemp_tipo",
+                    help="CPF = control primario de frecuencia · CSF = control secundario")
+    d = df[df["tipo"] == tipo].copy()
+    if d.empty:
+        st.info(f"Sin registros {tipo} publicados todavía.")
+        return
+
+    # Solo horas donde la unidad estuvo comprometida (fdis > 0): el resto no califica.
+    d["fdis"] = pd.to_numeric(d["fdis"], errors="coerce")
+    d["factor"] = pd.to_numeric(d["factor"], errors="coerce")
+    activas = d[d["fdis"] > 0]
+
+    k1, k2, k3, k4 = st.columns(4)
+    k1.metric("Horas evaluadas", f"{len(d):,}".replace(",", "."))
+    k2.metric("Horas comprometidas", f"{len(activas):,}".replace(",", "."),
+              f"{len(activas)/len(d)*100:.0f}% del total")
+    factor_medio = activas["factor"].mean() if len(activas) else float("nan")
+    k3.metric(f"Factor desempeño {tipo}",
+              "—" if pd.isna(factor_medio) else f"{factor_medio:.2f}",
+              "promedio en horas comprometidas")
+    peor_u = "—"
+    if len(activas):
+        por_u = activas.groupby("unidad")["factor"].mean()
+        peor_u = f"{LABELS.get(por_u.idxmin(), por_u.idxmin())} · {por_u.min():.2f}"
+    k4.metric("Menor factor", peor_u)
+    st.markdown("<div style='height:8px'></div>", unsafe_allow_html=True)
+
+    # ── Serie diaria del factor por unidad (solo horas comprometidas) ─────────
+    base = activas if len(activas) else d
+    base = base.assign(dia=base["fecha_hora"].dt.date)
+    diario = base.groupby(["unidad", "dia"])["factor"].mean().reset_index()
+    fig = go.Figure()
+    for u in UNIDADES:
+        s_u = diario[diario["unidad"] == u]
+        if s_u.empty:
+            continue
+        fig.add_trace(go.Scatter(
+            x=s_u["dia"], y=s_u["factor"], name=LABELS[u], mode="lines+markers",
+            line=dict(color=COLORES[u]["line"], width=2), marker=dict(size=5),
+            connectgaps=False,
+            hovertemplate=f"<b>{LABELS[u]}</b><br>%{{x}}<br>Factor %{{y:.2f}}<extra></extra>"))
+    fig.update_layout(
+        title=dict(text=f"Factor de desempeño {tipo} diario por unidad (1.0 = prestación perfecta)",
+                   font=dict(size=13, color="#0F172A"), x=0),
+        height=340, margin=dict(l=10, r=14, t=52, b=10),
+        plot_bgcolor=BG, paper_bgcolor=BG, font=dict(family="Inter, sans-serif"),
+        xaxis=dict(showgrid=False, tickfont=dict(color="#94A3B8", size=10), tickformat="%d/%m"),
+        yaxis=dict(gridcolor=GR, tickfont=dict(color="#94A3B8", size=10),
+                   title="Factor", title_font=dict(color="#94A3B8", size=10),
+                   range=[-0.05, 1.1]),
+        legend=dict(orientation="h", yanchor="bottom", y=1.02, x=0, font=dict(size=10)),
+        hovermode="x unified")
+    st.plotly_chart(fig, use_container_width=True, config={"displayModeBar": False},
+                    key=f"sscc_desemp_{tipo}")
+    st.caption("Promedio diario del factor en las horas con compromiso vigente (fdis > 0). "
+               "Un factor < 1 reduce la remuneración del servicio; huecos = días sin "
+               "compromiso o aún no publicados.")
+
+    # ── Participación y nota media por unidad ─────────────────────────────────
+    c1, c2 = st.columns(2)
+    resumen = d.groupby("unidad").agg(horas=("factor", "size")).reindex(UNIDADES)
+    part = (d[d["fdis"] > 0].groupby("unidad")["factor"].size()
+            .reindex(UNIDADES).fillna(0) / resumen["horas"].replace(0, pd.NA) * 100)
+    with c1:
+        f1 = go.Figure(go.Bar(
+            x=[LABELS[u] for u in UNIDADES], y=part.values,
+            marker_color=[COLORES[u]["line"] for u in UNIDADES],
+            text=[f"{v:.0f}%" if pd.notna(v) else "—" for v in part.values],
+            textposition="outside",
+            hovertemplate="%{x}<br>%{y:.1f}% de horas comprometidas<extra></extra>"))
+        f1.update_layout(title=dict(text=f"Participación {tipo} · % de horas comprometidas",
+                                    font=dict(size=13, color="#0F172A"), x=0),
+            height=290, margin=dict(l=10, r=10, t=50, b=10), plot_bgcolor=BG, paper_bgcolor=BG,
+            xaxis=dict(tickfont=dict(color="#475569", size=11), showgrid=False),
+            yaxis=dict(gridcolor=GR, tickfont=dict(color="#94A3B8", size=10), title="%"),
+            showlegend=False)
+        st.plotly_chart(f1, use_container_width=True, config={"displayModeBar": False},
+                        key=f"sscc_desemp_part_{tipo}")
+    with c2:
+        nota = activas.groupby("unidad")["factor"].mean().reindex(UNIDADES)
+        f2 = go.Figure(go.Bar(
+            x=[LABELS[u] for u in UNIDADES], y=nota.values,
+            marker_color=[COLORES[u]["line"] for u in UNIDADES],
+            text=[f"{v:.2f}" if pd.notna(v) else "—" for v in nota.values],
+            textposition="outside",
+            hovertemplate="%{x}<br>Factor medio %{y:.2f}<extra></extra>"))
+        f2.update_layout(title=dict(text=f"Factor medio {tipo} por unidad (horas comprometidas)",
+                                    font=dict(size=13, color="#0F172A"), x=0),
+            height=290, margin=dict(l=10, r=10, t=50, b=10), plot_bgcolor=BG, paper_bgcolor=BG,
+            xaxis=dict(tickfont=dict(color="#475569", size=11), showgrid=False),
+            yaxis=dict(gridcolor=GR, tickfont=dict(color="#94A3B8", size=10),
+                       title="Factor", range=[0, 1.15]),
+            showlegend=False)
+        st.plotly_chart(f2, use_container_width=True, config={"displayModeBar": False},
+                        key=f"sscc_desemp_nota_{tipo}")
 
 
 def _tabla(df):

@@ -70,11 +70,16 @@ CMG_NODOS = {
     "TARAPACA______220": "tarapaca",
 }
 
-# CMG programado PID: llave_cmg de la API → nombre de barra usado en el dashboard
-# (el mismo que el CMG real del S3, para poder cruzarlos).
+# CMG programado PCP/PID: llave_cmg de la API → nombre de barra usado en el dashboard
+# (Crucero/Tarapacá cruzan con el CMG online del S3). Desde 2026-07-08 se agregan
+# las barras de las PROPIAS centrales: Angamos220/Cochrane220 existen en el catálogo
+# de llaves del PCP y del PID (verificado en vivo, 257 llaves) y en el CMG real vía
+# bar_transf. El S3 online NO las trae (solo 8 barras) → el online sigue en Crucero.
 CMG_PROG_BARRAS = {
     "Crucero220":  "CRUCERO_______220",
     "Tarapaca220": "TARAPACA______220",
+    "Angamos220":  "ANGAMOS_______220",
+    "Cochrane220": "COCHRANE______220",
 }
 
 # Pronóstico de demanda corto plazo: barras relevantes para CTM Mejillones.
@@ -585,22 +590,26 @@ def upsert_cmg(registros: list[dict]) -> tuple[int, int]:
     return nuevos, actualizados
 
 
-def fetch_cmg_programado(start: str, end: str) -> list[dict]:
+def fetch_cmg_programado(start: str, end: str, fuente: str = "CEN_PID") -> list[dict]:
     """
-    Trae el CMG programado (PID) de las barras Crucero/Tarapacá desde la API CEN SIP.
+    Trae el CMG programado (PID o PCP) de las barras de CMG_PROG_BARRAS
+    (Crucero/Tarapacá + Angamos/Cochrane, las barras de las propias centrales).
 
-    Endpoint: /cmg-programado-pid/v4/findByDate
-    No filtra por barra en el servidor → se pagina todo y se filtra localmente
+    Endpoints: /cmg-programado-pid/v4/findByDate (fuente='CEN_PID') o
+    /cmg-programado-pcp/v4/findByDate (fuente='CEN_PCP'). Ambos son 1-indexados
+    (page=0 devuelve 502, verificado 2026-07-08 también para el PCP).
+    No filtran por barra en el servidor → se pagina todo y se filtra localmente
     por llave_cmg ∈ CMG_PROG_BARRAS. Se conserva el programa más reciente
     (mayor fecha_programa) para cada (barra, fecha_hora).
     """
+    endpoint = "cmg-programado-pcp" if fuente == "CEN_PCP" else "cmg-programado-pid"
     mejor: dict[tuple, dict] = {}   # (barra, fecha_hora) → registro
-    page  = 1   # este endpoint es 1-indexado (page=0 devuelve 502)
+    page  = 1   # 1-indexado (page=0 devuelve 502)
     limit = 2000
     try:
         while True:
             r = _get_with_retry(
-                f"{API_BASE_SIP}/cmg-programado-pid/v4/findByDate",
+                f"{API_BASE_SIP}/{endpoint}/v4/findByDate",
                 params={"user_key": CEN_USER_KEY, "startDate": start,
                         "endDate": end, "page": page, "limit": limit},
             )
@@ -626,6 +635,7 @@ def fetch_cmg_programado(start: str, end: str) -> list[dict]:
                         "fecha_hora":     fh,
                         "cmg_usd_mwh":    float(rec.get("cmg_usd_mwh") or 0.0),
                         "fecha_programa": fprog,
+                        "fuente":         fuente,
                     }
 
             total_pages = body.get("totalPages")
@@ -633,9 +643,10 @@ def fetch_cmg_programado(start: str, end: str) -> list[dict]:
                 break
             page += 1
 
-        log.info(f"  CMG programado ({start}→{end}): {len(mejor)} registros Crucero/Tarapacá")
+        log.info(f"  CMG programado {fuente} ({start}→{end}): {len(mejor)} registros "
+                 f"({len(CMG_PROG_BARRAS)} barras)")
     except Exception as e:
-        log.error(f"  Error CMG programado: {e}")
+        log.error(f"  Error CMG programado {fuente}: {e}")
     return list(mejor.values())
 
 
@@ -644,10 +655,11 @@ def upsert_cmg_programado(registros: list[dict]) -> tuple[int, int]:
         return 0, 0
     sql = """
         INSERT INTO costo_marginal_programado
-            (barra, fecha_hora, cmg_usd_mwh, fecha_programa)
+            (barra, fecha_hora, cmg_usd_mwh, fecha_programa, fuente)
         VALUES
-            (%(barra)s, %(fecha_hora)s, %(cmg_usd_mwh)s, %(fecha_programa)s)
-        ON CONFLICT (barra, fecha_hora) DO UPDATE
+            (%(barra)s, %(fecha_hora)s, %(cmg_usd_mwh)s, %(fecha_programa)s,
+             %(fuente)s)
+        ON CONFLICT (barra, fecha_hora, fuente) DO UPDATE
             SET cmg_usd_mwh    = EXCLUDED.cmg_usd_mwh,
                 fecha_programa = EXCLUDED.fecha_programa
     """
@@ -667,16 +679,19 @@ def upsert_cmg_programado(registros: list[dict]) -> tuple[int, int]:
 
 def fetch_cmg_real(start: str, end: str) -> list[dict]:
     """
-    Trae el CMG real oficial liquidado de las barras Crucero/Tarapacá.
+    Trae el CMG real oficial liquidado de las barras de CMG_PROG_BARRAS
+    (Crucero/Tarapacá + Angamos/Cochrane — el filtro bar_transf acepta las barras
+    de las propias centrales: ANGAMOS_______220 / COCHRANE______220, verificado
+    2026-07-08).
 
     Endpoint: /costo-marginal-real/v4/findByDate (SIP, 1-indexado).
-    SÍ filtra por barra en el servidor con `bar_transf` (baja de ~7810 a ~5 págs).
+    SÍ filtra por barra en el servidor con `bar_transf` (baja de ~12.500 a ~5 págs).
     OJO: el CMG real se liquida con rezago (~10 días); fechas recientes devuelven 0.
     Se conservan solo los valores en hora en punto (min == 0) para cruzar con CMG
     online/programado, que son horarios.
     """
     registros = []
-    for barra in CMG_PROG_BARRAS.values():   # CRUCERO_______220 / TARAPACA______220
+    for barra in CMG_PROG_BARRAS.values():
         page  = 1   # 1-indexado
         # OJO: este endpoint devuelve VACÍO si limit supera los registros de la
         # página (~96/día a resolución 15-min). limit alto (≥100) → 0 registros.
@@ -1238,6 +1253,355 @@ def upsert_solicitudes(registros: list[dict]) -> tuple[int, int]:
     except Exception as e:
         log.error(f"  Error upsert solicitudes: {e}")
     return nuevos, actualizados
+
+
+# Relevancia CTM para mantenimientos mayores: instalaciones del complejo o de su
+# corredor de evacuación (la S/E O'Higgins y la línea Mejillones–O'Higgins afectan
+# la evacuación de CTM; mismo criterio de claves que las solicitudes de trabajo).
+CLAVES_MANT_CTM = ("ANGAMOS", "COCHRANE", "MEJILLONES", "O'HIGGINS",
+                   "LABERINTO", "KAPATUR", "CRUCERO")
+
+
+def fetch_mantenimiento_mayor(start: str, end: str) -> list[dict]:
+    """
+    Programas de mantenimiento mayor relevantes para CTM.
+
+    Endpoint: /programas-mantenimiento-mayor/v4/findByDate (SIP, 1-indexado,
+    liviano: ~108 filas/30 días con totalPages=1). El rango de fechas filtra por
+    la fecha de PUBLICACIÓN (campo `date`), no por las fechas del programa → una
+    ventana de ~45 días captura también mantenimientos futuros ya publicados.
+    Sin id_central en la respuesta → filtro local por texto (CLAVES_MANT_CTM).
+    """
+    if not CEN_USER_KEY:
+        log.warning("  CEN_USER_KEY no configurada — saltando mantenimiento mayor")
+        return []
+    registros, page = [], 1
+    try:
+        while True:
+            r = _get_with_retry(
+                f"{API_BASE_SIP}/programas-mantenimiento-mayor/v4/findByDate",
+                params={"user_key": CEN_USER_KEY, "startDate": start,
+                        "endDate": end, "page": page, "limit": 500},
+            )
+            body = r.json()
+            data = body.get("data", [])
+            if not data:
+                break
+            for rec in data:
+                texto = " ".join(str(rec.get(c) or "") for c in
+                                 ("nombre_instalacion", "nombre_sub_instalacion",
+                                  "elemento_instalacion")).upper()
+                if not any(k in texto for k in CLAVES_MANT_CTM):
+                    continue
+                corr = rec.get("correlativo")
+                registros.append({
+                    "correlativo":            str(int(float(corr))) if corr not in (None, "") else "",
+                    "mantenimiento_nup":      str(rec.get("mantenimiento_nup") or ""),
+                    "nombre_instalacion":     rec.get("nombre_instalacion"),
+                    "nombre_sub_instalacion": str(rec.get("nombre_sub_instalacion") or ""),
+                    "tipo_instalacion":       rec.get("tipo_instalacion"),
+                    "elemento_instalacion":   rec.get("elemento_instalacion"),
+                    "descripcion_trabajo":    rec.get("descripcion_trabajo"),
+                    "estado":                 rec.get("estado"),
+                    "riesgo":                 rec.get("riesgo"),
+                    "postergable":            rec.get("postergable"),
+                    "consumos_afectados":     rec.get("consumos_afectados"),
+                    "fecha_inicio_programa":  str(rec.get("fecha_inicio_programa") or ""),
+                    "fecha_fin_programa":     rec.get("fecha_fin_programa"),
+                    "fecha_inicio_real":      rec.get("fecha_inicio_real_programa"),
+                    "fecha_termino_real":     rec.get("fecha_termino_real_programa"),
+                    "fecha_dato":             rec.get("date"),
+                })
+            total_pages = body.get("totalPages")
+            if total_pages is None or page >= int(total_pages):
+                break
+            page += 1
+            time.sleep(0.15)
+        log.info(f"  Mantenimiento mayor ({start}→{end}): {len(registros)} programas CTM")
+    except Exception as e:
+        log.error(f"  Error mantenimiento mayor: {e}")
+    return registros
+
+
+def upsert_mantenimiento_mayor(registros: list[dict]) -> tuple[int, int]:
+    if not registros:
+        return 0, 0
+    sql = """
+        INSERT INTO mantenimiento_mayor
+            (correlativo, mantenimiento_nup, nombre_instalacion, nombre_sub_instalacion,
+             tipo_instalacion, elemento_instalacion, descripcion_trabajo, estado, riesgo,
+             postergable, consumos_afectados, fecha_inicio_programa, fecha_fin_programa,
+             fecha_inicio_real, fecha_termino_real, fecha_dato)
+        VALUES
+            (%(correlativo)s, %(mantenimiento_nup)s, %(nombre_instalacion)s,
+             %(nombre_sub_instalacion)s, %(tipo_instalacion)s, %(elemento_instalacion)s,
+             %(descripcion_trabajo)s, %(estado)s, %(riesgo)s, %(postergable)s,
+             %(consumos_afectados)s, %(fecha_inicio_programa)s, %(fecha_fin_programa)s,
+             %(fecha_inicio_real)s, %(fecha_termino_real)s, %(fecha_dato)s)
+        ON CONFLICT (correlativo, nombre_sub_instalacion, fecha_inicio_programa)
+        DO UPDATE SET
+            estado              = EXCLUDED.estado,
+            riesgo              = EXCLUDED.riesgo,
+            descripcion_trabajo = EXCLUDED.descripcion_trabajo,
+            fecha_fin_programa  = EXCLUDED.fecha_fin_programa,
+            fecha_inicio_real   = EXCLUDED.fecha_inicio_real,
+            fecha_termino_real  = EXCLUDED.fecha_termino_real,
+            fecha_dato          = EXCLUDED.fecha_dato
+    """
+    nuevos = actualizados = 0
+    try:
+        with get_conn() as conn:
+            with conn.cursor() as cur:
+                for rec in registros:
+                    cur.execute(sql, rec)
+                    if cur.rowcount == 1: nuevos      += 1
+                    else:                actualizados += 1
+            conn.commit()
+    except Exception as e:
+        log.error(f"  Error upsert mantenimiento mayor: {e}")
+    return nuevos, actualizados
+
+
+def fetch_demanda_neta(start: str, end: str) -> list[dict]:
+    """
+    Demanda neta horaria del SEN (gen. bruta, ERV, consumos propios, demanda neta).
+
+    Endpoint: /demanda-neta/v4/findByDate (SIP, 1-indexado, liviano: ~24 filas/día
+    en 1 página). Publica con rezago de ~1 día. Es el driver principal del CMG →
+    se usa como feature del forecast de precios en ml.py.
+    """
+    registros, page = [], 1
+    try:
+        while True:
+            r = _get_with_retry(
+                f"{API_BASE_SIP}/demanda-neta/v4/findByDate",
+                params={"user_key": CEN_USER_KEY, "startDate": start,
+                        "endDate": end, "page": page, "limit": 1000},
+            )
+            body = r.json()
+            data = body.get("data", [])
+            if not data:
+                break
+            for rec in data:
+                fh = (rec.get("fecha_hora") or "").replace("T", " ")[:19]
+                if not fh:
+                    continue
+                registros.append({
+                    "fecha_hora":       fh,
+                    "hora":             int(rec.get("hora") or 0),
+                    "gen_bruta_mwh":    rec.get("gen_bruta_mwh"),
+                    "gen_erv_mwh":      rec.get("gen_erv_mwh"),
+                    "cons_propio_mwh":  rec.get("cons_propio_mwh"),
+                    "demanda_neta_mwh": rec.get("demanda_neta_mwh"),
+                })
+            total_pages = body.get("totalPages")
+            if total_pages is None or page >= int(total_pages):
+                break
+            page += 1
+            time.sleep(0.15)
+        log.info(f"  Demanda neta ({start}→{end}): {len(registros)} registros")
+    except Exception as e:
+        log.error(f"  Error demanda neta: {e}")
+    return registros
+
+
+def upsert_demanda_neta(registros: list[dict]) -> tuple[int, int]:
+    if not registros:
+        return 0, 0
+    sql = """
+        INSERT INTO demanda_neta
+            (fecha_hora, hora, gen_bruta_mwh, gen_erv_mwh, cons_propio_mwh,
+             demanda_neta_mwh)
+        VALUES
+            (%(fecha_hora)s, %(hora)s, %(gen_bruta_mwh)s, %(gen_erv_mwh)s,
+             %(cons_propio_mwh)s, %(demanda_neta_mwh)s)
+        ON CONFLICT (fecha_hora) DO UPDATE SET
+            gen_bruta_mwh    = EXCLUDED.gen_bruta_mwh,
+            gen_erv_mwh      = EXCLUDED.gen_erv_mwh,
+            cons_propio_mwh  = EXCLUDED.cons_propio_mwh,
+            demanda_neta_mwh = EXCLUDED.demanda_neta_mwh
+    """
+    nuevos = actualizados = 0
+    try:
+        with get_conn() as conn:
+            with conn.cursor() as cur:
+                for rec in registros:
+                    cur.execute(sql, rec)
+                    if cur.rowcount == 1: nuevos      += 1
+                    else:                actualizados += 1
+            conn.commit()
+    except Exception as e:
+        log.error(f"  Error upsert demanda neta: {e}")
+    return nuevos, actualizados
+
+
+def fetch_mix_diario(fecha: str) -> list[dict]:
+    """
+    Mix de generación diaria del SEN por tecnología (térmica, solar, eólica…).
+
+    Endpoint: /generacion-real/v3/getDailySum?date= (SIP, una llamada por día,
+    devuelve ~7 pares key/value con los totales en MWh). Contexto del peso
+    térmico del sistema para la vista Costos.
+    """
+    try:
+        r = _get_with_retry(
+            f"{API_BASE_SIP}/generacion-real/v3/getDailySum",
+            params={"user_key": CEN_USER_KEY, "date": fecha},
+        )
+        data = r.json().get("data", [])
+        registros = [{"fecha": fecha, "tecnologia": rec.get("key"),
+                      "energia_mwh": rec.get("value")}
+                     for rec in data if rec.get("key")]
+        log.info(f"  Mix diario ({fecha}): {len(registros)} tecnologías")
+        return registros
+    except Exception as e:
+        log.error(f"  Error mix diario {fecha}: {e}")
+        return []
+
+
+def upsert_mix_diario(registros: list[dict]) -> tuple[int, int]:
+    if not registros:
+        return 0, 0
+    sql = """
+        INSERT INTO mix_generacion_diaria (fecha, tecnologia, energia_mwh)
+        VALUES (%(fecha)s, %(tecnologia)s, %(energia_mwh)s)
+        ON CONFLICT (fecha, tecnologia) DO UPDATE SET
+            energia_mwh = EXCLUDED.energia_mwh
+    """
+    nuevos = actualizados = 0
+    try:
+        with get_conn() as conn:
+            with conn.cursor() as cur:
+                for rec in registros:
+                    cur.execute(sql, rec)
+                    if cur.rowcount == 1: nuevos      += 1
+                    else:                actualizados += 1
+            conn.commit()
+    except Exception as e:
+        log.error(f"  Error upsert mix diario: {e}")
+    return nuevos, actualizados
+
+
+def fetch_desempeno_sscc(fecha: str) -> list[dict]:
+    """
+    Indicadores de desempeño SSCC (CPF y CSF) por unidad para UN día.
+
+    Endpoints: /indicador-desempeno-cpf/v4/findByDate y -csf/v4 (SIP, 1-indexados,
+    ~3 págs/día con limit=1000). Horarios por unidad; los factores determinan la
+    remuneración SSCC. Se filtra por id_unidad ∈ ID_UNIDAD_MAP (1965-1968) — NO por
+    texto: 'ANG' también calza con Angostura. `hora` viene 0-23 (string).
+    ⚠️ El CEN publica estos indicadores con rezago de 2-3 MESES y con huecos
+    (verificado 2026-07-08: ene/mar/abr con datos; feb/may/jun aún vacíos).
+    """
+    registros = []
+    for tipo, ep in (("CPF", "indicador-desempeno-cpf"),
+                     ("CSF", "indicador-desempeno-csf")):
+        page = 1
+        try:
+            while True:
+                r = _get_with_retry(
+                    f"{API_BASE_SIP}/{ep}/v4/findByDate",
+                    params={"user_key": CEN_USER_KEY, "startDate": fecha,
+                            "endDate": fecha, "page": page, "limit": 1000},
+                )
+                body = r.json()
+                data = body.get("data", [])
+                if not data:
+                    break
+                for rec in data:
+                    unidad = ID_UNIDAD_MAP.get(rec.get("id_unidad"))
+                    if unidad is None:
+                        continue
+                    try:
+                        h = int(rec.get("hora") or 0)
+                    except (TypeError, ValueError):
+                        h = 0
+                    sufijo = tipo.lower()
+                    detalle = (rec.get("fact_csf") if tipo == "CSF"
+                               else rec.get("equipo_registrador_validado"))
+                    registros.append({
+                        "unidad":     unidad,
+                        "tipo":       tipo,
+                        "fecha_hora": f"{str(rec.get('fecha'))[:10]} {h:02d}:00:00",
+                        "hora":       h + 1,   # convención CEN 1-24
+                        "fdis":       rec.get(f"fdis_{sufijo}"),
+                        "desempeno":  rec.get(f"desempeno_{sufijo}"),
+                        "factor":     rec.get(f"factor_desempeno_{sufijo}"),
+                        "detalle":    str(detalle) if detalle is not None else None,
+                    })
+                total_pages = body.get("totalPages")
+                if total_pages is None or page >= int(total_pages):
+                    break
+                page += 1
+                time.sleep(0.15)
+        except Exception as e:
+            log.error(f"  Error desempeño {tipo} {fecha}: {e}")
+        time.sleep(0.3)
+    if registros:
+        log.info(f"  Desempeño SSCC ({fecha}): {len(registros)} registros ANG/CCR")
+    return registros
+
+
+def upsert_desempeno_sscc(registros: list[dict]) -> tuple[int, int]:
+    if not registros:
+        return 0, 0
+    sql = """
+        INSERT INTO desempeno_sscc
+            (unidad, tipo, fecha_hora, hora, fdis, desempeno, factor, detalle)
+        VALUES
+            (%(unidad)s, %(tipo)s, %(fecha_hora)s, %(hora)s, %(fdis)s,
+             %(desempeno)s, %(factor)s, %(detalle)s)
+        ON CONFLICT (unidad, tipo, fecha_hora) DO UPDATE SET
+            fdis      = EXCLUDED.fdis,
+            desempeno = EXCLUDED.desempeno,
+            factor    = EXCLUDED.factor,
+            detalle   = EXCLUDED.detalle
+    """
+    nuevos = actualizados = 0
+    try:
+        with get_conn() as conn:
+            with conn.cursor() as cur:
+                for rec in registros:
+                    cur.execute(sql, rec)
+                    if cur.rowcount == 1: nuevos      += 1
+                    else:                actualizados += 1
+            conn.commit()
+    except Exception as e:
+        log.error(f"  Error upsert desempeño SSCC: {e}")
+    return nuevos, actualizados
+
+
+def dias_faltantes_desempeno(dias_atras: int = 150, margen: int = 20,
+                             cap: int = 120) -> list[str]:
+    """
+    Días SIN registros en desempeno_sscc dentro de [hoy-dias_atras, hoy-margen],
+    de más reciente a más antiguo, acotados a `cap` por corrida.
+
+    Los indicadores CPF/CSF publican con rezago de 2-3 meses y por bloques: la
+    corrida diaria sondea solo los días faltantes (un día vacío cuesta 2 requests),
+    así que cuando el CEN publica un mes nuevo se incorpora solo.
+    """
+    hoy = datetime.now(TZ_CHILE).date()
+    ini = hoy - timedelta(days=dias_atras)
+    fin = hoy - timedelta(days=margen)
+    presentes: set[str] = set()
+    try:
+        with get_conn() as conn:
+            with conn.cursor() as cur:
+                cur.execute(
+                    "SELECT DISTINCT substring(fecha_hora, 1, 10) FROM desempeno_sscc "
+                    "WHERE fecha_hora >= %s", (ini.strftime("%Y-%m-%d"),))
+                presentes = {r[0] for r in cur.fetchall()}
+    except Exception as e:
+        log.warning(f"  No se pudo leer días presentes de desempeno_sscc: {e}")
+    faltantes = []
+    d = fin
+    while d >= ini and len(faltantes) < cap:
+        s = d.strftime("%Y-%m-%d")
+        if s not in presentes:
+            faltantes.append(s)
+        d -= timedelta(days=1)
+    return faltantes
 
 
 def _num_cl(v):

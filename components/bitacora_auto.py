@@ -15,18 +15,19 @@ from datetime import date, timedelta
 import pandas as pd
 import streamlit as st
 
-from config import COLORES, LABELS, ID_UNIDAD_LABEL
+from config import COLORES, LABELS, ID_UNIDAD_LABEL, UNIDADES
 from utils.data import (load_sscc, load_instrucciones_cmg, load_limitaciones,
-                        load_bit, load_solicitudes)
+                        load_bit, load_solicitudes, load_mantenimiento_mayor)
 
 
 # Paleta por tipo de evento (badge de la columna «Tipo»)
 _TIPO_COLOR = {
-    "SSCC":       ("#0EA5E9", "#E0F2FE"),
-    "Despacho":   ("#3D53E8", "#E2E7FD"),
-    "Limitación": ("#DC2626", "#FEE2E2"),
-    "Novedad":    ("#7C3AED", "#EDE9FE"),
-    "Solicitud":  ("#0F766E", "#CCFBF1"),
+    "SSCC":          ("#0EA5E9", "#E0F2FE"),
+    "Despacho":      ("#3D53E8", "#E2E7FD"),
+    "Limitación":    ("#DC2626", "#FEE2E2"),
+    "Novedad":       ("#7C3AED", "#EDE9FE"),
+    "Solicitud":     ("#0F766E", "#CCFBF1"),
+    "Mantenimiento": ("#D97706", "#FEF3C7"),
 }
 
 # Palabra clave de la solicitud → unidades del complejo a las que aplica.
@@ -151,6 +152,36 @@ def _eventos_solicitudes(df, eventos):
             eventos.append({"dt": dt, "unidad": u, "tipo": "Solicitud", "desc": desc})
 
 
+def _eventos_mantenimiento(df, eventos):
+    """Programas de mantenimiento mayor: si mencionan Angamos/Cochrane se asignan
+    a esa central; si afectan el corredor de evacuación (Mejillones, O'Higgins,
+    Laberinto, Kapatur, Crucero) aplican a las 4 unidades. Anclados al inicio
+    del programa."""
+    if df is None or df.empty:
+        return
+    for _, r in df.iterrows():
+        texto = " ".join(str(r.get(c) or "") for c in
+                         ("nombre_instalacion", "nombre_sub_instalacion")).upper()
+        unidades = set()
+        for clave, us in _SOLIC_UNIDADES.items():
+            if clave in texto:
+                unidades.update(us)
+        if not unidades:
+            unidades = set(UNIDADES)   # corredor de evacuación → afecta a todas
+        dt = r.get("fecha_inicio_programa_dt")
+        fin = r.get("fecha_fin_programa_dt")
+        rango = ""
+        if pd.notna(dt) and pd.notna(fin):
+            rango = f" ({dt.strftime('%d-%m')}→{fin.strftime('%d-%m')})"
+        nombre = str(r.get("nombre_instalacion") or "programa")[:60]
+        estado = str(r.get("estado") or "").strip()
+        desc = f"Mantenimiento mayor · <b>{nombre}</b>{rango}"
+        if estado:
+            desc += f" — {estado}"
+        for u in unidades:
+            eventos.append({"dt": dt, "unidad": u, "tipo": "Mantenimiento", "desc": desc})
+
+
 def _fila_html(ev):
     tc, tb = _TIPO_COLOR.get(ev["tipo"], ("#475569", "#F1F5F9"))
     fh = ev["dt"].strftime("%d-%m-%Y %H:%M") if pd.notna(ev["dt"]) else "—"
@@ -189,6 +220,7 @@ def render_bitacora_auto(s, e, unidad):
     df_l = load_limitaciones(s, e)
     df_b = load_bit(s, e, unidad)
     df_sol = load_solicitudes(s, e)
+    df_mant = load_mantenimiento_mayor()
 
     # ── Consolidación cronológica de eventos (solo la unidad activa) ────────────
     todos = []
@@ -197,6 +229,7 @@ def render_bitacora_auto(s, e, unidad):
     _eventos_limitaciones(df_l, todos)
     _eventos_bitacora(df_b, todos)
     _eventos_solicitudes(df_sol, todos)
+    _eventos_mantenimiento(df_mant, todos)
     eventos_u = [ev for ev in todos if ev["unidad"] == unidad and pd.notna(ev["dt"])]
 
     # ── Selector de día: TODOS los días del período (sin saltos), ayer por defecto ──

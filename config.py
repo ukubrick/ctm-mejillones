@@ -81,6 +81,20 @@ NOMBRES_NODO = {
     "TARAPACA______220": "Tarapacá 220kV",
 }
 
+# Barras con CMG programado (PCP/PID) y CMG real oficial — incluye las barras de
+# las PROPIAS centrales (integradas 2026-07-08). El CMG online del S3 solo trae
+# Crucero/Tarapacá; Angamos/Cochrane existen en programado y real liquidado.
+NOMBRES_BARRA_CMG = {
+    "ANGAMOS_______220": "Angamos 220kV",
+    "COCHRANE______220": "Cochrane 220kV",
+    **NOMBRES_NODO,
+}
+# Barra de la propia central por unidad (valorización al precio del punto de conexión)
+BARRA_CENTRAL = {
+    "ANG1": "ANGAMOS_______220", "ANG2": "ANGAMOS_______220",
+    "CCR1": "COCHRANE______220", "CCR2": "COCHRANE______220",
+}
+
 # Mapeo id_unidad / id_central de la API CEN
 ID_UNIDAD_LABEL  = {1965: "ANG1", 1966: "ANG2", 1967: "CCR1", 1968: "CCR2"}
 ID_CENTRAL_LABEL = {377: "Angamos", 379: "Cochrane"}

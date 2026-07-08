@@ -20,6 +20,7 @@ from components.despacho_cmg import render_despacho_cmg
 from components.novedades import render_novedades
 from components.bitacora_auto import render_bitacora_auto
 from components.solicitudes import render_solicitudes
+from components.mantenimiento import render_mantenimiento
 from components.manual import render_programada_manual, render_real_manual
 from components.datos import render_datos_horarios, render_bitacora
 from components.infotecnica import render_infotecnica
@@ -140,7 +141,8 @@ def main():
             render_ml()
 
     elif vista == "Restricciones":
-        seccion = st.radio("Sección", ["Limitaciones", "SSCC", "Despacho CMG", "Solicitudes"],
+        seccion = st.radio("Sección",
+                           ["Limitaciones", "SSCC", "Despacho CMG", "Solicitudes", "Mant. mayor"],
                            horizontal=True, label_visibility="collapsed", key="restric_sub")
         if seccion == "Limitaciones":
             render_limitaciones(s, e)
@@ -148,8 +150,10 @@ def main():
             render_sscc(s, e)
         elif seccion == "Despacho CMG":
             render_despacho_cmg(s, e)
-        else:
+        elif seccion == "Solicitudes":
             render_solicitudes(s, e)
+        else:
+            render_mantenimiento(s, e)
 
     elif vista == "Datos":
         seccion = st.radio("Sección", ["Ingreso Manual", "Datos & Bitácora", "Infotécnica"],

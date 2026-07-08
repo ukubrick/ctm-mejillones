@@ -47,6 +47,23 @@ def _load_cmg():
 
 
 @st.cache_data(ttl=3600, show_spinner=False)
+def _load_dem_neta():
+    """Demanda neta horaria del SEN (tabla demanda_neta, integrada 2026-07-08).
+    Es el driver físico del CMG → feature del forecast. Silencioso si no existe."""
+    try:
+        df = fetch(
+            "demanda_neta", "fecha_hora,demanda_neta_mwh", order="fecha_hora",
+            sql="SELECT fecha_hora, demanda_neta_mwh FROM demanda_neta ORDER BY fecha_hora",
+        )
+    except Exception:
+        return pd.DataFrame()
+    if not df.empty:
+        df["fecha_hora"] = pd.to_datetime(df["fecha_hora"])
+        df = df.dropna(subset=["demanda_neta_mwh"]).sort_values("fecha_hora")
+    return df
+
+
+@st.cache_data(ttl=3600, show_spinner=False)
 def _load_gen():
     df_real = fetch("generacion_real", "unidad,fecha_hora,gen_real_mw,potencia_maxima",
         order="fecha_hora",
@@ -152,9 +169,24 @@ def _seccion_cmg():
         # Medias móviles: nivel reciente y de un día — suavizan el arranque recursivo.
         df["ma_6h"] = df["cmg_usd_mwh"].shift(1).rolling(6).mean()
         df["ma_24h"] = df["cmg_usd_mwh"].shift(1).rolling(24).mean()
-        df = df.dropna()
-        feats = ["hora_sin", "hora_cos", "dia_semana", "mes", "ma_6h", "ma_24h"] + \
-                [f"lag_{l}h" for l in LAGS]
+        feats_base = ["hora_sin", "hora_cos", "dia_semana", "mes", "ma_6h", "ma_24h"] + \
+                     [f"lag_{l}h" for l in LAGS]
+        df = df.dropna(subset=feats_base + ["cmg_usd_mwh"])
+        feats = list(feats_base)
+
+        # Demanda neta del SEN con rezago de 24h: el driver físico del precio.
+        # Con lag 24 el valor está disponible en TODO el horizonte de forecast
+        # (para t+h se usa la demanda de t+h−24, ya observada). XGBoost tolera
+        # los NaN de las horas sin publicación (rezago ~1 día del CEN).
+        dem = _load_dem_neta()
+        dem_map = (dem.set_index("fecha_hora")["demanda_neta_mwh"]
+                   if not dem.empty else None)
+        if dem_map is not None:
+            df["dem_lag_24h"] = (df["fecha_hora"] - pd.Timedelta(hours=24)).map(dem_map)
+            if df["dem_lag_24h"].notna().mean() >= 0.3:
+                feats.append("dem_lag_24h")
+            else:
+                dem_map = None
 
         cutoff = df["fecha_hora"].max() - pd.Timedelta(days=14)
         train, test = df[df["fecha_hora"] <= cutoff], df[df["fecha_hora"] > cutoff]
@@ -185,6 +217,8 @@ def _seccion_cmg():
                "ma_6h": recent[-6:].mean(), "ma_24h": recent[-24:].mean()}
         for l in LAGS:
             row[f"lag_{l}h"] = history[-l] if l <= len(history) else np.nan
+        if "dem_lag_24h" in feats:
+            row["dem_lag_24h"] = dem_map.get(ndt - pd.Timedelta(hours=24), np.nan)
         p = float(model.predict(pd.DataFrame([row])[feats])[0])
         # La banda se ensancha con el horizonte (incertidumbre acumulada).
         w = np.sqrt(h)
@@ -226,8 +260,10 @@ def _seccion_cmg():
     _base_layout(fig, "Costo marginal — histórico y pronóstico 24h con banda de incertidumbre",
                  "CMG USD/MWh", hovermode="x unified")
     _show(fig)
+    dem_txt = (" y demanda neta del SEN (lag 24h)" if "dem_lag_24h" in feats else "")
     st.caption("La línea punteada es el pronóstico puntual; la banda ámbar cubre el rango "
-               "P10–P90 (se ensancha con el horizonte). Modelo XGBoost con lags y estacionalidad horaria.")
+               f"P10–P90 (se ensancha con el horizonte). Modelo XGBoost con lags, "
+               f"estacionalidad horaria{dem_txt}.")
 
     # ── Ingreso esperado por hora (si hay despacho) ──────────────────────────
     if dff_ing is not None:

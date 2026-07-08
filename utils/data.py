@@ -108,15 +108,19 @@ def load_cmg(s, e, nodo="CRUCERO_______220"):
 
 
 @st.cache_data(ttl=300)
-def load_cmg_prog(s, e, nodo="CRUCERO_______220"):
-    """CMG programado (PID) por barra. Silencioso si la tabla aún no existe."""
+def load_cmg_prog(s, e, nodo="CRUCERO_______220", fuente="CEN_PID"):
+    """CMG programado por barra y fuente (CEN_PID intra-día / CEN_PCP día-anterior).
+    Disponible también en las barras de las propias centrales (ANGAMOS_______220 /
+    COCHRANE______220). Silencioso si la tabla aún no existe."""
     try:
         df = fetch(
             "costo_marginal_programado", "fecha_hora,cmg_usd_mwh",
-            eq={"barra": nodo}, gte={"fecha_hora": _ini(s)}, lte={"fecha_hora": _fin(e)}, order="fecha_hora",
+            eq={"barra": nodo, "fuente": fuente},
+            gte={"fecha_hora": _ini(s)}, lte={"fecha_hora": _fin(e)}, order="fecha_hora",
             sql="SELECT fecha_hora, cmg_usd_mwh FROM costo_marginal_programado "
-                "WHERE barra=%s AND fecha_hora::date BETWEEN %s AND %s ORDER BY fecha_hora",
-            params=(nodo, s, e),
+                "WHERE barra=%s AND fuente=%s AND fecha_hora::date BETWEEN %s AND %s "
+                "ORDER BY fecha_hora",
+            params=(nodo, fuente, s, e),
         )
     except Exception:
         return pd.DataFrame()
@@ -262,6 +266,85 @@ def load_pronostico_demanda(s, e, barra="Crucero220"):
     if not df.empty:
         df["fecha_hora"] = pd.to_datetime(df["fecha_hora"])
         df = df.sort_values("fecha_hora")
+    return df
+
+
+@st.cache_data(ttl=600)
+def load_mantenimiento_mayor():
+    """Programas de mantenimiento mayor relevantes para CTM (tabla pequeña: solo
+    filas filtradas por relevancia en la adquisición). Silencioso si no existe."""
+    try:
+        df = fetch(
+            "mantenimiento_mayor", "*",
+            sql="SELECT * FROM mantenimiento_mayor ORDER BY fecha_inicio_programa DESC",
+        )
+    except Exception:
+        return pd.DataFrame()
+    if df.empty:
+        return df
+    for c in ("fecha_inicio_programa", "fecha_fin_programa",
+              "fecha_inicio_real", "fecha_termino_real"):
+        if c in df.columns:
+            df[c + "_dt"] = pd.to_datetime(df[c], errors="coerce")
+    return df.sort_values("fecha_inicio_programa_dt", ascending=False)
+
+
+@st.cache_data(ttl=3600)
+def load_desempeno_sscc(dias=210):
+    """Indicadores de desempeño SSCC (CPF/CSF) por unidad. Ventana fija hacia
+    atrás (el CEN publica con rezago 2-3 meses, así que el período del sidebar
+    normalmente no tiene datos). Silencioso si la tabla no existe."""
+    desde = (pd.Timestamp.now() - pd.Timedelta(days=dias)).strftime("%Y-%m-%d 00:00:00")
+    try:
+        df = fetch(
+            "desempeno_sscc", "unidad,tipo,fecha_hora,fdis,desempeno,factor,detalle",
+            gte={"fecha_hora": desde}, order="fecha_hora",
+            sql="SELECT unidad, tipo, fecha_hora, fdis, desempeno, factor, detalle "
+                "FROM desempeno_sscc WHERE fecha_hora >= %s ORDER BY fecha_hora",
+            params=(desde,),
+        )
+    except Exception:
+        return pd.DataFrame()
+    if not df.empty:
+        df["fecha_hora"] = pd.to_datetime(df["fecha_hora"])
+        df = df.sort_values(["unidad", "fecha_hora"])
+    return df
+
+
+@st.cache_data(ttl=3600)
+def load_demanda_neta(s, e):
+    """Demanda neta horaria del SEN (driver del CMG). Silencioso si no existe."""
+    try:
+        df = fetch(
+            "demanda_neta",
+            "fecha_hora,gen_bruta_mwh,gen_erv_mwh,cons_propio_mwh,demanda_neta_mwh",
+            gte={"fecha_hora": _ini(s)}, lte={"fecha_hora": _fin(e)}, order="fecha_hora",
+            sql="SELECT fecha_hora, gen_bruta_mwh, gen_erv_mwh, cons_propio_mwh, "
+                "demanda_neta_mwh FROM demanda_neta "
+                "WHERE fecha_hora::date BETWEEN %s AND %s ORDER BY fecha_hora",
+            params=(s, e),
+        )
+    except Exception:
+        return pd.DataFrame()
+    if not df.empty:
+        df["fecha_hora"] = pd.to_datetime(df["fecha_hora"])
+        df = df.sort_values("fecha_hora")
+    return df
+
+
+@st.cache_data(ttl=3600)
+def load_mix_diario(s, e):
+    """Mix de generación diaria del SEN por tecnología. Silencioso si no existe."""
+    try:
+        df = fetch(
+            "mix_generacion_diaria", "fecha,tecnologia,energia_mwh",
+            gte={"fecha": s}, lte={"fecha": e}, order="fecha",
+            sql="SELECT fecha, tecnologia, energia_mwh FROM mix_generacion_diaria "
+                "WHERE fecha BETWEEN %s AND %s ORDER BY fecha",
+            params=(s, e),
+        )
+    except Exception:
+        return pd.DataFrame()
     return df
 
 
