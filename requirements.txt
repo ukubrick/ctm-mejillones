@@ -1,13 +1,20 @@
-requests
-psycopg2-binary
-python-dotenv
+requests==2.32.3
+psycopg2-binary==2.9.10
+python-dotenv==1.0.1
 streamlit==1.58.0
-pandas
-plotly
-matplotlib
-reportlab
-streamlit-autorefresh
-python-pptx
-scikit-learn
-xgboost
-supabase
+streamlit-autorefresh==1.0.1
+# Stack numérica pineada: sin pin, el Cloud instala lo último (pandas 3.0 / numpy 2.5
+# / pyarrow 25) sobre Python 3.14 → las ruedas nativas SEGFAULTEAN al arrancar.
+# Ver .python-version (Python 3.12) y la regla 19 del CLAUDE.md.
+numpy==2.1.3
+pandas==2.2.3
+scipy==1.14.1
+scikit-learn==1.5.2
+xgboost==2.1.4
+pyarrow==17.0.0
+matplotlib==3.9.3
+pillow==10.4.0
+plotly==5.24.1
+reportlab==4.2.5
+python-pptx==1.0.2
+supabase==2.9.1

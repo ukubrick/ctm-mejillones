@@ -72,8 +72,13 @@ def load_prog(s, e):
 @st.cache_data(ttl=300)
 def load_prog_pid(s, e):
     """Generación programada PID (Programa Intra-Día) por unidad/hora.
-    Segunda fuente de programación: reajusta el PCP durante el día. Silencioso
-    si aún no hay registros PID en la tabla."""
+    Segunda fuente de programación: reajusta el PCP durante el día.
+
+    FALLBACK: el CEN a veces deja de emitir PID (visto desde 2026-07-08). Donde no
+    hay PID para un (unidad, fecha_hora), se rellena con el PCP de esa misma hora,
+    de modo que la línea intra-día no quede truncada. La columna `fuente` conserva
+    el origen real de cada punto ('CEN_PID' o 'CEN_PCP') por si la UI quiere marcarlo.
+    Silencioso si no hay ni PID ni PCP en el rango."""
     df = fetch(
         "generacion_programada", "unidad,gen_programada_mw,fecha_hora,hora,fuente",
         eq={"fuente": "CEN_PID"},
@@ -86,9 +91,35 @@ def load_prog_pid(s, e):
         """,
         params=(s, e),
     )
+    pcp = fetch(
+        "generacion_programada", "unidad,gen_programada_mw,fecha_hora,hora,fuente",
+        eq={"fuente": "CEN_PCP"},
+        gte={"fecha_hora": _ini(s)}, lte={"fecha_hora": _fin(e)}, order="fecha_hora",
+        sql="""
+        SELECT unidad, gen_programada_mw, fecha_hora, hora, fuente
+        FROM generacion_programada
+        WHERE fecha_hora::date BETWEEN %s AND %s AND fuente = 'CEN_PCP'
+        ORDER BY unidad, fecha_hora
+        """,
+        params=(s, e),
+    )
+    if not df.empty:
+        df["fecha_hora"] = pd.to_datetime(df["fecha_hora"])
+    if not pcp.empty:
+        pcp["fecha_hora"] = pd.to_datetime(pcp["fecha_hora"])
+        if df.empty:
+            df = pcp
+        else:
+            # Rellenar solo las (unidad, fecha_hora) que el PID no cubre.
+            faltantes = pcp.merge(
+                df[["unidad", "fecha_hora"]], on=["unidad", "fecha_hora"], how="left",
+                indicator=True,
+            )
+            faltantes = faltantes[faltantes["_merge"] == "left_only"].drop(columns="_merge")
+            if not faltantes.empty:
+                df = pd.concat([df, faltantes], ignore_index=True)
     if df.empty:
         return df
-    df["fecha_hora"] = pd.to_datetime(df["fecha_hora"])
     return df.sort_values(["unidad", "fecha_hora"])
 
 
@@ -107,11 +138,8 @@ def load_cmg(s, e, nodo="CRUCERO_______220"):
     return df
 
 
-@st.cache_data(ttl=300)
-def load_cmg_prog(s, e, nodo="CRUCERO_______220", fuente="CEN_PID"):
-    """CMG programado por barra y fuente (CEN_PID intra-día / CEN_PCP día-anterior).
-    Disponible también en las barras de las propias centrales (ANGAMOS_______220 /
-    COCHRANE______220). Silencioso si la tabla aún no existe."""
+def _fetch_cmg_prog(s, e, nodo, fuente):
+    """Una barra × una fuente del CMG programado. DataFrame vacío si falla o no hay."""
     try:
         df = fetch(
             "costo_marginal_programado", "fecha_hora,cmg_usd_mwh",
@@ -126,6 +154,28 @@ def load_cmg_prog(s, e, nodo="CRUCERO_______220", fuente="CEN_PID"):
         return pd.DataFrame()
     if not df.empty:
         df["fecha_hora"] = pd.to_datetime(df["fecha_hora"])
+    return df
+
+
+@st.cache_data(ttl=300)
+def load_cmg_prog(s, e, nodo="CRUCERO_______220", fuente="CEN_PID"):
+    """CMG programado por barra y fuente (CEN_PID intra-día / CEN_PCP día-anterior).
+    Disponible también en las barras de las propias centrales (ANGAMOS_______220 /
+    COCHRANE______220). Silencioso si la tabla aún no existe.
+
+    FALLBACK: al pedir el PID (intra-día), si el CEN dejó de emitir y faltan horas,
+    se rellenan con el PCP de esa misma hora → la curva no queda truncada."""
+    df = _fetch_cmg_prog(s, e, nodo, fuente)
+    if fuente == "CEN_PID":
+        pcp = _fetch_cmg_prog(s, e, nodo, "CEN_PCP")
+        if not pcp.empty:
+            if df.empty:
+                df = pcp
+            else:
+                faltantes = pcp[~pcp["fecha_hora"].isin(df["fecha_hora"])]
+                if not faltantes.empty:
+                    df = pd.concat([df, faltantes], ignore_index=True)
+    if not df.empty:
         df = df.sort_values("fecha_hora")
     return df
 
