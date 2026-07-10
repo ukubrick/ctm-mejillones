@@ -32,10 +32,16 @@ def add_linea_ahora(fig, x_min=None, x_max=None):
         return
     if x_max is not None and ahora > x_max:
         return
-    fig.add_vline(
-        x=ahora, line_dash="dash", line_color=C_MUTED, line_width=1,
-        annotation_text="ahora", annotation_position="top",
-        annotation_font_size=9, annotation_font_color=C_MUTED,
+    # NO usar fig.add_vline(annotation_text=...) con eje de fechas: en plotly 5.x el
+    # cálculo de la posición de la anotación hace sum(x) sobre datetimes → TypeError.
+    # Se dibuja la línea y la etiqueta por separado (robusto en cualquier versión).
+    fig.add_shape(
+        type="line", x0=ahora, x1=ahora, y0=0, y1=1, xref="x", yref="paper",
+        line=dict(dash="dash", color=C_MUTED, width=1),
+    )
+    fig.add_annotation(
+        x=ahora, y=1, xref="x", yref="paper", text="ahora", showarrow=False,
+        yanchor="bottom", font=dict(size=9, color=C_MUTED),
     )
 
 
