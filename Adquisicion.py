@@ -216,11 +216,18 @@ def fetch_generacion_programada(start: str, end: str) -> list[dict]:
     No soporta filtro por central en el servidor, por lo que se pagina
     todo el resultado y se filtra localmente por id_central.
     Usa limit=5000 (estable) en vez de 50000 que provoca 504 en el servidor.
+
+    ⚠️ El PCP entrega VARIAS versiones del programa por (unidad, fecha_hora),
+    una por cada `fecha_programa` (día en que el CEN corrió el PCP). Hay que
+    quedarse con la MÁS RECIENTE; si no, el upsert deja una versión arbitraria y
+    aparecen valores fantasma (p.ej. 28 MW aislado entre horas a plena carga,
+    de un programa preliminar con costo≈0). Mismo patrón que el PID.
     """
-    registros    = []
     ids_objetivo = {ID_ANGAMOS, ID_COCHRANE, str(ID_ANGAMOS), str(ID_COCHRANE)}
     page         = 0
     limit        = 5000
+    # mejor programa por (unidad, fecha_hora) → (fecha_programa, registro)
+    mejores: dict[tuple[str, str], tuple[str, dict]] = {}
     llaves_no_mapeadas: set[str] = set()
 
     try:
@@ -288,7 +295,13 @@ def fetch_generacion_programada(start: str, end: str) -> list[dict]:
                     except Exception:
                         hora = 0
 
-                registros.append({
+                # Recencia del programa: fecha_programa (mayor = más nuevo).
+                # Se conserva solo la versión más reciente por (unidad, fecha_hora).
+                recencia = str(rec.get("fecha_programa") or "")
+                clave    = (unidad, fecha_hora_norm)
+                if clave in mejores and mejores[clave][0] >= recencia:
+                    continue
+                mejores[clave] = (recencia, {
                     "unidad":            unidad,
                     "gen_programada_mw": float(rec.get("gen_programada_mw") or 0.0),
                     "fecha_hora":        fecha_hora_norm,
@@ -306,6 +319,7 @@ def fetch_generacion_programada(start: str, end: str) -> list[dict]:
     except Exception as e:
         log.error(f"  Error gen. programada PCP: {e}")
 
+    registros = [v[1] for v in mejores.values()]
     log.info(f"  Gen. programada PCP ({start}): {len(registros)} registros ANG/CCR")
     return registros
 
