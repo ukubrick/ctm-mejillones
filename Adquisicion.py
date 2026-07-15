@@ -34,6 +34,13 @@ API_BASE_OPS = "https://operacion.api.coordinador.cl"
 ID_ANGAMOS   = 377
 ID_COCHRANE  = 379
 
+# Mínimo técnico de las unidades a carbón (MW). Un programa PCP/PID con un valor
+# ESTRICTAMENTE entre 0 y este umbral es físicamente inválido (la unidad está
+# apagada ~0 o genera ≥60): es un valor fantasma de un programa preliminar. No
+# debe ganarle a un valor válido en el dedup solo por ser de un `fecha_programa`
+# más reciente.
+POT_MIN_PROG = 60.0
+
 # Mapeo llave_opreal → código de unidad (generación real)
 LLAVES_OPREAL = {
     "ANG1": "TER ANGAMOS-ANG1",
@@ -153,6 +160,13 @@ def fetch_generacion_real(start: str, end: str) -> list[dict]:
                 unidad = next((u for u, l in LLAVES_OPREAL.items() if l == llave), None)
                 if unidad is None:
                     continue
+                # Descartar el 0.0 exacto: es una lectura SCADA faltante/mala del CEN,
+                # no una detención real (que lee <5 MW pero rara vez 0.0 — ver regla 23).
+                # Se deja la hora AUSENTE hasta que el CEN entregue el valor real; así no
+                # se congelan ceros fantasma (p.ej. las 4 unidades a 0 en una misma hora).
+                gen_mw = rec.get("gen_real_mw")
+                if gen_mw is None or float(gen_mw) == 0.0:
+                    continue
                 registros.append({
                     "unidad":          unidad,
                     "llave_opreal":    llave,
@@ -216,11 +230,18 @@ def fetch_generacion_programada(start: str, end: str) -> list[dict]:
     No soporta filtro por central en el servidor, por lo que se pagina
     todo el resultado y se filtra localmente por id_central.
     Usa limit=5000 (estable) en vez de 50000 que provoca 504 en el servidor.
+
+    ⚠️ El PCP entrega VARIAS versiones del programa por (unidad, fecha_hora),
+    una por cada `fecha_programa` (día en que el CEN corrió el PCP). Hay que
+    quedarse con la MÁS RECIENTE; si no, el upsert deja una versión arbitraria y
+    aparecen valores fantasma (p.ej. 28 MW aislado entre horas a plena carga,
+    de un programa preliminar con costo≈0). Mismo patrón que el PID.
     """
-    registros    = []
     ids_objetivo = {ID_ANGAMOS, ID_COCHRANE, str(ID_ANGAMOS), str(ID_COCHRANE)}
     page         = 0
     limit        = 5000
+    # mejor programa por (unidad, fecha_hora) → (fecha_programa, registro)
+    mejores: dict[tuple[str, str], tuple[str, dict]] = {}
     llaves_no_mapeadas: set[str] = set()
 
     try:
@@ -288,9 +309,20 @@ def fetch_generacion_programada(start: str, end: str) -> list[dict]:
                     except Exception:
                         hora = 0
 
-                registros.append({
+                # Preferencia = (validez_física, fecha_programa). Un valor 0<mw<60
+                # es fantasma (programa preliminar): NO debe ganarle a un valor válido
+                # aunque sea de un programa más reciente. Entre valores de igual validez
+                # gana el fecha_programa mayor (más nuevo). Si TODOS son inválidos, se
+                # conserva el mejor disponible.
+                mw       = float(rec.get("gen_programada_mw") or 0.0)
+                valido   = not (0 < mw < POT_MIN_PROG)
+                pref     = (valido, str(rec.get("fecha_programa") or ""))
+                clave    = (unidad, fecha_hora_norm)
+                if clave in mejores and mejores[clave][0] >= pref:
+                    continue
+                mejores[clave] = (pref, {
                     "unidad":            unidad,
-                    "gen_programada_mw": float(rec.get("gen_programada_mw") or 0.0),
+                    "gen_programada_mw": mw,
                     "fecha_hora":        fecha_hora_norm,
                     "hora":              hora,
                     "fuente":            "CEN_PCP",
@@ -306,6 +338,7 @@ def fetch_generacion_programada(start: str, end: str) -> list[dict]:
     except Exception as e:
         log.error(f"  Error gen. programada PCP: {e}")
 
+    registros = [v[1] for v in mejores.values()]
     log.info(f"  Gen. programada PCP ({start}): {len(registros)} registros ANG/CCR")
     return registros
 
@@ -373,15 +406,20 @@ def fetch_generacion_programada_pid(start: str, end: str) -> list[dict]:
                     except Exception:
                         hora = 0
 
-                # Recencia del programa: fecha_programa + hora_programa (mayor = más nuevo)
-                recencia = (str(rec.get("fecha_programa") or ""),
+                # Preferencia = (validez_física, fecha_programa, hora_programa). Igual
+                # que en el PCP: un valor 0<mw<60 es fantasma y no debe ganarle a un
+                # valor válido aunque sea de un programa más reciente. Entre iguales gana
+                # el programa más nuevo (fecha_programa + hora_programa).
+                mw       = float(rec.get("gen_programada_mw") or 0.0)
+                valido   = not (0 < mw < POT_MIN_PROG)
+                pref     = (valido, str(rec.get("fecha_programa") or ""),
                             int(rec.get("hora_programa") or 0))
                 clave = (unidad, fecha_hora_norm)
-                if clave in mejores and mejores[clave][0] >= recencia:
+                if clave in mejores and mejores[clave][0] >= pref:
                     continue
-                mejores[clave] = (recencia, {
+                mejores[clave] = (pref, {
                     "unidad":            unidad,
-                    "gen_programada_mw": float(rec.get("gen_programada_mw") or 0.0),
+                    "gen_programada_mw": mw,
                     "fecha_hora":        fecha_hora_norm,
                     "hora":              hora,
                     "fuente":            "CEN_PID",

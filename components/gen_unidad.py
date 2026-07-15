@@ -115,8 +115,18 @@ def _chart_unidad(unidad, df_r, df_p, df_pid, df_c, df_cp, df_dem, barra_dem,
     tiene_pid = vis["pid"] and not df_upid.empty
     # Fallback: si se pidió PID pero aún no hay datos PID en la ventana, se muestra
     # el PCP como referencia visible (así el gráfico nunca queda sin programa).
-    if vis["pid"] and not tiene_pid and not df_up.empty:
+    pid_en_fallback = vis["pid"] and not tiene_pid and not df_up.empty
+    if pid_en_fallback:
         tiene_pcp = True
+        st.markdown(
+            '<div style="background:#FFF4E5;border-left:3px solid #E8A33D;'
+            'border-radius:6px;padding:8px 12px;margin:4px 0 10px;'
+            'color:#7A5316;font-size:0.86rem;">'
+            'PID no disponible en este rango — el CEN dejó de emitir el programa '
+            'intra-día. Se muestra el PCP (programa del día anterior) como referencia.'
+            '</div>',
+            unsafe_allow_html=True,
+        )
     tiene_dem = tiene_cmg and vis["demanda"] and df_dem is not None and not df_dem.empty
 
     # Programa de referencia del área de desviación: PID (intra-día, más fresco)
