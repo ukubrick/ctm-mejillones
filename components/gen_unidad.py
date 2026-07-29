@@ -368,10 +368,20 @@ def render_gen_unidad(df_r, df_p, df_c, mostrar_prog, mostrar_cmg, nodo_cmg, s=N
     # Serie CMG de 15 min (API SIP) para el gráfico: muestra los desacoples con
     # CMG = 0 y el detalle intra-hora que el promedio horario aplana. Si la tabla
     # aún no tiene datos para el período/nodo, se usa el horario de `costo_marginal`.
+    # El detalle de 15 min solo existe desde que se migró a la API (2026-07-29);
+    # hacia atrás únicamente hay horario del feed S3 → se COMBINAN: 15 min desde
+    # su primer punto, horario para los días previos. Reemplazar la serie entera
+    # dejaría el gráfico en blanco en el tramo antiguo.
     if vis["cmg"] and s and e:
         df_c_min = load_cmg_min(s, e, nodo_cmg)
         if not df_c_min.empty:
-            df_c = df_c_min
+            if df_c is None or df_c.empty:
+                df_c = df_c_min
+            else:
+                ini_min = df_c_min["fecha_hora"].min()
+                previo  = df_c[df_c["fecha_hora"] < ini_min]
+                df_c    = pd.concat([previo, df_c_min], ignore_index=True) \
+                            .sort_values("fecha_hora")
     df_cp  = load_cmg_prog(s, e, nodo_cmg) if (vis["cmg_prog"] and s and e) else None
     df_pid = load_prog_pid(s, e) if (vis["pid"] and s and e) else None
     barra_dem = CMG_A_DEMANDA.get(nodo_cmg, "Crucero220")
