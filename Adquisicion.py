@@ -35,10 +35,16 @@ ID_ANGAMOS   = 377
 ID_COCHRANE  = 379
 
 # Mínimo técnico de las unidades a carbón (MW). Un programa PCP/PID con un valor
-# ESTRICTAMENTE entre 0 y este umbral es físicamente inválido (la unidad está
-# apagada ~0 o genera ≥60): es un valor fantasma de un programa preliminar. No
-# debe ganarle a un valor válido en el dedup solo por ser de un `fecha_programa`
-# más reciente.
+# ESTRICTAMENTE entre 0 y este umbral se trata como fantasma de un programa
+# preliminar: no debe ganarle a un valor válido en el dedup solo por ser de un
+# `fecha_programa` más reciente.
+#
+# ⚠️ OJO (2026-07-29): el umbral NO es un criterio físico confiable. El CEN sí
+# programa valores bajo 60 MW cuando la unidad explora NUEVOS mínimos técnicos
+# (julio 2026: 28,3–55,2 MW, casi todos en ANG1, en campañas de varios días).
+# Esas horas son legítimas. El umbral solo desempata (no borra filas), pero puede
+# preferir una versión vieja ≥60 MW por sobre la prueba reemitida. Ver PENDIENTES
+# VIVOS en CLAUDE.md antes de tocar esta lógica.
 POT_MIN_PROG = 60.0
 
 # Mapeo llave_opreal → código de unidad (generación real)

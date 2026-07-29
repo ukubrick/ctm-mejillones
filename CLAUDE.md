@@ -385,6 +385,21 @@ SIDEBAR_GRAD = "linear-gradient(168deg,#0E7E93,#2A38C9,#4A25A0)"                
       tener presente que el histórico horario ANTERIOR al 27/07 en `costo_marginal` viene del S3
       (sin ceros, solo Crucero/Tarapacá) → no comparar períodos a través de esa frontera.
 
+- [ ] **`POT_MIN_PROG = 60` marca como fantasma pruebas REALES de mínimo técnico** (detectado
+      2026-07-29, NO urgente — el usuario confirmó que la programación respondió bien a esas
+      pruebas). Los programas con `0 < mw < 60` en `Adquisicion.py` (dedup PCP línea ~328 y PID
+      línea ~424) se tratan como inválidos, pero en julio 2026 son **exploraciones de nuevos
+      mínimos técnicos** que el CEN sí programó: 54 filas PID / 69 PCP, rango **28,3–55,2 MW**,
+      concentradas en **ANG1** (42 de 54) y agrupadas en campañas (10-13/07, 22-24/07, 27/07).
+      NO se borran (el umbral solo actúa como desempate), pero si el CEN reemite el PID de una
+      hora de prueba y existe una versión anterior ≥60 MW, el dedup prefiere la vieja → el
+      dashboard mostraría el programa equivocado justo en las horas de prueba.
+      · Revisar SI aparece una discrepancia real en el gráfico de ANG1.
+      · Para arreglarlo hace falta saber qué magnitud tenían los fantasmas originales: si eran
+        ≪28 MW basta bajar el umbral a ~25; si eran del mismo orden que las pruebas, el umbral
+        no los distingue → quitar el criterio de magnitud y quedarse con el `fecha_programa` /
+        `hora_programa` más reciente (semántica natural de una reemisión del CEN).
+
 - [ ] **Limpieza:** decidir si archivar/borrar `exportar_datos_ml.py` y `ml_pruebas.py` (material
       viejo de experimentos ML, no usados por la app).
 - [ ] **Verificación operacional:** confirmar que el cron horario aligerado termina sin timeout,
