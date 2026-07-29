@@ -30,10 +30,14 @@ from Adquisicion import (
     TZ_CHILE,
     fetch_generacion_real,
     upsert_generacion_real,
-    fetch_cmg_nodos,
-    upsert_cmg,
+    adquirir_cmg_online,
     log_adquisicion,
 )
+
+# Páginas finales del día que se bajan del CMG online en cada corrida rápida.
+# El feed viene ordenado por fecha_minuto (~40 páginas/día) → las últimas son los
+# puntos más frescos. 6 páginas ≈ las últimas ~4 h, suficiente para un cron de 30 min.
+CMG_ULTIMAS_PAGINAS = 6
 
 # Ventana corta: hoy + ayer. La gen-real filtra por central en el servidor (rápido),
 # 2 días basta para refrescar lo más reciente y cubrir el cambio de día UTC/Chile.
@@ -66,19 +70,19 @@ def run():
         log_adquisicion("generacion_real", fecha, nuevos, dupes,
                         int((time.time() - t0) * 1000), err_str)
 
-    # ── CMG nodos (S3) ── GET rápido, se actualiza ~15 min en el S3 del CEN.
-    # Corre aquí cada 30 min para tener el CMG lo más cercano a tiempo real,
-    # sin depender del job horario completo (que puede colgarse en PCP/PID).
-    log.info(f"\n  ── CMG Nodos CTM (S3 portal CEN)")
+    # ── CMG online (API SIP, 15 min) ── fuente principal desde 2026-07-29:
+    # trae las barras de las propias centrales y NO descarta los CMG = 0
+    # (el feed S3 hacía ambas cosas mal). Fallback automático al S3.
+    hoy_str = hoy.strftime("%Y-%m-%d")
+    log.info(f"\n  ── CMG online 15 min (API SIP, últimas {CMG_ULTIMAS_PAGINAS} págs)")
     t0 = time.time()
     err_str = None
     try:
-        regs_cmg             = fetch_cmg_nodos()
-        nuevos, actualizados = upsert_cmg(regs_cmg)
-        log.info(f"  ✅ CMG: {nuevos} nuevos, {actualizados} actualizados")
+        n_min, n_hora = adquirir_cmg_online(hoy_str, hoy_str, CMG_ULTIMAS_PAGINAS)
+        log.info(f"  ✅ CMG: {n_min} puntos de 15 min, {n_hora} filas horarias")
     except Exception as e:
-        err_str = str(e); log.error(f"  ❌ CMG: {e}"); nuevos = actualizados = 0
-    log_adquisicion("cmg_nodos_s3", hoy.strftime("%Y-%m-%d"), nuevos, actualizados,
+        err_str = str(e); log.error(f"  ❌ CMG: {e}"); n_min = n_hora = 0
+    log_adquisicion("cmg_online_min", hoy_str, n_min, n_hora,
                     int((time.time() - t0) * 1000), err_str)
 
     log.info(f"\n  Fin — {total} registros de potencia + CMG procesados\n")

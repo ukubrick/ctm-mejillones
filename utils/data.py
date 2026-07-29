@@ -138,6 +138,34 @@ def load_cmg(s, e, nodo="CRUCERO_______220"):
     return df
 
 
+@st.cache_data(ttl=300)
+def load_cmg_min(s, e, nodo="CRUCERO_______220"):
+    """CMG online con resolución de 15 min (`costo_marginal_online_min`).
+
+    Fuente: API SIP /costo-marginal-online/v4 — incluye los CMG = 0 (desacople),
+    que el feed S3 horario descartaba. Silencioso si la tabla aún no existe:
+    la vista cae al horario de `load_cmg`.
+    """
+    try:
+        df = fetch(
+            "costo_marginal_online_min", "fecha_minuto,cmg_usd_mwh",
+            eq={"barra_transf": nodo},
+            gte={"fecha_minuto": _ini(s)}, lte={"fecha_minuto": _fin(e)},
+            order="fecha_minuto",
+            sql="SELECT fecha_minuto, cmg_usd_mwh FROM costo_marginal_online_min "
+                "WHERE barra_transf=%s AND fecha_minuto::date BETWEEN %s AND %s "
+                "ORDER BY fecha_minuto",
+            params=(nodo, s, e),
+        )
+    except Exception:
+        return pd.DataFrame()
+    if not df.empty:
+        df = df.rename(columns={"fecha_minuto": "fecha_hora"})
+        df["fecha_hora"] = pd.to_datetime(df["fecha_hora"], errors="coerce")
+        df = df.dropna(subset=["fecha_hora"]).sort_values("fecha_hora")
+    return df
+
+
 def _fetch_cmg_prog(s, e, nodo, fuente):
     """Una barra × una fuente del CMG programado. DataFrame vacío si falla o no hay."""
     try:

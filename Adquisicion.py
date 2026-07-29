@@ -77,6 +77,16 @@ CMG_NODOS = {
     "TARAPACA______220": "tarapaca",
 }
 
+# Barras del CMG online por API (/costo-marginal-online/v4, resolución 15 min).
+# A diferencia del S3, este endpoint SÍ trae las barras de las propias centrales
+# (verificado en vivo 2026-07-29) → es la fuente principal desde esta fecha.
+CMG_ONLINE_BARRAS = {
+    "CRUCERO_______220",
+    "TARAPACA______220",
+    "ANGAMOS_______220",
+    "COCHRANE______220",
+}
+
 # CMG programado PCP/PID: llave_cmg de la API → nombre de barra usado en el dashboard
 # (Crucero/Tarapacá cruzan con el CMG online del S3). Desde 2026-07-08 se agregan
 # las barras de las PROPIAS centrales: Angamos220/Cochrane220 existen en el catálogo
@@ -479,8 +489,10 @@ def fetch_cmg_nodos() -> list[dict]:
             por_hora: dict[str, list[float]] = defaultdict(list)
             for h in horas_raw:
                 hora_str = h.get("hora", "")   # "2026-06-01 11:15"
-                total    = h.get("total", 0.0)
-                if not hora_str or total == 0.0:
+                total    = h.get("total")
+                # Un CMG de 0 es un dato REAL (desacople) → no se descarta.
+                # Solo se saltan los intervalos sin valor.
+                if not hora_str or total is None:
                     continue
                 hora_key = hora_str[:13]         # "2026-06-01 11"
                 por_hora[hora_key].append(total)
@@ -626,6 +638,162 @@ def upsert_cmg(registros: list[dict]) -> tuple[int, int]:
     except Exception as e:
         log.error(f"  Error upsert CMG: {e}")
     return nuevos, actualizados
+
+
+def fetch_cmg_online_api(start: str, end: str,
+                         ultimas_paginas: int | None = None) -> list[dict]:
+    """
+    CMG real EN LÍNEA con resolución de 15 min desde la API SIP
+    (/costo-marginal-online/v4/findByDate), filtrado local a CMG_ONLINE_BARRAS.
+
+    Reemplaza al feed S3 como fuente principal (patrón replicado de Pulsar):
+      · trae las barras de las PROPIAS centrales (ANGAMOS_______220 /
+        COCHRANE______220), que el S3 no expone;
+      · NO descarta los valores 0 — el desacople con CMG=0 es un dato real.
+
+    El feed es de TODO el sistema (~1.600 barras, ~40 páginas de 4000 por día) y
+    NO filtra por barra en el servidor. Viene ordenado por fecha_minuto → con
+    `ultimas_paginas=N` se bajan solo las N últimas páginas (lo más fresco), para
+    el cron de 30 min. La última página suele venir vacía.
+    """
+    url   = f"{API_BASE_SIP}/costo-marginal-online/v4/findByDate"
+    limit = 4000
+
+    def _pedir(page: int) -> dict:
+        r = _get_with_retry(url, {"startDate": start, "endDate": end,
+                                  "limit": limit, "page": page,
+                                  "user_key": CEN_USER_KEY}, timeout=90)
+        return r.json()
+
+    primera     = _pedir(1)
+    total_pages = int(primera.get("totalPages") or 1)
+
+    if ultimas_paginas and total_pages > ultimas_paginas:
+        paginas    = range(total_pages - ultimas_paginas + 1, total_pages + 1)
+        items_ini  = []
+    else:
+        paginas    = range(2, total_pages + 1)
+        items_ini  = primera.get("data", [])
+
+    # (barra, fecha_minuto) → registro. El dict deduplica reemitidos.
+    mejor: dict[tuple[str, str], dict] = {}
+
+    def _consumir(items):
+        for rec in items:
+            barra = rec.get("barra_transf")
+            if barra not in CMG_ONLINE_BARRAS:
+                continue
+            fm = (rec.get("fecha_minuto") or rec.get("fecha_hora") or "").replace("T", " ")[:16]
+            if len(fm) != 16:
+                continue
+            val = rec.get("cmg_usd_mwh_", rec.get("cmg_usd_mwh"))
+            if val is None:
+                continue
+            mejor[(barra, fm)] = {
+                "barra_transf": barra,
+                "barra_info":   rec.get("barra_info"),
+                "fecha_minuto": f"{fm}:00",
+                "cmg_usd_mwh":  round(float(val), 4),
+                "cmg_clp_kwh":  (round(float(rec["cmg_clp_kwh_"]), 4)
+                                 if rec.get("cmg_clp_kwh_") is not None else None),
+                "version":      rec.get("version") or "EN LINEA",
+            }
+
+    _consumir(items_ini)
+    for pg in paginas:
+        try:
+            _consumir(_pedir(pg).get("data", []))
+        except Exception as e:
+            # Nunca loguear la excepción cruda: requests incluye la URL completa
+            # (con user_key) y los logs de Actions son públicos.
+            log.warning(f"  CMG online API: página {pg} falló ({e.__class__.__name__})")
+
+    log.info(f"  CMG online API: {len(mejor)} puntos de 15 min "
+             f"({len(paginas) + (1 if items_ini else 0)} de {total_pages} páginas)")
+    return list(mejor.values())
+
+
+def agregar_cmg_horario(registros_min: list[dict]) -> list[dict]:
+    """Promedia los puntos de 15 min por (barra, hora) → filas para `costo_marginal`.
+
+    A diferencia del feed S3, los valores 0 SÍ entran en el promedio: una hora
+    completa en desacople debe quedar registrada como 0, no ausente.
+    """
+    por_hora: dict[tuple[str, str], list] = defaultdict(list)
+    info: dict[str, str] = {}
+    for r in registros_min:
+        por_hora[(r["barra_transf"], r["fecha_minuto"][:13])].append(r["cmg_usd_mwh"])
+        info.setdefault(r["barra_transf"], r.get("barra_info") or "")
+
+    salida = []
+    for (barra, hora_key), valores in por_hora.items():
+        try:
+            dt = datetime.strptime(hora_key, "%Y-%m-%d %H")
+        except ValueError:
+            continue
+        salida.append({
+            "barra_transf": barra,
+            "barra_info":   info.get(barra) or f"Nodo {barra[:8].rstrip('_')} 220kV",
+            "fecha_hora":   dt.strftime("%Y-%m-%d %H:%M:%S"),
+            "hora":         dt.hour + 1,          # convención CEN 1-24
+            "minuto":       0,
+            "cmg_usd_mwh":  round(sum(valores) / len(valores), 4),
+            "cmg_clp_kwh":  None,
+            "version":      "EN LINEA",
+        })
+    return salida
+
+
+def upsert_cmg_online_min(registros: list[dict]) -> tuple[int, int]:
+    """Upsert de los puntos de 15 min en `costo_marginal_online_min`."""
+    if not registros:
+        return 0, 0
+    sql = """
+        INSERT INTO costo_marginal_online_min
+            (barra_transf, barra_info, fecha_minuto, cmg_usd_mwh, cmg_clp_kwh, version)
+        VALUES
+            (%(barra_transf)s, %(barra_info)s, %(fecha_minuto)s,
+             %(cmg_usd_mwh)s, %(cmg_clp_kwh)s, %(version)s)
+        ON CONFLICT (barra_transf, fecha_minuto) DO UPDATE
+            SET cmg_usd_mwh = EXCLUDED.cmg_usd_mwh,
+                cmg_clp_kwh = EXCLUDED.cmg_clp_kwh,
+                version     = EXCLUDED.version
+    """
+    nuevos = actualizados = 0
+    try:
+        with get_conn() as conn:
+            with conn.cursor() as cur:
+                for rec in registros:
+                    cur.execute(sql, rec)
+                    if cur.rowcount == 1: nuevos      += 1
+                    else:                actualizados += 1
+            conn.commit()
+    except Exception as e:
+        log.error(f"  Error upsert CMG online min: {e}")
+    return nuevos, actualizados
+
+
+def adquirir_cmg_online(start: str, end: str,
+                        ultimas_paginas: int | None = None) -> tuple[int, int]:
+    """Trae el CMG online por API y escribe 15 min + agregado horario.
+
+    Fallback al feed S3 si la API no devuelve nada (mantenimiento / 429 sostenido).
+    Devuelve (puntos_15min, filas_horarias).
+    """
+    regs_min = []
+    try:
+        regs_min = fetch_cmg_online_api(start, end, ultimas_paginas)
+    except Exception as e:
+        log.error(f"  CMG online API falló: {e}")
+
+    if not regs_min:
+        log.warning("  CMG online API sin datos → fallback al feed S3")
+        n, a = upsert_cmg(fetch_cmg_nodos())
+        return 0, n + a
+
+    upsert_cmg_online_min(regs_min)
+    n, a = upsert_cmg(agregar_cmg_horario(regs_min))
+    return len(regs_min), n + a
 
 
 def fetch_cmg_programado(start: str, end: str, fuente: str = "CEN_PID") -> list[dict]:
@@ -1821,17 +1989,20 @@ def run():
     # dato más sensible al tiempo real → no debe quedar sin correr si PCP/PID se
     # cuelgan y el job se cancela por timeout. (También se refresca cada 30 min en
     # Adquisicion_potencia.py.)
-    log.info(f"\n  ── CMG Nodos CTM (S3 portal CEN)")
-    t0 = time.time()
-    err_str = None
-    try:
-        regs_cmg             = fetch_cmg_nodos()
-        nuevos, actualizados = upsert_cmg(regs_cmg)
-        log.info(f"  ✅ CMG: {nuevos} nuevos, {actualizados} actualizados")
-    except Exception as e:
-        err_str = str(e); log.error(f"  ❌ CMG: {e}"); nuevos = actualizados = 0
-    log_adquisicion("cmg_nodos_s3", hoy.strftime("%Y-%m-%d"), nuevos, actualizados,
-                    int((time.time() - t0) * 1000), err_str)
+    # Día COMPLETO (todas las páginas) de hoy y ayer: rellena los huecos que el
+    # cron rápido de 30 min (solo últimas páginas) no alcanzó a cubrir.
+    for fecha in [(hoy - timedelta(days=1)).strftime("%Y-%m-%d"),
+                  hoy.strftime("%Y-%m-%d")]:
+        log.info(f"\n  ── CMG online 15 min (API SIP) {fecha}")
+        t0 = time.time()
+        err_str = None
+        try:
+            n_min, n_hora = adquirir_cmg_online(fecha, fecha)
+            log.info(f"  ✅ CMG: {n_min} puntos de 15 min, {n_hora} filas horarias")
+        except Exception as e:
+            err_str = str(e); log.error(f"  ❌ CMG: {e}"); n_min = n_hora = 0
+        log_adquisicion("cmg_online_min", fecha, n_min, n_hora,
+                        int((time.time() - t0) * 1000), err_str)
 
     # ── Generación programada PCP (rango completo en una sola llamada) ──
     # Ventana: ayer → mañana (3 días). Incluir mañana captura la programación

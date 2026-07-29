@@ -76,19 +76,19 @@ PMAX = {"ANG1": 277.0, "ANG2": 280.0, "CCR1": 276.0, "CCR2": 276.0}
 POT_MIN_TECNICA = {"ANG1": 60.0, "ANG2": 60.0, "CCR1": 60.0, "CCR2": 60.0}
 
 # Nodos CMG disponibles en el S3 del CEN
+# Nodos con CMG online. Desde 2026-07-29 la fuente es la API SIP
+# (/costo-marginal-online/v4, 15 min), que SÍ trae las barras de las propias
+# centrales — el feed S3 anterior solo exponía 8 barras del sistema.
 NOMBRES_NODO = {
     "CRUCERO_______220": "Crucero 220kV",
     "TARAPACA______220": "Tarapacá 220kV",
-}
-
-# Barras con CMG programado (PCP/PID) y CMG real oficial — incluye las barras de
-# las PROPIAS centrales (integradas 2026-07-08). El CMG online del S3 solo trae
-# Crucero/Tarapacá; Angamos/Cochrane existen en programado y real liquidado.
-NOMBRES_BARRA_CMG = {
     "ANGAMOS_______220": "Angamos 220kV",
     "COCHRANE______220": "Cochrane 220kV",
-    **NOMBRES_NODO,
 }
+
+# Barras con CMG programado (PCP/PID) y CMG real oficial. Mismo conjunto que el
+# online desde que este pasó a la API.
+NOMBRES_BARRA_CMG = dict(NOMBRES_NODO)
 # Barra de la propia central por unidad (valorización al precio del punto de conexión)
 BARRA_CENTRAL = {
     "ANG1": "ANGAMOS_______220", "ANG2": "ANGAMOS_______220",
@@ -161,6 +161,8 @@ SIDEBAR_GRAD = "linear-gradient(168deg,#0E7E93 0%,#2A38C9 52%,#4A25A0 100%)"
 CMG_A_DEMANDA = {
     "CRUCERO_______220": "Crucero220",
     "TARAPACA______220": "Tarapaca220",
+    "ANGAMOS_______220": "Angamos220",
+    "COCHRANE______220": "Crucero220",   # sin pronóstico propio → regional norte
 }
 
 

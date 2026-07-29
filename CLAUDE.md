@@ -1,9 +1,9 @@
 # CLAUDE.md — Dashboard CTM Mejillones
 > Contexto completo para Claude Code. Leer al inicio de cada sesión.
 > Autor: Erick Herrera — AES Andes, Antofagasta, Chile.
-> Última actualización: 2026-07-08 (2ª sesión: integración de 6 endpoints CEN nuevos — CMG en
->   barra de central Angamos/Cochrane, CMG programado PCP, mantenimiento mayor, desempeño SSCC
->   CPF/CSF, demanda neta y mix diario; migración `migracion_endpoints_ctm.py`).
+> Última actualización: 2026-07-29 (CMG online migrado del feed S3 a la API SIP
+>   `/costo-marginal-online/v4`: 15 min, 4 barras incl. Angamos/Cochrane, y los CMG = 0 dejan
+>   de perderse; tabla `costo_marginal_online_min` + `migracion_cmg_online_min.py`).
 >
 > REGLA DE MANTENIMIENTO: la cabecera (todo lo anterior al HISTORIAL DE SESIONES) es la
 > ÚNICA fuente de verdad del estado actual; `config.py` manda sobre este markdown.
@@ -121,7 +121,17 @@ Destiladas de bugs y quirks reales del CEN/Streamlit:
     las fechas del programa** → una ventana de 45 días hacia atrás captura mantenimientos futuros
     ya publicados. Sin id_central → filtro local por texto (CLAVES_MANT_CTM, incluye O'HIGGINS y
     MEJILLONES: el corredor de evacuación afecta a CTM sin intervenir sus unidades).
-27. **Día del cambio de hora chileno = 25 horas: el CEN emite `hora='24'`** en los endpoints
+27. **CMG online: usar `/costo-marginal-online/v4/findByDate` (API SIP), NO el feed S3.** El S3
+    solo expone 8 barras (sin Angamos/Cochrane) y su parser descartaba `total == 0.0` → los
+    desacoples con CMG = 0 NUNCA aparecían en el dashboard (bug detectado 2026-07-29). La API
+    trae resolución de 15 min, `barra_transf` en formato de 17 caracteres y las barras de las
+    propias centrales. Es el feed COMPLETO del sistema (~1.600 barras, ~40 páginas de 4000 por
+    día, ordenado por `fecha_minuto`, última página vacía) y NO filtra por barra en el servidor
+    → filtrar local por `CMG_ONLINE_BARRAS`. Para el cron de 30 min bajar solo las últimas N
+    páginas (`ultimas_paginas=6`); el día completo lo cubren el horario y la migración.
+28. **Un CMG de 0 es un DATO, no un faltante** (a diferencia de la gen-real 0.0, que sí es una
+    lectura SCADA mala — regla 23). Nunca filtrar ceros en el CMG.
+29. **Día del cambio de hora chileno = 25 horas: el CEN emite `hora='24'`** en los endpoints
     horarios (visto en CPF/CSF, 2026-04-04). `"... 24:00:00"` no es timestamp válido → rompe
     `pd.to_datetime` de TODA la vista. Al adquirir, saltar `h > 23`; en loaders de tablas nuevas
     usar `pd.to_datetime(..., errors="coerce")` + dropna como cinturón de seguridad.
@@ -155,7 +165,8 @@ Base de datos:   Supabase PostgreSQL — REST via supabase-py (dashboard) + psyc
 Adquisición:     Python + GitHub Actions (4 crons escalonados)
 Gen. real:       API CEN SIP /generacion-real/v3
 Gen. programada: PCP /generacion-programada-pcp/v4 + PID /generacion-programada-pid/v4
-CMG online:      JSON S3 público del Coordinador (~15 min) — nodos Crucero/Tarapacá 220 kV
+CMG online:      API CEN /costo-marginal-online/v4 (15 min) — Crucero/Tarapacá/Angamos/Cochrane
+                 (feed S3 del Coordinador solo como fallback)
 CMG prog/real:   /cmg-programado-pid/v4 + /costo-marginal-real/v4
 SSCC:            API CEN Operaciones /servicios-complementarios/v1
 Reportes:        ReportLab (PDF) + python-pptx (PPT) — ejecutivos, paleta AES, in-memory
@@ -288,7 +299,7 @@ PCP/PID (lentos paginados) → se separaron los endpoints rápidos y los lentos-
 | Workflow | Script | Endpoints | Cron | Timeout |
 |----------|--------|-----------|------|---------|
 | Horaria | `Adquisicion.py` | **Núcleo:** PCP · PID · CMG-programado (+ gen-real/CMG S3 de respaldo) | `:05` | 60 min |
-| Potencia | `Adquisicion_potencia.py` | gen-real + CMG S3 | `:25,:55` | — |
+| Potencia | `Adquisicion_potencia.py` | gen-real + CMG online 15 min (últimas 6 págs) | `:25,:55` | — |
 | Operaciones | `Adquisicion_operaciones.py` | SSCC + Despacho CMG + Limitaciones | `:10,:40` | — |
 | Diaria | `Adquisicion_diaria.py` | CMG real (4 barras) + CMG prog PCP + pronóstico demanda + solicitudes + maestro + mantenimiento mayor + demanda neta + mix diario + desempeño SSCC | `08:20 UTC` | 60 min |
 
@@ -307,7 +318,8 @@ REST (service_role) desde el dashboard; psycopg2 (postgres) desde la adquisició
 |-------|-------------|-------|
 | `generacion_real` | `(unidad, fecha_hora)` DO UPDATE | + col `origen` ('MANUAL' protege del upsert automático) |
 | `generacion_programada` | `(unidad, fecha_hora, fuente)` DO UPDATE | `fuente` ∈ CEN_PCP / CEN_PID / MANUAL. `load_prog`: MANUAL > PCP, excluye PID |
-| `costo_marginal` | `(barra_transf, fecha_hora)` DO UPDATE | CMG online S3. Nodos Crucero/Tarapacá 220 |
+| `costo_marginal` | `(barra_transf, fecha_hora)` DO UPDATE | CMG online HORARIO (promedio de los 15 min de la API SIP; S3 solo de fallback). 4 barras |
+| `costo_marginal_online_min` | `(barra_transf, fecha_minuto)` | CMG online 15 min desde `/costo-marginal-online/v4`. 4 barras, incluye CMG=0 |
 | `costo_marginal_programado` | `(barra, fecha_hora, fuente)` | CMG PID (horario) + PCP (diaria). 4 barras: + Angamos/Cochrane. `fuente` desde `migracion_endpoints_ctm.py` |
 | `costo_marginal_real` | `(barra_transf, fecha_hora)` | CMG real liquidado, rezago ~10 días. `limit=50`. 4 barras (+ ANGAMOS/COCHRANE 220) |
 | `mantenimiento_mayor` | `(correlativo, nombre_sub_instalacion, fecha_inicio_programa)` | PMPM filtrado por relevancia CTM (CLAVES_MANT_CTM) |
@@ -332,7 +344,8 @@ ID_ANGAMOS = 377;  ID_COCHRANE = 379;  TZ_CHILE = ZoneInfo("America/Santiago")
 PMAX = {"ANG1": 277.0, "ANG2": 280.0, "CCR1": 276.0, "CCR2": 276.0}
 POT_MIN_TECNICA = {"ANG1": 60.0, "ANG2": 60.0, "CCR1": 60.0, "CCR2": 60.0}
 LABELS = {"ANG1": "Angamos U1", "ANG2": "Angamos U2", "CCR1": "Cochrane U1", "CCR2": "Cochrane U2"}
-CMG_NODOS = {"CRUCERO_______220": "crucero", "TARAPACA______220": "tarapaca"}
+CMG_ONLINE_BARRAS = {"CRUCERO_______220","TARAPACA______220","ANGAMOS_______220","COCHRANE______220"}
+CMG_NODOS = {"CRUCERO_______220": "crucero", "TARAPACA______220": "tarapaca"}  # solo el fallback S3
 LLAVES_SSCC = {"ANGAMOS-ANG1":"ANG1","ANGAMOS-ANG2":"ANG2","COCHRANE-CCH1":"CCR1","COCHRANE-CCH2":"CCR2"}
 ```
 
@@ -365,6 +378,11 @@ SIDEBAR_GRAD = "linear-gradient(168deg,#0E7E93,#2A38C9,#4A25A0)"                
 ---
 
 ## PENDIENTES VIVOS (lista única — actualizar aquí)
+
+- [ ] **CMG online por API (2026-07-29):** correr `migracion_cmg_online_min.py 7` vía el workflow
+      `migracion.yml` (crea la tabla + backfill de 7 días) ANTES de que la vista muestre la serie
+      de 15 min; verificar que el cron de potencia no se alarga de más con las 6 páginas y que el
+      histórico horario viejo de `costo_marginal` (sin ceros, del S3) no confunde al comparar.
 
 - [ ] **Limpieza:** decidir si archivar/borrar `exportar_datos_ml.py` y `ml_pruebas.py` (material
       viejo de experimentos ML, no usados por la app).
@@ -496,5 +514,17 @@ Limpieza de scripts probe/test/check.
 
 ---
 
-*Actualizado 2026-07-08. Proyecto CTM Mejillones (4 térmicas ANG/CCR).*
+- **2026-07-29 — CMG online por API (fin del feed S3):** el gráfico de Resumen nunca mostraba
+  los desacoples con CMG = 0. Causa: `fetch_cmg_nodos` (feed S3) descartaba `total == 0.0` y el
+  S3 solo trae 8 barras (sin Angamos/Cochrane). Se replicó el patrón de Pulsar: nueva
+  `fetch_cmg_online_api` sobre `/costo-marginal-online/v4/findByDate` (15 min, ~40 págs/día,
+  filtro local a `CMG_ONLINE_BARRAS`), `agregar_cmg_horario` (promedio con ceros incluidos →
+  `costo_marginal`) y tabla nueva `costo_marginal_online_min` con el detalle de 15 min.
+  `adquirir_cmg_online` orquesta ambos y cae al S3 solo si la API no responde. El cron de
+  potencia baja las últimas 6 páginas del día (lo más fresco); el horario hace ayer+hoy
+  completos. Dashboard: `load_cmg_min` + serie de 15 min en `gen_unidad` (fallback al horario),
+  y el selector de nodo ahora ofrece las 4 barras. Migración: `migracion_cmg_online_min.py`.
+  Verificado de paso: el programa PID volvió a emitirse (datos hasta 2026-07-31).
+
+*Actualizado 2026-07-29. Proyecto CTM Mejillones (4 térmicas ANG/CCR).*
 *Stack: Streamlit + supabase-py/psycopg2 + GitHub Actions + API CEN (SIP/OPS) + CMG S3 + scikit-learn/xgboost.*
