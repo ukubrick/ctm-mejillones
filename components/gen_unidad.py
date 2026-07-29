@@ -11,7 +11,7 @@ from plotly.subplots import make_subplots
 
 from config import LABELS, NOMBRES_NODO, UNIDADES, BG, GR, POT_MIN_TECNICA, SERIE, CMG_A_DEMANDA
 from utils.data import (load_cmg_prog, load_prog_pid, load_pronostico_demanda,
-                        load_real, load_cmg)
+                        load_real, load_cmg, load_cmg_min)
 from utils.plotly_theme import add_linea_ahora, estilo_serie, hover
 from components._common import metricas_precision
 
@@ -218,7 +218,7 @@ def _chart_unidad(unidad, df_r, df_p, df_pid, df_c, df_cp, df_dem, barra_dem,
     if tiene_cmg:
         fig.add_trace(go.Scatter(
             x=df_c["fecha_hora"], y=df_c["cmg_usd_mwh"], name=f"CMG real {nodo_label}", mode="lines",
-            hovertemplate=hover("CMG real", "USD/MWh", "online S3, actualiza ~15 min"),
+            hovertemplate=hover("CMG real", "USD/MWh", "online API CEN, cada 15 min"),
             legendrank=6, **estilo_serie("cmg"),
         ), row=2, col=1)
         # Overlay CMG programado (PID), para comparar y tomar decisiones de programación
@@ -365,6 +365,13 @@ def render_gen_unidad(df_r, df_p, df_c, mostrar_prog, mostrar_cmg, nodo_cmg, s=N
                 st.rerun()
 
     u_act = st.session_state["unidad_sel"]
+    # Serie CMG de 15 min (API SIP) para el gráfico: muestra los desacoples con
+    # CMG = 0 y el detalle intra-hora que el promedio horario aplana. Si la tabla
+    # aún no tiene datos para el período/nodo, se usa el horario de `costo_marginal`.
+    if vis["cmg"] and s and e:
+        df_c_min = load_cmg_min(s, e, nodo_cmg)
+        if not df_c_min.empty:
+            df_c = df_c_min
     df_cp  = load_cmg_prog(s, e, nodo_cmg) if (vis["cmg_prog"] and s and e) else None
     df_pid = load_prog_pid(s, e) if (vis["pid"] and s and e) else None
     barra_dem = CMG_A_DEMANDA.get(nodo_cmg, "Crucero220")
