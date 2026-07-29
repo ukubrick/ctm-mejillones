@@ -379,10 +379,11 @@ SIDEBAR_GRAD = "linear-gradient(168deg,#0E7E93,#2A38C9,#4A25A0)"                
 
 ## PENDIENTES VIVOS (lista única — actualizar aquí)
 
-- [ ] **CMG online por API (2026-07-29):** correr `migracion_cmg_online_min.py 7` vía el workflow
-      `migracion.yml` (crea la tabla + backfill de 7 días) ANTES de que la vista muestre la serie
-      de 15 min; verificar que el cron de potencia no se alarga de más con las 6 páginas y que el
-      histórico horario viejo de `costo_marginal` (sin ceros, del S3) no confunde al comparar.
+- [ ] **CMG online por API (2026-07-29):** migración corrida OK (3 días, 19 min: 854 puntos de
+      15 min, 148 en 0, 232 filas horarias nuevas de Angamos/Cochrane). Falta verificar que el
+      cron de potencia (:25/:55) no se alarga de más con las 6 páginas + reintentos por 429, y
+      tener presente que el histórico horario ANTERIOR al 27/07 en `costo_marginal` viene del S3
+      (sin ceros, solo Crucero/Tarapacá) → no comparar períodos a través de esa frontera.
 
 - [ ] **Limpieza:** decidir si archivar/borrar `exportar_datos_ml.py` y `ml_pruebas.py` (material
       viejo de experimentos ML, no usados por la app).
