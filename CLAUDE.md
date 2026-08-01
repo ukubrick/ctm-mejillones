@@ -305,6 +305,13 @@ Destiladas de bugs y quirks reales del CEN/Streamlit:
     · Corolario de conteo: un evento de corredor aparece 4 veces (una por unidad) → deduplicar
       por (título, ini, fin, instalación) antes de mostrar un KPI de cantidad, o «3
       intervenciones» se publica como «12».
+    · **Corolario de UI (feedback del usuario, 2026-08-02): el corredor NO va en la serie de
+      tiempo de la unidad.** En esa franja solo deben aparecer eventos que intervienen la
+      MÁQUINA: limitaciones de la unidad y mantenimiento mayor / outage de la propia térmica.
+      Las subestaciones y líneas dejaban una banda permanente que cubría casi todo el gráfico y
+      copaban el banner de eventos latentes. `render_gen_unidad` llama a `eventos_unidad(...,
+      incluir_corredor=False)`; el contexto del corredor vive en Operación > Panorama (gris,
+      etiquetado como contexto) y en la subsección Mant. mayor.
     · `mantenimiento_mayor` NO trae `id_unidad`: el mapeo a unidad es por texto
       (`unidades_mantenimiento`). Hoy la tabla solo tiene líneas y subestaciones del corredor;
       cuando el CEN publique el PMPM de las unidades de Angamos (outage coordinado para octubre
@@ -478,7 +485,7 @@ Se abandonaron las categorías desplegables (popovers). El menú es un **segment
 
 | Vista | Sub-secciones |
 |-------|---------------|
-| **Resumen** | Gráfico por unidad (real/prog/CMG) + selector de nodo CMG + bitácora automática de la unidad + novedades |
+| **Resumen** | Gráfico por unidad (real/prog/CMG) + **franjas de evento de la MÁQUINA** (limitación / mantenimiento de la unidad; nunca corredor — regla 48) con atribución de las detenciones y aviso de eventos latentes + selector de nodo CMG + bitácora automática + novedades |
 | **Análisis** | Costos · Estadísticas (consolidada) · Predicción (ML: Pronóstico CMG · Desviación explicada · Riesgo de desacople) |
 | **Operación** | **Panorama** · Limitaciones · SSCC (incl. Programado PCP y Desempeño CPF/CSF) · Despacho CMG · Solicitudes · Mant. mayor |
 | **Datos** | Ingreso Manual · Datos & Bitácora · Infotécnica (**las 2 primeras tras contraseña `jt`**) |
@@ -976,12 +983,19 @@ Limpieza de scripts probe/test/check.
     ventana como única fuente de vigencia y cuatro estados (activa / vencida = cerrada de facto /
     cerrada / futura). Lo consumen el panel de Limitaciones, la bitácora automática, la serie de
     la unidad, el Panorama y el informe ejecutivo.
-  · **Serie de la unidad (`gen_unidad.py`):** las ventanas de limitación, mantenimiento y
-    corredor se pintan como franjas translúcidas con leyenda propia; los bloques de detención
-    (< 5 MW) se agrupan con `_bloques` y se atribuyen con `explicar_horas` → el banner dice
-    «detenida 03-08 04:00 → 12:00 (9 h) — Limitación N.xxxx» o **«sin causa registrada»** (rojo
-    solo en ese caso; ámbar cuando todo tiene causa). Banner nuevo de **eventos latentes** con
-    cuenta regresiva a los programas futuros del PMPM. Checkbox «Eventos» en Series visibles.
+  · **Serie de la unidad (`gen_unidad.py`):** las ventanas de evento se pintan como franjas
+    translúcidas con leyenda propia; los bloques de detención (< 5 MW) se agrupan con `_bloques`
+    y se atribuyen con `explicar_horas` → el banner dice «detenida 03-08 04:00 → 12:00 (9 h) —
+    Limitación N.xxxx» o **«sin causa registrada»** (rojo solo en ese caso; ámbar cuando todo
+    tiene causa). Banner nuevo de **eventos latentes** con cuenta regresiva a los programas
+    futuros del PMPM. Checkbox «Eventos de la unidad» en Series visibles.
+  · **Ajuste posterior del usuario (mismo día, commit `10cf943`): la franja es SOLO de la
+    máquina.** La primera versión incluía el corredor de evacuación y el resultado fue una banda
+    teal permanente sobre casi todo el gráfico (los trabajos en S/E O'Higgins y Laberinto duran
+    semanas) más un banner de latentes lleno de subestaciones. Ahora `render_gen_unidad` pasa
+    `incluir_corredor=False`: quedan solo limitaciones de la unidad y mantenimiento mayor /
+    outage de la propia térmica. Verificado con datos reales: las 4 unidades pasan a tener solo
+    eventos de tipo `limitacion` y 0 latentes. Ver regla 48.
   · **Vista «Restricciones» → «Operación» + sub «Panorama»** (`components/operacion.py`): estado
     actual por unidad con evento vigente y próximo, timeline unificado de las 4 unidades,
     energía no generada por evento (Σ programa − real dentro de la ventana, valorizada al CMG
