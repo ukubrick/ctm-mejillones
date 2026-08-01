@@ -40,7 +40,7 @@ import streamlit as st
 from config import (COLORES, LABELS, AES_AZUL, AES_AMBAR, AES_CYAN, AES_VERDE,
                     AES_VIOLETA, AES_ROJO, NOMBRES_NODO, BG_TRANSP, C_GRID)
 from utils.db import fetch, rest_enabled
-from utils.plotly_theme import hex_to_rgba
+from utils.plotly_theme import hex_to_rgba, add_linea_ahora
 from utils.data import (load_instrucciones_cmg, load_limitaciones, load_sscc,
                         load_mantenimiento_mayor)
 
@@ -503,17 +503,27 @@ def _seccion_cmg():
     fig.add_trace(go.Scatter(x=ctx["fecha_hora"], y=ctx["cmg_usd_mwh"], name="Histórico (48h)",
         line=dict(color=AES_AZUL, width=2.4, shape="spline", smoothing=0.4),
         fill="tozeroy", fillcolor=hex_to_rgba(AES_AZUL, 0.06)))
-    if "cmg_pcp" in feats:
-        pcp_fut = [mapas["cmg_pcp"].get(ts, np.nan) for ts in dff["fecha_hora"]]
-        if np.isfinite(pd.Series(pcp_fut, dtype=float)).sum() >= 3:
-            fig.add_trace(go.Scatter(x=dff["fecha_hora"], y=pcp_fut, name="PCP del Coordinador",
-                line=dict(color=AES_CYAN, width=1.6, dash="dash"),
-                hovertemplate="%{x|%d/%m %Hh}<br>PCP %{y:.1f}<extra></extra>"))
+    # Programas del Coordinador sobre TODO el rango visible (histórico + horizonte),
+    # no solo sobre el forecast: así se ve cómo le fue al programa contra el precio
+    # que efectivamente ocurrió, que es el contexto para leer el benchmark de abajo.
+    span = pd.Index(ctx["fecha_hora"]).append(pd.Index(dff["fecha_hora"]))
+    for col, nom, c, dash in (("cmg_pcp", "PCP del Coordinador", AES_CYAN, "dash"),
+                              ("cmg_pid", "PID del Coordinador", AES_VERDE, "dashdot")):
+        if col not in mapas:
+            continue
+        serie = [mapas[col].get(ts, np.nan) for ts in span]
+        if pd.Series(serie, dtype=float).notna().sum() < 3:
+            continue
+        fig.add_trace(go.Scatter(x=span, y=serie, name=nom,
+            line=dict(color=c, width=1.6, dash=dash), connectgaps=False,
+            hovertemplate="%{x|%d/%m %Hh}<br>" + nom.split()[0] + " %{y:.1f}<extra></extra>"))
     fig.add_trace(go.Scatter(x=dff["fecha_hora"], y=dff["cmg_pred"], name="Forecast 24h",
         mode="lines+markers", line=dict(color=AES_AMBAR, width=2.4, dash="dot"), marker=dict(size=5),
         hovertemplate="%{x|%d/%m %Hh}<br>%{y:.1f} USD/MWh<extra></extra>"))
-    fig.add_vline(x=df["fecha_hora"].iloc[-1].timestamp()*1000, line_dash="dash",
-        line_color="#94A3B8", line_width=1, annotation_text="ahora", annotation_position="top")
+    # Helper compartido: usa datetime.now(TZ_CHILE) y dibuja con add_shape. Marcar
+    # aquí el último dato con .timestamp()*1000 ponía la línea en la hora equivocada
+    # (depende del huso del contenedor) y además no es "ahora", es "último registro".
+    add_linea_ahora(fig, span.min(), span.max())
     _base_layout(fig, "Costo marginal — histórico y pronóstico 24h con banda calibrada",
                  "CMG USD/MWh", hovermode="x unified")
     _show(fig)
