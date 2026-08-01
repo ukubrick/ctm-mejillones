@@ -2,8 +2,10 @@
 > Contexto completo para Claude Code. Leer al inicio de cada sesión.
 > Autor: Erick Herrera — AES Andes, Antofagasta, Chile.
 > Última actualización: 2026-08-01 (reportes PDF/PPT reducidos a informe ejecutivo de
->   gerencia — 2 páginas / 4 slides; panel de adquisición del sidebar ampliado a las
->   fuentes y cadencias reales; fixes de CSS de botones y de margen derecho del gráfico).
+>   gerencia — 2 páginas / 4 slides, con la fuente del programa PID/PCP declarada; sidebar
+>   depurado a las fuentes reales post-migración CMG; fixes de layout verificados contra el
+>   DOM real: botones del sidebar, franja derecha del gráfico, pills del nodo CMG y menú
+>   principal compacto).
 > Anterior: 2026-07-29 (CMG online migrado del feed S3 a la API SIP
 >   `/costo-marginal-online/v4`: 15 min, 4 barras incl. Angamos/Cochrane, y los CMG = 0 dejan
 >   de perderse; tabla `costo_marginal_online_min` + `migracion_cmg_online_min.py`).
@@ -195,9 +197,10 @@ CMG online:      API CEN /costo-marginal-online/v4 (15 min) — Crucero/Tarapac�
                  (feed S3 del Coordinador solo como fallback)
 CMG prog/real:   /cmg-programado-pid/v4 + /costo-marginal-real/v4
 SSCC:            API CEN Operaciones /servicios-complementarios/v1
-Reportes:        ReportLab (PDF) + python-pptx (PPT) — ejecutivos, paleta AES, in-memory
+Reportes:        ReportLab (PDF, 2 págs) + python-pptx (PPT, 4 slides) + matplotlib (figuras)
+                 — informe EJECUTIVO de gerencia, paleta AES, in-memory
 ML:              scikit-learn (Isolation Forest) + xgboost (forecast CMG)
-Autorefresh:     streamlit-autorefresh (3.600.000 ms)
+Autorefresh:     streamlit-autorefresh (300.000 ms = 5 min, keep-alive — ver regla 21)
 ```
 
 ### Por qué REST (supabase-py) y no psycopg2 en el dashboard
@@ -261,8 +264,8 @@ dashboard_api/
 ├── components/
 │   ├── _common.py                  ← metricas_precision, render_guia/tabla_guia, render_cards_unidad
 │   ├── sidebar.py                  ← render_sidebar → filtros; estado de adquisición (fuentes
-│   │                                  continuas + último registro + cadencia de los 4 crons);
-│   │                                  export PDF/PPT
+│   │                                  continuas con dot de frescura + último registro);
+│   │                                  export PDF/PPT ejecutivo (botones con width="stretch")
 │   ├── kpis.py                     ← render_kpis — cards por unidad + alarma de TRIP (UMBRAL_TRIP=5 MW)
 │   ├── gen_unidad.py               ← render_gen_unidad — series real/prog/CMG + selector nodo CMG +
 │   │                                  ingreso estimado por unidad (junto al MAE, delta vs semana pasada) +
@@ -409,6 +412,19 @@ SIDEBAR_GRAD = "linear-gradient(168deg,#0E7E93,#2A38C9,#4A25A0)"                
 ---
 
 ## PENDIENTES VIVOS (lista única — actualizar aquí)
+
+- [ ] **Reportes ejecutivos (2026-08-01):** el PDF/PPT nuevo se probó con datos sintéticos y
+      corriendo la app local contra la DB de producción, pero NADIE lo ha descargado todavía desde
+      Streamlit Cloud ni lo ha visto un destinatario de gerencia. Al primer uso real revisar:
+      (a) que el ingreso estimado y el factor de planta cuadren con lo que espera el negocio —
+      el ingreso es referencia de mercado (Σ MWh × CMG), NO una liquidación; (b) si conviene
+      sumar el desempeño SSCC (CPF/CSF) como quinto KPI; (c) que los «Puntos destacados»
+      autogenerados no digan nada falso cuando el período tiene huecos de datos.
+
+- [ ] **Verificar el layout en Streamlit Cloud:** los cuatro fixes de layout (botones
+      `width="stretch"`, `secondary_y` condicional, pills del nodo CMG, menú compacto) se
+      midieron en local con Playwright. Confirmar que se ven igual en producción tras el
+      redeploy — el CSS a medida ya rompió sin aviso una vez con un cambio de versión (regla 19).
 
 - [ ] **CMG online por API (2026-07-29):** migración corrida OK (3 días, 19 min: 854 puntos de
       15 min, 148 en 0, 232 filas horarias nuevas de Angamos/Cochrane). Falta verificar que el
@@ -592,6 +608,9 @@ Limpieza de scripts probe/test/check.
     (S3)» si `costo_marginal_online_min` está vacío) · CMG programado; último registro de Despacho
     CMG, SSCC, Limitaciones, CMG real liquidado y Mant. mayor; bloque nuevo «Frecuencia» con la
     cadencia de los 4 crons (el texto fijo «cada 30 min» era falso para 3 de ellos).
+    NOTA: más tarde en la misma sesión el usuario pidió depurar el panel → se quitaron la fila
+    «Conectado · Supabase», «Mant. mayor» y el bloque «Frecuencia» completo (ver último bullet).
+    La cabecera manda: el estado final es fuentes continuas + último registro, sin cadencias.
   · **Fix botones del sidebar (2º intento, este sí):** el primer diagnóstico (centrado del label
     por CSS) era incorrecto. Inspeccionando el DOM real con Playwright: el `<button>` ya tenía
     `width:100%`, pero su wrapper `div[data-testid="stButton"]` es shrink-to-fit (145 px) → botones
