@@ -177,14 +177,19 @@ def _programado(s, e):
 
     k1, k2, k3, k4 = st.columns(4)
     k1.metric("Provisión programada", f"{df['provision_mw'].sum():,.0f} MW-h".replace(",", "."))
+    # delta_color="off": el % es una PROPORCIÓN, no una variación — con el color
+    # por defecto Streamlit lo pinta con flecha verde, como si hubiera mejorado.
     k2.metric("Horas con compromiso", f"{len(comp):,}".replace(",", "."),
-              f"{len(comp)/len(df)*100:.0f}% de las filas")
+              f"{len(comp)/len(df)*100:.0f}% de las filas", delta_color="off")
     k3.metric("Unidades comprometidas", f"{comp['unidad'].nunique()} / 4")
-    top = "—"
+    top_serv, top_mw = "—", ""
     if len(comp):
         por_t = comp.groupby("tipo_servicio")["provision_mw"].sum()
-        top = f"{por_t.idxmax()} · {por_t.max():,.0f} MW-h".replace(",", ".")
-    k4.metric("Servicio dominante", top)
+        # El servicio va SOLO en el valor: "CSF (-) · 266 MW-h" no cabe en la card
+        # y se corta con puntos suspensivos. El MW-h baja a la línea de detalle.
+        top_serv = por_t.idxmax()
+        top_mw = f"{por_t.max():,.0f} MW-h".replace(",", ".")
+    k4.metric("Servicio dominante", top_serv, top_mw, delta_color="off")
     st.markdown("<div style='height:8px'></div>", unsafe_allow_html=True)
 
     if comp.empty:
@@ -193,7 +198,12 @@ def _programado(s, e):
         return
 
     # ── Provisión programada por día y unidad (apilada, un solo eje) ──────────
-    d = comp.assign(dia=comp["fecha_hora"].dt.date)
+    # Eje x CATEGÓRICO (día como texto), no temporal: con un solo día disponible
+    # un eje de fechas estira la barra a todo el ancho del gráfico y parece un
+    # bloque de color. Como categoría, `bargap` la mantiene de ancho razonable.
+    d = comp.assign(dia=comp["fecha_hora"].dt.strftime("%d/%m"))
+    orden_dias = (comp.assign(_d=comp["fecha_hora"].dt.date)
+                  .sort_values("_d")["fecha_hora"].dt.strftime("%d/%m").unique().tolist())
     diario = d.groupby(["unidad", "dia"])["provision_mw"].sum().reset_index()
     fig = go.Figure()
     for u in UNIDADES:
@@ -205,12 +215,13 @@ def _programado(s, e):
             marker_color=COLORES[u]["line"],
             hovertemplate=f"<b>{LABELS[u]}</b><br>%{{x}}<br>%{{y:.1f}} MW-h<extra></extra>"))
     fig.update_layout(
-        barmode="stack",
+        barmode="stack", bargap=0.6 if len(orden_dias) <= 3 else 0.25,
         title=dict(text="Provisión SSCC programada por día y unidad",
                    font=dict(size=13, color="#0F172A"), x=0),
         height=340, margin=dict(l=10, r=14, t=52, b=10),
         plot_bgcolor=BG, paper_bgcolor=BG, font=dict(family="Inter, sans-serif"),
-        xaxis=dict(showgrid=False, tickfont=dict(color="#94A3B8", size=10), tickformat="%d/%m"),
+        xaxis=dict(showgrid=False, tickfont=dict(color="#94A3B8", size=10),
+                   type="category", categoryorder="array", categoryarray=orden_dias),
         yaxis=dict(gridcolor=GR, tickfont=dict(color="#94A3B8", size=10),
                    title="MW-h programados", title_font=dict(color="#94A3B8", size=10)),
         legend=dict(orientation="h", yanchor="bottom", y=1.02, x=0, font=dict(size=10)),
