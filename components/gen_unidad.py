@@ -11,9 +11,12 @@ from plotly.subplots import make_subplots
 
 from config import LABELS, NOMBRES_NODO, UNIDADES, BG, GR, POT_MIN_TECNICA, SERIE, CMG_A_DEMANDA
 from utils.data import (load_cmg_prog, load_prog_pid, load_pronostico_demanda,
-                        load_real, load_cmg, load_cmg_min)
+                        load_real, load_cmg, load_cmg_min, load_limitaciones,
+                        load_mantenimiento_mayor)
 from utils.plotly_theme import add_linea_ahora, estilo_serie, hover
-from components._common import metricas_precision
+from utils.eventos import (TIPO_EVENTO, dias_hasta, eventos_latentes,
+                           eventos_unidad, explicar_horas)
+from components._common import fmt_usd, metricas_precision
 
 # MW bajo el cual se considera que la unidad está detenida (trip / desconexión).
 # < 5 MW en la práctica ya indica potencia 0 (unidad desenganchada).
@@ -79,8 +82,141 @@ def _ingreso_semana_pasada(unidad, nodo_cmg, e):
     return _ingreso(dr[dr["unidad"] == unidad], dc)
 
 
+def _bloques(ts_serie, salto=pd.Timedelta("2h")):
+    """Agrupa instantes consecutivos en bloques [inicio, fin].
+
+    Un trip de 9 horas son 9 filas horarias: listarlas una a una no dice nada.
+    Como bloque se lee «detenida de las 03:00 a las 12:00», que es el evento real.
+    """
+    ts = pd.Series(sorted(pd.to_datetime(ts_serie))).reset_index(drop=True)
+    if ts.empty:
+        return []
+    corte = ts.diff() > salto
+    grupo = corte.cumsum()
+    return [(g.min(), g.max()) for _, g in ts.groupby(grupo)]
+
+
+def _bandas_eventos(fig, df_ev, x_min, x_max, n_rows):
+    """Franjas verticales de los eventos vigentes/pasados sobre la serie.
+
+    Cada limitación, mantenimiento o intervención del corredor se pinta como una
+    banda translúcida en el tramo que cubre. Así una caída de potencia deja de
+    verse como un hecho aislado: queda visualmente pegada a su causa registrada.
+    """
+    if df_ev is None or df_ev.empty:
+        return []
+    dibujados = []
+    for _, ev in df_ev.iterrows():
+        ini, fin = max(ev["ini"], x_min), min(ev["fin"], x_max)
+        if pd.isna(ini) or pd.isna(fin) or ini > fin:
+            continue   # el evento no toca la ventana visible
+        _, color, relleno = TIPO_EVENTO.get(ev["tipo"], TIPO_EVENTO["limitacion"])
+        fig.add_vrect(x0=ini, x1=fin, fillcolor=relleno, line_width=0,
+                      layer="below", row=1, col=1)
+        # Borde izquierdo: marca el instante en que empieza el evento.
+        fig.add_vline(x=ini, line_color=color, line_width=1.4, line_dash="dot",
+                      opacity=0.55, row=1, col=1)
+        dibujados.append(ev)
+    return dibujados
+
+
+def _leyenda_eventos(fig, dibujados):
+    """Entradas de leyenda (una por tipo) para las bandas de evento.
+
+    `add_vrect` no aparece en la leyenda, así que se agrega una traza vacía por
+    tipo presente. Sin esto las bandas de color quedan sin explicación.
+    """
+    vistos = []
+    for ev in dibujados:
+        if ev["tipo"] in vistos:
+            continue
+        vistos.append(ev["tipo"])
+        etiqueta, color, _ = TIPO_EVENTO[ev["tipo"]]
+        fig.add_trace(go.Scatter(
+            x=[None], y=[None], mode="markers", name=etiqueta, legendrank=9,
+            marker=dict(color=color, size=10, symbol="square", opacity=0.45),
+            hoverinfo="skip"), row=1, col=1)
+
+
+def _alerta_detencion(unidad, df_cero, df_ev):
+    """Banner de unidad detenida CON su causa registrada (o la falta de ella).
+
+    Antes solo decía «potencia 0 en N horas». Ahora se cruza cada bloque de
+    detención contra la ventana de los eventos del CEN: lo que calza se declara
+    explicado (limitación / mantenimiento / corredor) y lo que no queda marcado
+    como SIN causa registrada, que es justamente lo que hay que ir a investigar.
+    """
+    if df_cero.empty:
+        return
+    bloques = _bloques(df_cero["fecha_hora"])
+    causas = explicar_horas(df_cero["fecha_hora"], df_ev)
+    causas.index = pd.Index(sorted(pd.to_datetime(df_cero["fecha_hora"])))
+
+    filas, n_sin = [], 0
+    for ini, fin in bloques:
+        en_bloque = causas[(causas.index >= ini) & (causas.index <= fin)]
+        etiquetas = [c for c in en_bloque.unique() if c]
+        horas = len(en_bloque)
+        rango = (ini.strftime("%d-%m %H:%M") if ini == fin
+                 else f"{ini.strftime('%d-%m %H:%M')} → {fin.strftime('%d-%m %H:%M')}")
+        if etiquetas:
+            causa = " · ".join(etiquetas[:2])
+            filas.append(f'<li>{rango} ({horas} h) — <b>{causa}</b></li>')
+        else:
+            n_sin += 1
+            filas.append(f'<li>{rango} ({horas} h) — <b>sin causa registrada</b> '
+                         f'(no hay limitación ni mantenimiento que cubra esas horas)</li>')
+
+    # Rojo si algo quedó sin explicar; ámbar si todo tiene causa conocida.
+    crit = n_sin > 0
+    bg, bd, bl, txt, dot = (("#FEF2F2", "#FCA5A5", "#DC2626", "#991B1B", "#DC2626") if crit
+                            else ("#FFF7ED", "#FDBA74", "#D97706", "#7A5316", "#D97706"))
+    titulo = (f"ALERTA · {LABELS[unidad]} detenida en {len(bloques)} evento(s)"
+              if crit else
+              f"{LABELS[unidad]} detenida en {len(bloques)} evento(s) — con causa registrada")
+    st.markdown(
+        f'<div style="background:{bg};border:1px solid {bd};border-left:5px solid {bl};'
+        f'border-radius:8px;padding:10px 16px;margin:2px 0 10px;color:{txt};font-size:0.86rem">'
+        f'<div style="font-weight:700;display:flex;align-items:center;gap:9px">'
+        f'<span style="display:inline-block;width:10px;height:10px;border-radius:50%;'
+        f'background:{dot};animation:blink 1s infinite"></span>{titulo}</div>'
+        f'<ul style="margin:6px 0 0;padding-left:26px;font-weight:500">{"".join(filas)}</ul>'
+        f'</div>', unsafe_allow_html=True)
+
+
+def _banner_latentes(unidad, df_ev):
+    """Eventos FUTUROS ya publicados: mantenimiento mayor / outage por venir.
+
+    El PMPM del CEN publica programas con meses de anticipación. Mostrarlos como
+    evento latente permite anticipar la indisponibilidad en vez de descubrirla
+    cuando la unidad ya bajó.
+    """
+    lat = eventos_latentes(df_ev)
+    if lat is None or lat.empty:
+        return
+    filas = []
+    for _, ev in lat.head(4).iterrows():
+        d = dias_hasta(ev["ini"])
+        etiqueta, color, _ = TIPO_EVENTO.get(ev["tipo"], TIPO_EVENTO["mantenimiento"])
+        est = ev.get("estado_cen") or ""
+        est_txt = f' · <span style="color:#64748B">{est}</span>' if est else ""
+        plural = "día" if d == 1 else "días"
+        filas.append(
+            f'<li><b>en {d} {plural}</b> · {ev["ini"].strftime("%d-%m-%Y")} → '
+            f'{ev["fin"].strftime("%d-%m-%Y")} ({ev["dias"]:.0f} d) — '
+            f'<span style="color:{color};font-weight:600">{ev["titulo"]}</span>: '
+            f'{ev["fuente"][:48]}{est_txt}</li>')
+    st.markdown(
+        f'<div style="background:#F5F3FF;border:1px solid #DDD6FE;border-left:5px solid #7C4DE0;'
+        f'border-radius:8px;padding:10px 16px;margin:2px 0 10px;color:#4C1D95;font-size:0.84rem">'
+        f'<div style="font-weight:700">Eventos latentes · {LABELS[unidad]} '
+        f'({len(lat)} programado(s) por delante)</div>'
+        f'<ul style="margin:6px 0 0;padding-left:26px;font-weight:500">{"".join(filas)}</ul>'
+        f'</div>', unsafe_allow_html=True)
+
+
 def _chart_unidad(unidad, df_r, df_p, df_pid, df_c, df_cp, df_dem, barra_dem,
-                  vis, nodo_label, nodo_cmg=None, s=None, e=None):
+                  vis, nodo_label, nodo_cmg=None, s=None, e=None, df_ev=None):
     df_u   = df_r[df_r["unidad"] == unidad].sort_values("fecha_hora")
     df_up  = df_p[df_p["unidad"] == unidad].sort_values("fecha_hora") if not df_p.empty else pd.DataFrame()
     df_upid = (df_pid[df_pid["unidad"] == unidad].sort_values("fecha_hora")
@@ -91,24 +227,11 @@ def _chart_unidad(unidad, df_r, df_p, df_pid, df_c, df_cp, df_dem, barra_dem,
         return
 
     # ── Detección de potencia real en 0 (trip / desconexión / mantención) ────
-    # Cualquier hora con gen_real ≤ umbral significa unidad detenida. Se resalta
-    # en rojo en la serie y con un mensaje de alerta sobre el gráfico.
+    # Cualquier hora con gen_real ≤ umbral significa unidad detenida. Se agrupa en
+    # bloques y se cruza con los eventos registrados para declarar la causa.
     df_cero = df_u[df_u["gen_real_mw"] < UMBRAL_CERO]
-    if not df_cero.empty:
-        n = len(df_cero)
-        ini = df_cero["fecha_hora"].min().strftime("%d-%m %H:%M")
-        fin = df_cero["fecha_hora"].max().strftime("%d-%m %H:%M")
-        rango = f"{ini}" if n == 1 else f"{ini} → {fin}"
-        st.markdown(
-            f'<div style="background:#FEF2F2;border:1px solid #FCA5A5;border-left:5px solid #DC2626;'
-            f'border-radius:8px;padding:10px 16px;margin:2px 0 10px;color:#991B1B;font-size:0.86rem;'
-            f'font-weight:600;display:flex;align-items:center;gap:9px">'
-            f'<span style="display:inline-block;width:10px;height:10px;border-radius:50%;'
-            f'background:#DC2626;animation:blink 1s infinite"></span>'
-            f'ALERTA · {LABELS[unidad]} con potencia en 0 MW en {n} hora(s) '
-            f'({rango}) — trip, desconexión programada o mantención.</div>',
-            unsafe_allow_html=True,
-        )
+    _alerta_detencion(unidad, df_cero, df_ev)
+    _banner_latentes(unidad, df_ev)
 
     tiene_cmg = vis["cmg"] and not df_c.empty
     tiene_pcp = vis["pcp"] and not df_up.empty
@@ -169,13 +292,18 @@ def _chart_unidad(unidad, df_r, df_p, df_pid, df_c, df_cp, df_dem, barra_dem,
         for x0 in df_cero["fecha_hora"]:
             fig.add_vrect(x0=x0 - pd.Timedelta(minutes=30), x1=x0 + pd.Timedelta(minutes=30),
                           fillcolor="rgba(220,38,38,0.10)", line_width=0, row=1, col=1)
+        # La causa viaja en customdata → el tooltip de cada hora detenida dice si
+        # está explicada por un evento del CEN o si no hay nada que la justifique.
+        causas_pt = explicar_horas(df_cero["fecha_hora"], df_ev).replace(
+            "", "sin causa registrada").tolist()
         fig.add_trace(go.Scatter(
             x=df_cero["fecha_hora"], y=df_cero["gen_real_mw"], name="Potencia 0 (detenida)",
-            mode="markers", legendrank=1,
+            mode="markers", legendrank=1, customdata=causas_pt,
             marker=dict(color="#DC2626", size=11, symbol="x-thin",
                         line=dict(color="#DC2626", width=2.5)),
             hovertemplate="<b>UNIDAD DETENIDA</b> %{x|%d/%m %H:%M}<br>"
-                          "0 MW · trip / desconexión / mantención<extra></extra>",
+                          "0 MW · trip / desconexión / mantención<br>"
+                          "Causa: %{customdata}<extra></extra>",
         ), row=1, col=1)
 
     # Línea de mínimo técnico — referencia de operación estable de la unidad
@@ -268,6 +396,13 @@ def _chart_unidad(unidad, df_r, df_p, df_pid, df_c, df_cp, df_dem, barra_dem,
     x_all = pd.concat(xs)
     x_min, x_max = x_all.min(), x_all.max()
     add_linea_ahora(fig, x_min, x_max)
+
+    # Bandas de evento (limitación / mantenimiento / corredor) sobre la fila de
+    # generación: la alarma deja de ser puntual y pasa a ser un contexto visible
+    # durante toda la ventana en que el evento estuvo vigente.
+    if vis.get("eventos", True):
+        _leyenda_eventos(fig, _bandas_eventos(fig, df_ev, x_min, x_max, n_rows))
+
     if tiene_cmg:
         fig.update_yaxes(title_text="USD/MWh", gridcolor=GR, zeroline=False,
                          tickfont=dict(color="#94A3B8", size=10), title_font=dict(color="#94A3B8", size=11),
@@ -320,9 +455,10 @@ def _chart_unidad(unidad, df_r, df_p, df_pid, df_c, df_cp, df_dem, barra_dem,
                 if prev and prev > 0:
                     # + verde = ingresó más que la semana pasada; − rojo = peor.
                     delta = f"{(ingreso - prev) / prev * 100:+.1f}% vs semana pasada"
-                k0.metric("Ingreso estimado", f"${ingreso:,.0f}", delta,
-                          help="Σ generación real × CMG en el período (USD). "
-                               "Delta = variación vs la semana anterior.")
+                k0.metric("Ingreso estimado", fmt_usd(ingreso), delta,
+                          help=f"Σ generación real × CMG en el período. "
+                               f"Valor exacto: US$ {ingreso:,.0f}. "
+                               f"Delta = variación vs la semana anterior.")
             else:
                 k0.metric("Ingreso estimado", "—",
                           help="Requiere datos de CMG en el período.")
@@ -368,9 +504,14 @@ def render_gen_unidad(df_r, df_p, df_c, mostrar_prog, mostrar_cmg, nodo_cmg, s=N
             st.caption("Contexto")
             v_dem  = st.checkbox("Demanda pronosticada", value=False, key="vis_dem",
                                  disabled=not v_cmg)
+            v_ev   = st.checkbox("Eventos (limitaciones y mantenimiento)", value=True,
+                                 key="vis_ev",
+                                 help="Franjas de las ventanas de limitación de transmisión, "
+                                      "mantenimiento mayor e intervenciones del corredor "
+                                      "de evacuación que afectan a la unidad.")
 
     vis = {"pcp": v_pcp, "pid": v_pid, "desv": v_desv and (v_pid or v_pcp),
-           "cmg": v_cmg, "cmg_prog": v_cmgp, "demanda": v_dem}
+           "cmg": v_cmg, "cmg_prog": v_cmgp, "demanda": v_dem, "eventos": v_ev}
 
     st.session_state.setdefault("unidad_sel", "ANG1")
     cols_btn = st.columns(4)
@@ -409,5 +550,11 @@ def render_gen_unidad(df_r, df_p, df_c, mostrar_prog, mostrar_cmg, nodo_cmg, s=N
         f'{LABELS[u_act]} · Real vs Programada (MW) + CMG {nl} (USD/MWh)</p>',
         unsafe_allow_html=True,
     )
+    # Eventos de la unidad activa (limitaciones con ventana real + mantenimiento
+    # mayor del PMPM, incluido el corredor de evacuación). Alimentan la alarma
+    # atribuida, las bandas de la serie y el aviso de eventos latentes.
+    df_ev = eventos_unidad(u_act,
+                           df_lim=load_limitaciones(s, e) if (s and e) else None,
+                           df_mant=load_mantenimiento_mayor())
     _chart_unidad(u_act, df_r, df_p, df_pid, df_c, df_cp, df_dem, barra_dem, vis, nl,
-                  nodo_cmg=nodo_cmg, s=s, e=e)
+                  nodo_cmg=nodo_cmg, s=s, e=e, df_ev=df_ev)

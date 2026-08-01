@@ -15,6 +15,7 @@ from components.kpis import render_kpis
 from components.gen_unidad import render_gen_unidad
 from components.costo import render_costo
 from components.limitaciones import render_limitaciones
+from components.operacion import render_panorama
 from components.sscc import render_sscc
 from components.despacho_cmg import render_despacho_cmg
 from components.novedades import render_novedades
@@ -48,7 +49,12 @@ st.markdown(get_css(), unsafe_allow_html=True)
 # ── Navegación plana (4 vistas · principio de simplicidad) ────────────────────
 # Se fusionaron las categorías: las sub-secciones viven dentro de cada vista con
 # radio-pills internos. Los estadísticos dispersos se consolidaron en «Análisis».
-VISTAS = ["Resumen", "Análisis", "Restricciones", "Datos"]
+# «Restricciones» pasó a «Operación» (2026-08-02): la vista agrupa instrucciones
+# SSCC, despacho por CMG y solicitudes, que no son restricciones sino hechos
+# operacionales del CEN sobre las unidades. Abre con «Panorama», que consolida
+# las cinco fuentes en una sola lectura (qué está activo, cuánto cuesta, qué
+# queda sin explicar) en vez de obligar a recorrer cinco inventarios.
+VISTAS = ["Resumen", "Análisis", "Operación", "Datos"]
 
 
 _CLAVE_DATOS = "jt"
@@ -140,11 +146,14 @@ def main():
         else:
             render_ml()
 
-    elif vista == "Restricciones":
+    elif vista == "Operación":
         seccion = st.radio("Sección",
-                           ["Limitaciones", "SSCC", "Despacho CMG", "Solicitudes", "Mant. mayor"],
-                           horizontal=True, label_visibility="collapsed", key="restric_sub")
-        if seccion == "Limitaciones":
+                           ["Panorama", "Limitaciones", "SSCC", "Despacho CMG",
+                            "Solicitudes", "Mant. mayor"],
+                           horizontal=True, label_visibility="collapsed", key="operacion_sub")
+        if seccion == "Panorama":
+            render_panorama(s, e, df_r, df_p, df_c)
+        elif seccion == "Limitaciones":
             render_limitaciones(s, e)
         elif seccion == "SSCC":
             render_sscc(s, e)

@@ -16,6 +16,7 @@ import pandas as pd
 import streamlit as st
 
 from config import COLORES, LABELS, ID_UNIDAD_LABEL, UNIDADES
+from utils.eventos import estado_limitacion, ventana_limitacion
 from utils.data import (load_sscc, load_instrucciones_cmg, load_limitaciones,
                         load_bit, load_solicitudes, load_mantenimiento_mayor)
 
@@ -91,7 +92,15 @@ def _eventos_limitaciones(df, eventos):
         dt = _dt(r.get("fecha_perturbacion"))
         pot = r.get("potencia")
         um = str(r.get("unidad_medida_potencia") or "MW")
-        status = str(r.get("status") or "").strip()
+        # Estado REAL por ventana, no el `status` del CEN: este se queda en
+        # «pendiente» para siempre y hacía que una limitación de hace meses se
+        # leyera en la bitácora como si siguiera abierta (utils/eventos.py).
+        _ini, _fin, _origen = ventana_limitacion(r)
+        _est = estado_limitacion(r)
+        status = {"activa": "vigente", "vencida": "cerrada de facto",
+                  "cerrada": "cerrada", "futura": "programada"}.get(_est, "")
+        if _est in ("activa", "vencida") and pd.notna(_fin):
+            status += f" hasta {_fin.strftime('%d-%m %H:%M')}"
         instal = str(r.get("instalacion_nombre") or "").split(" - ")[0]
         # potencia limitada > 0 → derrateo parcial; 0/ausente → desconexión (trip)
         if pd.notna(pot) and float(pot) > 0:

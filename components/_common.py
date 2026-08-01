@@ -30,6 +30,57 @@ def metricas_precision(df_real, df_prog,
     return err.abs().mean(), (err ** 2).mean() ** 0.5, err.mean()
 
 
+def fmt_usd(x, decimales=1):
+    """USD compacto para que el valor NUNCA se trunque en la card.
+
+    `st.metric` recorta con puntos suspensivos lo que no cabe: un
+    "$3,744,182" en una fila de 6-7 columnas se veía como "$3,74…". Se abrevia
+    con sufijo M/k y la magnitud exacta va en el tooltip (`help`).
+    """
+    try:
+        v = float(x)
+    except (TypeError, ValueError):
+        return "—"
+    signo = "-" if v < 0 else ""
+    a = abs(v)
+    if a >= 1_000_000:
+        return f"{signo}${a / 1_000_000:.{decimales}f} M"
+    if a >= 1_000:
+        return f"{signo}${a / 1_000:.0f} k"
+    return f"{signo}${a:.0f}"
+
+
+def render_kpi_grid(kpis, por_fila=4):
+    """Fila(s) de `st.metric` con un máximo de `por_fila` cards.
+
+    Poner 6-7 columnas en una sola fila deja cada card en ~180 px: el label en
+    mayúsculas, el valor y el texto secundario se truncan los tres. Repartir en
+    filas de 4 mantiene las cards legibles en cualquier ancho.
+
+    `kpis` es una lista de (label, valor, subtexto) o (label, valor, subtexto, help).
+    """
+    kpis = [k for k in kpis if k]
+    for i in range(0, len(kpis), por_fila):
+        grupo = kpis[i:i + por_fila]
+        # Key ESTABLE entre reruns (derivada de los labels, no de un contador):
+        # una key distinta en cada corrida obliga a Streamlit a recrear el nodo y
+        # la animación de entrada se repite en cada refresco.
+        firma = abs(hash("|".join(str(k[0]) for k in grupo))) % 10_000_000
+        # El contenedor con `key` recibe la clase `.st-key-kpigrid_<n>`: el CSS la
+        # usa para ocultar la flecha del delta, porque aquí el texto secundario es
+        # la UNIDAD de la métrica, no una variación (regla 38).
+        with st.container(key=f"kpigrid_{firma}"):
+            # Se crean siempre `por_fila` columnas para que la última fila incompleta
+            # conserve el mismo ancho de card que las anteriores.
+            cols = st.columns(por_fila)
+            for col, kpi in zip(cols, grupo):
+                lbl, val, sub = kpi[0], kpi[1], kpi[2]
+                ayuda = kpi[3] if len(kpi) > 3 else None
+                col.metric(lbl, val, sub, delta_color="off", help=ayuda)
+        if i + por_fila < len(kpis):
+            st.markdown("<div style='height:10px'></div>", unsafe_allow_html=True)
+
+
 def render_guia(titulo: str, cuerpo_html: str):
     """Guía desplegable estándar (<details>/<summary> con estilo unificado)."""
     st.markdown(

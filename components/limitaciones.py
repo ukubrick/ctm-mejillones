@@ -5,13 +5,37 @@ import plotly.graph_objects as go
 
 from config import ID_UNIDAD_LABEL, ID_CENTRAL_LABEL, STATUS_COLOR_LIM, UNIDADES
 from utils.data import load_limitaciones
+from utils.eventos import preparar_limitaciones
+from components._common import render_kpi_grid
 
 MAX_CARDS = 5
 
 
+# Presentación del estado REAL (ventana), no del `status` de papel del CEN.
+_ESTADO_VIS = {
+    "activa":  ("VIGENTE",         "#991B1B", "#FEE2E2"),
+    "vencida": ("CERRADA DE FACTO", "#475569", "#F1F5F9"),
+    "cerrada": ("CERRADA",          "#166534", "#DCFCE7"),
+    "futura":  ("PROGRAMADA",       "#5B21B6", "#EDE9FE"),
+}
+
+_ORIGEN_TXT = {
+    "efectivo": "cierre real informado por el CEN",
+    "estimado": "el CEN nunca emitió el cierre → se usa el retorno estimado",
+    "supuesto": "sin retorno declarado → ventana supuesta de 7 días",
+    "tope":     "registro abierto sin fecha creíble → ventana topeada a 30 días",
+}
+
+
 def _card_html(row):
-    st_key = str(row.get("status", "")).lower()
-    c_txt, c_bg = STATUS_COLOR_LIM.get(st_key, ("#475569", "#F8FAFC"))
+    estado = row.get("_estado", "")
+    if estado in _ESTADO_VIS:
+        badge_txt, c_txt, c_bg = _ESTADO_VIS[estado]
+        st_key = "pendiente" if estado == "activa" else estado
+    else:
+        st_key = str(row.get("status", "")).lower()
+        c_txt, c_bg = STATUS_COLOR_LIM.get(st_key, ("#475569", "#F8FAFC"))
+        badge_txt = str(row.get("status", ""))
     id_u = int(float(row["id_unidad"])) if pd.notna(row.get("id_unidad")) else -1
     id_c = int(float(row["id_central"])) if pd.notna(row.get("id_central")) else -1
     unidad_lbl  = ID_UNIDAD_LABEL.get(id_u, "")
@@ -30,8 +54,12 @@ def _card_html(row):
     afecta = bool(row.get("afecta_sscc"))
 
     partes = []
-    _bcls = ' class="badge-pend"' if st_key == "pendiente" else ''
-    partes.append(f'<span{_bcls} style="background:{c_bg};color:{c_txt};padding:2px 8px;border-radius:4px;font-size:0.71rem;font-weight:700;text-transform:uppercase">{row.get("status","")}</span>')
+    # Solo palpita si está REALMENTE vigente (antes palpitaban todas las
+    # «pendientes», incluidas las de febrero que el CEN nunca cerró).
+    _bcls = ' class="badge-pend"' if estado == "activa" else ''
+    partes.append(f'<span{_bcls} style="background:{c_bg};color:{c_txt};padding:2px 8px;border-radius:4px;font-size:0.71rem;font-weight:700;text-transform:uppercase">{badge_txt}</span>')
+    if estado == "vencida":
+        partes.append('<span style="font-size:0.66rem;color:#94A3B8">status CEN: pendiente</span>')
     partes.append(f'<span style="font-weight:600;font-size:0.84rem">{central_lbl}</span>')
     if unidad_lbl:
         partes.append(f'<span style="background:#EDE9FE;color:#6D28D9;padding:1px 7px;border-radius:4px;font-size:0.71rem;font-weight:600">{unidad_lbl}</span>')
@@ -40,7 +68,10 @@ def _card_html(row):
     if corr_num:
         partes.append(f'<span style="font-size:0.67rem;color:#94A3B8">N. {corr_num}</span>')
 
-    f2_left = f'<span style="font-size:0.71rem;color:#475569">Apertura: <b>{fecha_pert}</b> &rarr; {ret_label}: <b>{fecha_ret}</b></span>'
+    origen = _ORIGEN_TXT.get(row.get("_origen_fin", ""), "")
+    origen_txt = f' <span style="font-size:0.66rem;color:#94A3B8">({origen})</span>' if origen else ""
+    f2_left = (f'<span style="font-size:0.71rem;color:#475569">Apertura: <b>{fecha_pert}</b> '
+               f'&rarr; {ret_label}: <b>{fecha_ret}</b></span>{origen_txt}')
     f2_right = f'<span style="font-size:0.77rem;font-weight:700;color:#DC2626">{pot_str}</span>' if pot_str else ""
     fila2 = f'{f2_left}{("&nbsp;&nbsp;&nbsp;" + f2_right) if f2_right else ""}'
     obs_div = f'<div style="font-size:0.71rem;color:#64748B;margin-top:3px">{obs}</div>' if obs else ""
@@ -56,20 +87,35 @@ def render_limitaciones(s, e):
         st.info("Sin limitaciones registradas para el período seleccionado.")
         return
 
-    n_activas = len(df_lim[df_lim["status"] == "pendiente"])
+    # El `status` del CEN no cierra nunca: la vigencia se juzga por la VENTANA
+    # (ver utils/eventos.py). Sin esto el panel declaraba «activas» limitaciones
+    # de hace meses cuyo retorno estimado ya había pasado.
+    df_lim = preparar_limitaciones(df_lim)
+    df_sorted = df_lim.sort_values("fecha_perturbacion", ascending=False)
+
+    n_vigentes = int((df_lim["_estado"] == "activa").sum())
+    n_fantasma = int((df_lim["_estado"] == "vencida").sum())
     n_total = len(df_lim)
     n_sscc = int(df_lim["afecta_sscc"].fillna(False).sum())
-    pot_max = df_lim[df_lim["status"] == "pendiente"]["potencia"].max()
+    act = df_lim[df_lim["_estado"] == "activa"]
+    pot_max = act["potencia"].max() if not act.empty else None
     pot_str = f"{pot_max:.0f} MW" if pd.notna(pot_max) and pot_max > 0 else "—"
 
-    k1, k2, k3, k4 = st.columns(4)
-    k1.metric("Activas (pendiente)", n_activas)
-    k2.metric("Total en período", n_total)
-    k3.metric("Afectan SSCC", n_sscc)
-    k4.metric("Mayor limitación activa", pot_str)
+    render_kpi_grid([
+        ("Vigentes ahora", n_vigentes, "ventana abierta hoy",
+         "Limitaciones cuya ventana (apertura → retorno) contiene el instante actual."),
+        ("Cerradas de facto", n_fantasma, "status pendiente vencido",
+         "El CEN las dejó en «pendiente» pero su fecha de retorno ya pasó: "
+         "en la práctica están cerradas y NO se cuentan como activas."),
+        ("Total en período", n_total, "registros cargados"),
+        ("Afectan SSCC", n_sscc, "con impacto declarado"),
+        ("Mayor limitación vigente", pot_str, "potencia limitada"),
+    ], por_fila=5)
 
-    df_lim["_unidad"] = df_lim["id_unidad"].apply(lambda x: ID_UNIDAD_LABEL.get(int(float(x)), "") if pd.notna(x) else "")
-    df_sorted = df_lim.sort_values("fecha_perturbacion", ascending=False)
+    if n_vigentes == 0 and n_fantasma:
+        st.success(f"Ninguna limitación vigente en este momento. Hay {n_fantasma} registro(s) "
+                   f"que el CEN mantiene en «pendiente» pero cuyo retorno estimado ya pasó: "
+                   f"se muestran como CERRADA DE FACTO y no generan alarma.")
 
     sub = st.radio("Sección", ["ANG1", "ANG2", "CCR1", "CCR2", "Todas", "Estadísticas"],
                    horizontal=True, label_visibility="collapsed", key="lim_sub")

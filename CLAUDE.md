@@ -1,7 +1,16 @@
 # CLAUDE.md — Dashboard CTM Mejillones
 > Contexto completo para Claude Code. Leer al inicio de cada sesión.
 > Autor: Erick Herrera — AES Andes, Antofagasta, Chile.
-> Última actualización: 2026-08-01 (3ª sesión: **suite ML rediseñada** — Anomalías y Regímenes
+> Última actualización: 2026-08-02 (4ª sesión: **modelo unificado de EVENTOS** en `utils/eventos.py`
+>   — la vigencia de una limitación se juzga por su VENTANA y no por el `status` del CEN, que
+>   nunca cierra (hallazgo: 0 limitaciones realmente vigentes contra 16 «pendientes» de papel).
+>   La serie de cada unidad ahora pinta las ventanas de limitación/mantenimiento, atribuye cada
+>   bloque de detención a su causa (o la declara SIN causa registrada) y anticipa los eventos
+>   latentes del PMPM. La vista «Restricciones» pasó a **«Operación»** y abre con la subsección
+>   nueva **«Panorama»** (qué está activo, energía no generada valorizada, cobertura documental
+>   del desvío). KPI cards sin truncado: `render_kpi_grid` + CSS anti-elipsis, verificado en el
+>   DOM real. El informe ejecutivo ya no lista pendientes fantasma.)
+> Anterior: 2026-08-01 (3ª sesión: **suite ML rediseñada** — Anomalías y Regímenes
 >   reemplazadas por «Desviación explicada» (cascada de atribución contra las fuentes del CEN) y
 >   «Riesgo de desacople» (clasificador day-ahead); el pronóstico de CMG gana banda cuantílica
 >   calibrada por conformal (CQR) y benchmark contra el PCP/PID. **Hallazgo de datos mayor:** el
@@ -274,6 +283,45 @@ Destiladas de bugs y quirks reales del CEN/Streamlit:
     una figura Plotly, `AppTest` no la expone → monkeypatchear el helper de render (`_show`) y
     capturar el objeto.
 
+47. **El `status` de `limitaciones_transmision` NO indica vigencia: el CEN nunca cierra el
+    registro.** Verificado 2026-08-02 contra la DB: de 21 limitaciones del período, 16 seguían en
+    «pendiente» con su `fecha_retorno_estimada` ya pasada (algunas de febrero) y
+    `fecha_efectiva_retorno` venía NULL en TODAS. Contar «pendientes» hacía que el panel, la
+    bitácora y el informe ejecutivo declararan activas limitaciones muertas hace meses.
+    · La señal honesta es la VENTANA: `fin = efectiva | estimada | inicio+7d`, topeada a
+      `inicio+30d` (regla 41). Estados: **activa** (la ventana contiene el instante),
+      **vencida** = cerrada de facto (pendiente con ventana pasada), **cerrada**, **futura**.
+    · Vive en `utils/eventos.py` (`ventana_limitacion`, `estado_limitacion`,
+      `preparar_limitaciones`, `limitaciones_vigentes`). Cualquier consumidor nuevo de
+      `limitaciones_transmision` DEBE pasar por ahí — nunca filtrar por `status` a mano.
+
+48. **El corredor de evacuación es CONTEXTO, no causa.** Los mantenimientos de S/E O'Higgins,
+    Mejillones–O'Higgins o Laberinto duran semanas y aplican a las 4 unidades, así que al
+    atribuir desvíos se llevaban TODO: el primer «Panorama» reportó 82.074 MWh y US$ 2,4 M de
+    energía no generada, cuando lo atribuible de verdad era 0. Reglas: `explicar_horas` excluye
+    `corredor` por defecto; el impacto en MWh/USD solo cuenta intervenciones DIRECTAS
+    (limitación o mantenimiento de la unidad); el gráfico de cobertura muestra el corredor como
+    una tercera categoría gris, separada de «causa directa» y de «sin causa registrada».
+    · Corolario de conteo: un evento de corredor aparece 4 veces (una por unidad) → deduplicar
+      por (título, ini, fin, instalación) antes de mostrar un KPI de cantidad, o «3
+      intervenciones» se publica como «12».
+    · `mantenimiento_mayor` NO trae `id_unidad`: el mapeo a unidad es por texto
+      (`unidades_mantenimiento`). Hoy la tabla solo tiene líneas y subestaciones del corredor;
+      cuando el CEN publique el PMPM de las unidades de Angamos (outage coordinado para octubre
+      2026), el mapeo lo toma solo y aparece como evento latente sin tocar código.
+
+49. **`st.metric` trunca con puntos suspensivos y no avisa.** Con 6-7 KPIs en una fila las cards
+    quedan en ~180 px y se recortan los TRES campos: label («INGRESO ESTIM…»), valor
+    («$3,74…») y delta. La solución es de tres partes y ninguna basta sola:
+    (a) `render_kpi_grid` (components/_common.py) reparte en filas de máximo 4-5;
+    (b) el CSS pone `white-space:normal` + `text-overflow:clip` en label y delta y escala el
+        valor con `clamp(1.1rem, 1.55vw, 1.7rem)`;
+    (c) los montos grandes se abrevian con `fmt_usd` («$3.7 M») y el valor exacto va en `help`.
+    · Verificado midiendo `scrollWidth > clientWidth` en las 12 cards con Playwright (regla 32):
+      `cut:false` en todas. Comprobar así, no a ojo — la elipsis se ve idéntica a un valor corto.
+    · La flecha del delta se oculta con `[class*="st-key-kpigrid_"] [data-testid="stMetricDelta"]
+      svg`: `delta_color="off"` (regla 38) apaga el color pero NO la flecha.
+
 ---
 
 ## CONVENCIONES DE CÓDIGO
@@ -377,7 +425,8 @@ dashboard_api/
 │   │                                  tabla por unidad, series consolidadas y eventos agregados
 │   └── plotly_theme.py             ← apply_aes_layout, estilo_serie, hover, add_linea_ahora, hex_to_rgba
 ├── components/
-│   ├── _common.py                  ← metricas_precision, render_guia/tabla_guia, render_cards_unidad
+│   ├── _common.py                  ← metricas_precision, render_guia/tabla_guia, render_cards_unidad,
+│   │                                  fmt_usd + render_kpi_grid (KPIs sin truncado — regla 49)
 │   ├── sidebar.py                  ← render_sidebar → filtros; estado de adquisición (fuentes
 │   │                                  continuas con dot de frescura + último registro);
 │   │                                  export PDF/PPT ejecutivo (botones con width="stretch")
@@ -399,7 +448,11 @@ dashboard_api/
 │   ├── bitacora_auto.py            ← render_bitacora_auto — bitácora cronológica de la unidad activa
 │   │                                  (SSCC + despacho + limitaciones + novedades manuales + solicitudes
 │   │                                  que mencionan Angamos/Cochrane), ayer x defecto
-│   ├── limitaciones.py / sscc.py / despacho_cmg.py / solicitudes.py   ← vistas de Restricciones
+│   ├── operacion.py                ← render_panorama — primera pantalla de la vista «Operación»:
+│   │                                  estado actual por unidad, timeline unificado de eventos,
+│   │                                  energía no generada por evento (MWh y USD al CMG horario)
+│   │                                  y cobertura documental del desvío
+│   ├── limitaciones.py / sscc.py / despacho_cmg.py / solicitudes.py   ← vistas de Operación
 │   │                                  (sscc.py incluye subs «Programado (PCP)» — provisión MW
 │   │                                   programada — y «Desempeño (CPF/CSF)» — panel de factores)
 │   ├── mantenimiento.py            ← render_mantenimiento — PMPM CTM: KPIs + timeline Gantt + tabla
@@ -418,7 +471,7 @@ dashboard_api/
 
 ---
 
-## NAVEGACIÓN (menú plano de 4 vistas — desde 2026-07-03)
+## NAVEGACIÓN (menú plano de 4 vistas — desde 2026-07-03; «Operación» desde 2026-08-02)
 
 Se abandonaron las categorías desplegables (popovers). El menú es un **segmented control**
 (`st.radio` horizontal) de 4 vistas planas; las sub-secciones viven dentro con radio-pills:
@@ -427,9 +480,15 @@ Se abandonaron las categorías desplegables (popovers). El menú es un **segment
 |-------|---------------|
 | **Resumen** | Gráfico por unidad (real/prog/CMG) + selector de nodo CMG + bitácora automática de la unidad + novedades |
 | **Análisis** | Costos · Estadísticas (consolidada) · Predicción (ML: Pronóstico CMG · Desviación explicada · Riesgo de desacople) |
-| **Restricciones** | Limitaciones · SSCC (incl. Programado PCP y Desempeño CPF/CSF) · Despacho CMG · Solicitudes · Mant. mayor |
+| **Operación** | **Panorama** · Limitaciones · SSCC (incl. Programado PCP y Desempeño CPF/CSF) · Despacho CMG · Solicitudes · Mant. mayor |
 | **Datos** | Ingreso Manual · Datos & Bitácora · Infotécnica (**las 2 primeras tras contraseña `jt`**) |
 
+- **«Restricciones» → «Operación» (2026-08-02):** el nombre viejo no encapsulaba la vista —
+  SSCC, despacho por CMG y solicitudes no son restricciones sino hechos operacionales del CEN
+  sobre las unidades. La subsección nueva **«Panorama»** abre la vista y consolida las cinco
+  fuentes en una lectura: estado actual por unidad + evento vigente + próximo evento con cuenta
+  regresiva, timeline unificado, energía no generada valorizada al CMG, y cobertura documental
+  del desvío (causa directa / solo corredor / sin causa registrada).
 - **El selector de nodo CMG vive en Resumen** (antes en el sidebar); persiste en
   `session_state["nodo_cmg"]` y `app.py` lo lee para cargar `df_c`.
 - **Contraseña en Datos:** Ingreso Manual y Datos & Bitácora piden clave `jt` (constante
@@ -545,6 +604,23 @@ SIDEBAR_GRAD = "linear-gradient(168deg,#0E7E93,#2A38C9,#4A25A0)"                
       · El script detecta en runtime si `costo_marginal.fecha_hora` es TEXT o timestamp: esa tabla
         guarda el formato con «T» y `costo_marginal_real` con espacio. NO se pudo comprobar el tipo
         desde local (regla 10) — si la simulación imprime algo raro ahí, revisar antes de aplicar.
+
+- [ ] **Outage mayor de Angamos (octubre 2026) — esperando publicación del CEN (2026-08-02).**
+      El usuario decidió NO crear registro manual: el evento aparecerá solo cuando el Coordinador
+      lo publique en el PMPM. `unidades_mantenimiento` (utils/eventos.py) ya mapea por texto
+      «ANGAMOS» + «U1/U2/UNIDAD n» → ANG1/ANG2, y el banner de eventos latentes de la serie lo
+      mostrará con cuenta regresiva sin tocar código. Verificar en octubre que (a) la adquisición
+      diaria lo trajo (el filtro de relevancia `CLAVES_MANT_CTM` incluye Angamos) y (b) el mapeo
+      lo asigna a las unidades correctas y NO como «corredor» — hoy la tabla solo tiene
+      instalaciones del corredor, así que esa rama del mapeo nunca se ha ejercitado con datos
+      reales.
+
+- [ ] **Cobertura del desvío: el 100% de las horas bajo programa aparece sin causa directa
+      (2026-08-02).** Es un resultado correcto dado el dato (no hubo limitaciones ni
+      mantenimientos de unidad en la última semana), pero conviene mirarlo con una ventana que
+      SÍ contenga eventos (p. ej. junio) para calibrar el umbral `UMBRAL_DESVIO_MW = 10` de
+      `components/operacion.py`. Con 10 MW casi toda hora de rampa cuenta como desvío; puede que
+      convenga un percentil por unidad, como en «Desviación explicada» (regla 42).
 
 - [ ] **Costos y Estadísticas: revisar los paneles tras la migración (2026-08-01, 3ª sesión).**
       La auditoría identificó QUÉ está sesgado pero no se tocó ningún panel: la corrección es de
@@ -888,5 +964,45 @@ Limpieza de scripts probe/test/check.
     (regla 46) — 4 barras × 3 secciones × 4 unidades sin excepciones — y el entrenamiento quedó
     cacheado por (nodo, última hora): 9,2 s → 0,2 s en reruns.
 
-*Actualizado 2026-08-01 (3ª sesión). Proyecto CTM Mejillones (4 térmicas ANG/CCR).*
+- **2026-08-02 (4ª sesión) — Eventos unificados, vista «Operación» y KPIs sin truncado:**
+  · **Punto de partida (reporte del usuario):** «hay limitaciones con status pendiente que en
+    realidad ya se cerraron»; pedía relacionar trips/derrateos con esas novedades para que
+    figuren como alarma en la serie, distinguir mantenimiento mayor / outage como evento
+    latente, arreglar el truncado de las cards, y repensar el nombre y el contenido de
+    «Restricciones».
+  · **Hallazgo (regla 47):** el CEN nunca cierra el registro. Medido en la DB real: 21
+    limitaciones en el período, **0 realmente vigentes** y 16 en «pendiente» con retorno
+    estimado ya pasado; `fecha_efectiva_retorno` NULL en todas. Nace `utils/eventos.py` con la
+    ventana como única fuente de vigencia y cuatro estados (activa / vencida = cerrada de facto /
+    cerrada / futura). Lo consumen el panel de Limitaciones, la bitácora automática, la serie de
+    la unidad, el Panorama y el informe ejecutivo.
+  · **Serie de la unidad (`gen_unidad.py`):** las ventanas de limitación, mantenimiento y
+    corredor se pintan como franjas translúcidas con leyenda propia; los bloques de detención
+    (< 5 MW) se agrupan con `_bloques` y se atribuyen con `explicar_horas` → el banner dice
+    «detenida 03-08 04:00 → 12:00 (9 h) — Limitación N.xxxx» o **«sin causa registrada»** (rojo
+    solo en ese caso; ámbar cuando todo tiene causa). Banner nuevo de **eventos latentes** con
+    cuenta regresiva a los programas futuros del PMPM. Checkbox «Eventos» en Series visibles.
+  · **Vista «Restricciones» → «Operación» + sub «Panorama»** (`components/operacion.py`): estado
+    actual por unidad con evento vigente y próximo, timeline unificado de las 4 unidades,
+    energía no generada por evento (Σ programa − real dentro de la ventana, valorizada al CMG
+    horario) y cobertura documental del desvío en tres categorías.
+  · **Sobre-atribución detectada y corregida en la misma sesión (regla 48):** el primer Panorama
+    reportó 82.074 MWh / US$ 2,4 M de energía no generada — era el mantenimiento del corredor,
+    que cubre todo el período y las 4 unidades. Se excluyó el corredor de la atribución y del
+    impacto (queda como contexto gris), y se dedujeron los conteos de eventos duplicados por
+    unidad (12 → 3).
+  · **KPI cards sin truncado (regla 49):** `render_kpi_grid` + `fmt_usd` en `_common.py`, CSS
+    anti-elipsis en `config.py` y flecha del delta oculta en las grillas. Costos pasó de 7 cards
+    en una fila a 4+3. Verificado con Playwright midiendo `scrollWidth > clientWidth` en las 12
+    cards: ninguna recortada.
+  · **Informe ejecutivo:** `_datos_reporte` ahora pasa `limitaciones_vigentes(...)`, así que el
+    PDF/PPT informa lo que afectó el período en vez del conteo de pendientes fantasma; la
+    columna «Pendientes» de la tabla de eventos pasó a «Vigentes». PDF y PPT regenerados OK.
+  · **Decisión del usuario:** NO se crea registro manual de outages — el mantenimiento mayor de
+    Angamos de octubre aparecerá cuando el CEN lo publique en el PMPM; el mapeo texto→unidad ya
+    está listo para tomarlo sin cambios de código.
+  · **Método:** `AppTest` headless contra la DB real, 14 combinaciones vista × subsección ×
+    unidad sin excepciones, + Playwright sobre la app local para el DOM y las capturas.
+
+*Actualizado 2026-08-02 (4ª sesión). Proyecto CTM Mejillones (4 térmicas ANG/CCR).*
 *Stack: Streamlit + supabase-py/psycopg2 + GitHub Actions + API CEN (SIP/OPS) + CMG S3 + scikit-learn/xgboost.*

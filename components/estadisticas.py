@@ -23,7 +23,7 @@ import streamlit as st
 
 from config import (COLORES, LABELS, PMAX, UNIDADES, BG_TRANSP, C_GRID,
                     AES_AZUL, AES_VIOLETA)
-from components._common import metricas_precision
+from components._common import metricas_precision, fmt_usd, render_kpi_grid
 
 # Rampa secuencial AES de un solo matiz (violeta), claro→oscuro. Codifica MAGNITUD
 # (precio CMG). Un solo hue, nunca arcoíris (regla dataviz para escalas secuenciales).
@@ -132,9 +132,9 @@ def _kpis(df_r, df_c, energia_unit, ingreso_unit, tiene_cmg):
     util = horas_op / horas_unidad * 100 if horas_unidad else 0
 
     kpis = [
-        ("Energía total", f"{energia_total:,.0f}", "MWh en el período"),
+        ("Energía total", f"{energia_total:,.0f}".replace(",", "."), "MWh en el período"),
         ("Factor de planta", f"{fp_global:.1f}%", "promedio 4 unidades"),
-        ("Disponibilidad", f"{util:.0f}%", "horas-unidad en operación"),
+        ("Disponibilidad", f"{util:.0f}%", "horas-unidad operando"),
     ]
     if tiene_cmg:
         ing = ingreso_unit.sum()
@@ -142,13 +142,12 @@ def _kpis(df_r, df_c, energia_unit, ingreso_unit, tiene_cmg):
         # (ponderado por generación), distinto del CMG simple (media aritmética).
         realizado = ing / energia_total if energia_total else 0
         kpis += [
-            ("Ingreso estimado", f"${ing:,.0f}", "USD (gen × CMG)"),
+            ("Ingreso estimado", fmt_usd(ing), "USD (gen × CMG)",
+             f"Σ generación real × CMG de la hora. Valor exacto: US$ {ing:,.0f}"),
             ("Ingreso realizado", f"{realizado:.1f}", "USD/MWh capturado"),
             ("CMG promedio", f"{df_c['cmg_usd_mwh'].mean():.1f}", "USD/MWh simple"),
         ]
-    cols = st.columns(len(kpis))
-    for col, (lbl, val, sub) in zip(cols, kpis):
-        col.metric(lbl, val, sub)
+    render_kpi_grid(kpis, por_fila=3 if len(kpis) <= 3 else 4)
 
 
 # ─────────────────────────────────────────────────────────────────────────────

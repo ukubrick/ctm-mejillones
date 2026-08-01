@@ -27,6 +27,7 @@ from config import (COLORES, LABELS, UNIDADES, BG_TRANSP, C_GRID, SERIE,
                     NOMBRES_BARRA_CMG)
 from utils.data import (load_cmg_prog, load_cmg_real, load_pronostico_demanda,
                         load_mix_diario)
+from components._common import fmt_usd, render_kpi_grid
 
 INK       = "#0F172A"
 INK_MUTED = "#64748B"
@@ -116,7 +117,8 @@ def _kpis(df_c, df_cp, df_cr, ingreso_unit, energia_unit):
     ene = energia_unit.sum()
     realizado = ing / ene if ene else 0
     kpis = [
-        ("Ingreso estimado", f"${ing:,.0f}", "USD (gen × CMG)"),
+        ("Ingreso estimado", fmt_usd(ing), "USD (gen × CMG)",
+         f"Σ generación real × CMG de la hora. Valor exacto: US$ {ing:,.0f}"),
         ("Ingreso realizado", f"{realizado:.1f}", "USD/MWh capturado"),
         ("CMG promedio", f"{cmg.mean():.1f}", "USD/MWh simple"),
         ("Volatilidad CMG", f"{cmg.std():.1f}", "desv. estándar"),
@@ -127,16 +129,17 @@ def _kpis(df_c, df_cp, df_cr, ingreso_unit, energia_unit):
         m = _cruce(df_c, df_cp)
         if not m.empty:
             kpis.append(("Sesgo pronóstico", f"{(m['a'] - m['b']).mean():+.1f}",
-                         "USD/MWh online−prog"))
+                         "USD/MWh online−prog",
+                         "Positivo: el precio salió más caro de lo que anticipaba el programa."))
     # Desvío online vs real oficial liquidado (rezago ~10 días).
     if df_cr is not None and not df_cr.empty:
         m = _cruce(df_c, df_cr)
         if not m.empty:
-            kpis.append(("Online vs real oficial", f"{(m['a'] - m['b']).mean():+.1f}",
-                         "USD/MWh medio"))
-    cols = st.columns(len(kpis))
-    for col, (lbl, val, sub) in zip(cols, kpis):
-        col.metric(lbl, val, sub)
+            kpis.append(("Online vs real", f"{(m['a'] - m['b']).mean():+.1f}",
+                         "USD/MWh vs liquidado",
+                         "Diferencia media entre el CMG online y el CMG real liquidado "
+                         "por el Coordinador (rezago ~10 días)."))
+    render_kpi_grid(kpis, por_fila=4)
 
 
 def _cruce(df_a, df_b):

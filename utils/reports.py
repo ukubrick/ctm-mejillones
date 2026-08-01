@@ -183,10 +183,18 @@ def _destacados(kpi, df_sscc, df_lim, nodo_label="Crucero 220 kV"):
                    f"de {UMBRAL_TRIP:.0f} MW durante todo el período.")
 
     if df_lim is not None and not df_lim.empty:
-        n_act = int((df_lim["status"] == "pendiente").sum())
+        # Se informa lo que estuvo VIGENTE en el período, no el conteo de
+        # «pendientes»: el CEN nunca cierra los registros, así que ese número
+        # arrastraba limitaciones de meses atrás ya superadas (utils/eventos.py).
+        n_act = int((df_lim["_estado"] == "activa").sum()) if "_estado" in df_lim.columns else 0
         n_sscc = int(df_lim["afecta_sscc"].fillna(False).sum()) if "afecta_sscc" in df_lim.columns else 0
-        out.append(f"Limitaciones de transmisión: {len(df_lim)} en el período, "
-                   f"{n_act} aún pendientes y {n_sscc} con impacto en SSCC.")
+        if n_act:
+            out.append(f"Limitaciones de transmisión: {len(df_lim)} vigentes en el período, "
+                       f"{n_act} aún abiertas al cierre y {n_sscc} con impacto en SSCC.")
+        else:
+            out.append(f"Limitaciones de transmisión: {len(df_lim)} afectaron el período y "
+                       f"ninguna sigue vigente al cierre"
+                       + (f"; {n_sscc} con impacto en SSCC." if n_sscc else "."))
 
     if df_sscc is not None and not df_sscc.empty:
         out.append(f"Servicios complementarios: {len(df_sscc)} instrucciones recibidas del CEN.")
@@ -348,7 +356,9 @@ def _eventos_resumen(df_sscc, df_lim):
         if df_lim is not None and not df_lim.empty and "_unidad" in df_lim.columns:
             df_lu = df_lim[df_lim["_unidad"] == u]
             n_lim = len(df_lu)
-            n_pend = int((df_lu["status"] == "pendiente").sum()) if n_lim else 0
+            # Abiertas al cierre = ventana aún vigente, no «status pendiente».
+            n_pend = (int((df_lu["_estado"] == "activa").sum())
+                      if n_lim and "_estado" in df_lu.columns else 0)
         else:
             n_lim = n_pend = 0
         filas.append([_UNIT_NAMES[u], str(n_sscc), str(n_lim), str(n_pend)])
@@ -477,7 +487,7 @@ def generar_pdf(df_real, df_prog, df_cmg, start_str, end_str, df_sscc=None, df_l
     # ── Aporte por unidad + eventos, lado a lado (cierra la página 1) ──
     img_barras = RLImage(_fig_to_bytes(_fig_energia_barras(kpi, figsize=(6.4, 3.0))),
                          width=8.6*cm, height=4.0*cm)
-    ev_rows = [["Unidad", "SSCC", "Limitac.", "Pendientes"]] + _eventos_resumen(df_sscc, df_lim)
+    ev_rows = [["Unidad", "SSCC", "Limitac.", "Vigentes"]] + _eventos_resumen(df_sscc, df_lim)
     t_ev = Table(ev_rows, colWidths=[3.0*cm, 1.9*cm, 2.0*cm, 2.2*cm])
     t_ev.setStyle(TableStyle([
         ("BACKGROUND", (0,0), (-1,0), HexColor(C_AMBER)),
@@ -669,7 +679,7 @@ def generar_ppt(df_real, df_prog, df_cmg, start_str, end_str, df_sscc=None, df_l
              0.35, 3.6, 12.6, 0.4, size=11, color=RGB_GRAY)
     _img(sl, _fig_energia_barras(kpi, figsize=(6.2, 2.6)), 0.35, 4.1, 6.1, 2.6)
     _txb(sl, "Eventos del período", 6.9, 4.05, 6, 0.35, size=14, bold=True, color=RGB_DARK)
-    _tabla(sl, ["Unidad", "SSCC", "Limitaciones", "Pendientes"],
+    _tabla(sl, ["Unidad", "SSCC", "Limitaciones", "Vigentes"],
            _eventos_resumen(df_sscc, df_lim), 6.9, 4.45, 6.05, 1.9,
            colores_1a_col=unit_rgb, cab_rgb=RGB_AMBER)
     _txb(sl, f"Generado {datetime.now().strftime('%d/%m/%Y %H:%M')}  ·  Fuente: API CEN "

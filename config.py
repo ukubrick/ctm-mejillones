@@ -295,8 +295,32 @@ p,span,div,label {{ font-family:'Inter',sans-serif; }}
   transition:transform 0.2s ease, box-shadow 0.2s ease; animation:fadeInUp 0.5s ease both;
 }}
 [data-testid="stMetric"]:hover {{ transform:translateY(-3px); box-shadow:0 8px 24px rgba(61,83,232,0.16); }}
-[data-testid="stMetricLabel"] p {{ font-size:0.72rem!important; color:var(--muted)!important; font-weight:700!important; text-transform:uppercase; letter-spacing:0.06em; }}
-[data-testid="stMetricValue"] {{ font-size:1.7rem!important; font-weight:800!important; color:var(--txt)!important; }}
+/* Anti-truncado: Streamlit recorta con puntos suspensivos el label, el valor y el
+   delta cuando la card es angosta (filas de 6-7 KPIs). Se deja que envuelvan en
+   varias líneas y el valor escala con el ancho de la ventana (clamp) en vez de
+   quedar fijo en 1.7rem. Sin esto se leía "INGRESO ESTIM…" / "$3,74…". */
+[data-testid="stMetricLabel"] {{ overflow:visible!important; white-space:normal!important; }}
+[data-testid="stMetricLabel"] p {{
+  font-size:0.7rem!important; color:var(--muted)!important; font-weight:700!important;
+  text-transform:uppercase; letter-spacing:0.04em;
+  white-space:normal!important; overflow:visible!important; text-overflow:clip!important;
+  line-height:1.25!important; min-height:1.75em;
+}}
+[data-testid="stMetricValue"] {{
+  font-size:clamp(1.1rem, 1.55vw, 1.7rem)!important; font-weight:800!important;
+  color:var(--txt)!important; white-space:nowrap!important;
+  overflow:visible!important; text-overflow:clip!important; line-height:1.2!important;
+}}
+[data-testid="stMetricValue"] > div {{ overflow:visible!important; text-overflow:clip!important; }}
+[data-testid="stMetricDelta"] {{ overflow:visible!important; }}
+/* En las grillas de KPI el texto secundario es la UNIDAD ("USD/MWh simple"), no
+   una variación: la flecha de Streamlit lo hacía leer como una mejora (regla 38). */
+[class*="st-key-kpigrid_"] [data-testid="stMetricDelta"] svg {{ display:none!important; }}
+[class*="st-key-kpigrid_"] [data-testid="stMetricDelta"] {{ padding-left:0!important; }}
+[data-testid="stMetricDelta"] div {{
+  white-space:normal!important; overflow:visible!important; text-overflow:clip!important;
+  font-size:0.72rem!important; line-height:1.3!important;
+}}
 
 /* ── KPI cards personalizadas (por unidad) ────────────────────────────── */
 .kpi {{

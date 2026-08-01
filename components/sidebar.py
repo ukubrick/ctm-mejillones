@@ -13,6 +13,7 @@ import pandas as pd
 from utils.db import test_conn, last_ts
 from utils.data import load_real, load_prog, load_cmg, load_sscc, load_limitaciones
 from utils.reports import generar_pdf, generar_ppt
+from utils.eventos import limitaciones_vigentes
 
 TZ_CHILE = ZoneInfo("America/Santiago")
 
@@ -176,11 +177,11 @@ def render_sidebar():
 
 def _datos_reporte(fi, ff):
     s_r, e_r = fi.strftime("%Y-%m-%d"), ff.strftime("%Y-%m-%d")
-    df_lim_r = load_limitaciones(s_r, e_r)
-    if not df_lim_r.empty:
-        df_lim_r["_unidad"] = df_lim_r["id_unidad"].apply(
-            lambda x: {1965: "ANG1", 1966: "ANG2", 1967: "CCR1", 1968: "CCR2"}.get(int(float(x)), "") if pd.notna(x) else ""
-        )
+    # Solo las limitaciones que realmente afectaron el período: el `status` del
+    # CEN se queda en «pendiente» para siempre, así que filtrar por él metía en el
+    # informe ejecutivo limitaciones de meses atrás ya superadas (utils/eventos.py).
+    # `limitaciones_vigentes` agrega además `_unidad`, `_ini`, `_fin` y `_estado`.
+    df_lim_r = limitaciones_vigentes(load_limitaciones(s_r, e_r), s=s_r, e=e_r)
     return (load_real(s_r, e_r), load_prog(s_r, e_r), load_cmg(s_r, e_r),
             load_sscc(s_r, e_r), df_lim_r, s_r, e_r)
 
