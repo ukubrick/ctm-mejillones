@@ -1,0 +1,49 @@
+name: Adquisicion SSCC Programado (PCP)
+
+# Workflow PROPIO porque el endpoint es caro: ignora idCentral, hay que paginar
+# el SEN completo (~121 págs de 5000, ~10 s/pág) → ~21 min por día. Dentro de la
+# diaria la haría pasarse del timeout. Corre después de la diaria (08:20 UTC).
+on:
+  schedule:
+    - cron: "50 9 * * *"   # 09:50 UTC ≈ 05:50 Chile — tras la diaria, fuera de punta
+  workflow_dispatch:
+    inputs:
+      dias_atras:
+        description: "Días hacia atrás a adquirir (máx 2, ~21 min cada uno)"
+        required: false
+        default: "1"
+
+jobs:
+  adquirir:
+    name: SSCC programado PCP
+    runs-on: ubuntu-latest
+    timeout-minutes: 60
+    env:
+      FORCE_JAVASCRIPT_ACTIONS_TO_NODE24: true
+
+    steps:
+      - name: Checkout repositorio
+        uses: actions/checkout@v5
+
+      - name: Configurar Python 3.11
+        uses: actions/setup-python@v6
+        with:
+          python-version: "3.11"
+          cache: "pip"
+
+      - name: Instalar dependencias
+        run: pip install -r requirements.txt
+
+      - name: Ejecutar Adquisicion_sscc_prog.py
+        env:
+          CEN_USER_KEY: ${{ secrets.CEN_USER_KEY }}
+          DATABASE_URL: ${{ secrets.DATABASE_URL }}
+        run: python3 Adquisicion_sscc_prog.py ${{ github.event.inputs.dias_atras || '1' }}
+
+      - name: Subir log como artefacto
+        if: always()
+        uses: actions/upload-artifact@v5
+        with:
+          name: log-sscc-prog-${{ github.run_id }}
+          path: adquisicion.log
+          retention-days: 7

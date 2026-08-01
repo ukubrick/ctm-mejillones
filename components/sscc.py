@@ -4,7 +4,7 @@ import pandas as pd
 import plotly.graph_objects as go
 
 from config import COLORES_SSCC, BADGE_SSCC, COLORES, LABELS, UNIDADES
-from utils.data import load_sscc, load_desempeno_sscc
+from utils.data import load_sscc, load_desempeno_sscc, load_sscc_programado
 from components._common import render_guia, tabla_guia, render_cards_unidad
 
 _FILAS_GUIA = [
@@ -29,13 +29,20 @@ def render_sscc(s, e):
     st.markdown('<div class="sec">Servicios complementarios (SSCC)</div>', unsafe_allow_html=True)
     render_guia("Guía de instrucciones SSCC — CSF, CPF, CT, CTF", _CUERPO_GUIA)
 
-    sub = st.radio("Sección", ["Por unidad", "Estadísticas", "Tabla completa", "Desempeño (CPF/CSF)"],
+    sub = st.radio("Sección", ["Por unidad", "Estadísticas", "Tabla completa",
+                               "Programado (PCP)", "Desempeño (CPF/CSF)"],
                    horizontal=True, label_visibility="collapsed", key="sscc_sub")
 
     # El desempeño usa su propia ventana (el CEN lo publica con rezago 2-3 meses),
     # no el período del sidebar.
     if sub == "Desempeño (CPF/CSF)":
         _desempeno()
+        return
+
+    # El programado sí usa el período del sidebar, pero es su propia tabla
+    # (no depende de las instrucciones instruidas).
+    if sub == "Programado (PCP)":
+        _programado(s, e)
         return
 
     df = load_sscc(s, e)
@@ -140,6 +147,140 @@ def _estadisticas(df, dias):
         c4.plotly_chart(fig_evol, use_container_width=True, config={"displayModeBar": False})
     else:
         st.plotly_chart(fig_dur, use_container_width=True, config={"displayModeBar": False})
+
+
+def _programado(s, e):
+    """SSCC PROGRAMADO en el PCP — la provisión (MW) que el CEN programó por unidad
+    y tipo de servicio. Es la contraparte que faltaba: hasta ahora el dashboard
+    tenía lo INSTRUIDO (Operaciones v1) y la NOTA de desempeño (CPF/CSF), pero no
+    lo programado. Fuente: /servicios-complementarios-programados-pcp/v4
+    (integrado 2026-08-01). Se adquiere 1×/día en workflow propio: el endpoint
+    ignora idCentral y hay que paginar el SEN completo (~21 min por día), así que
+    el último día disponible suele ser anteayer."""
+    from config import BG_TRANSP as BG, C_GRID as GR
+
+    df = load_sscc_programado(s, e)
+    if df.empty:
+        st.info("Sin SSCC programado para el período seleccionado. Se adquiere "
+                "1×/día en su propio workflow (el endpoint obliga a paginar el "
+                "sistema completo), así que el último día disponible suele ser "
+                "anteayer.")
+        return
+
+    ult = df["fecha_hora"].max()
+    st.caption(f"Provisión programada por el Coordinador en el PCP. Un valor de 0 MW "
+               f"significa que la unidad NO fue comprometida en ese servicio esa hora "
+               f"(es un dato, no un faltante). Último dato disponible: "
+               f"{ult.strftime('%d-%m-%Y')}.")
+
+    comp = df[df["provision_mw"] > 0]
+
+    k1, k2, k3, k4 = st.columns(4)
+    k1.metric("Provisión programada", f"{df['provision_mw'].sum():,.0f} MW-h".replace(",", "."))
+    k2.metric("Horas con compromiso", f"{len(comp):,}".replace(",", "."),
+              f"{len(comp)/len(df)*100:.0f}% de las filas")
+    k3.metric("Unidades comprometidas", f"{comp['unidad'].nunique()} / 4")
+    top = "—"
+    if len(comp):
+        por_t = comp.groupby("tipo_servicio")["provision_mw"].sum()
+        top = f"{por_t.idxmax()} · {por_t.max():,.0f} MW-h".replace(",", ".")
+    k4.metric("Servicio dominante", top)
+    st.markdown("<div style='height:8px'></div>", unsafe_allow_html=True)
+
+    if comp.empty:
+        st.info("En el período seleccionado el CEN no comprometió provisión SSCC "
+                "en ninguna unidad de CTM (todas las filas en 0 MW).")
+        return
+
+    # ── Provisión programada por día y unidad (apilada, un solo eje) ──────────
+    d = comp.assign(dia=comp["fecha_hora"].dt.date)
+    diario = d.groupby(["unidad", "dia"])["provision_mw"].sum().reset_index()
+    fig = go.Figure()
+    for u in UNIDADES:
+        s_u = diario[diario["unidad"] == u]
+        if s_u.empty:
+            continue
+        fig.add_trace(go.Bar(
+            x=s_u["dia"], y=s_u["provision_mw"], name=LABELS[u],
+            marker_color=COLORES[u]["line"],
+            hovertemplate=f"<b>{LABELS[u]}</b><br>%{{x}}<br>%{{y:.1f}} MW-h<extra></extra>"))
+    fig.update_layout(
+        barmode="stack",
+        title=dict(text="Provisión SSCC programada por día y unidad",
+                   font=dict(size=13, color="#0F172A"), x=0),
+        height=340, margin=dict(l=10, r=14, t=52, b=10),
+        plot_bgcolor=BG, paper_bgcolor=BG, font=dict(family="Inter, sans-serif"),
+        xaxis=dict(showgrid=False, tickfont=dict(color="#94A3B8", size=10), tickformat="%d/%m"),
+        yaxis=dict(gridcolor=GR, tickfont=dict(color="#94A3B8", size=10),
+                   title="MW-h programados", title_font=dict(color="#94A3B8", size=10)),
+        legend=dict(orientation="h", yanchor="bottom", y=1.02, x=0, font=dict(size=10)),
+        hovermode="x unified")
+    st.plotly_chart(fig, use_container_width=True, config={"displayModeBar": False},
+                    key="sscc_prog_diario")
+    st.caption("Suma de la provisión comprometida (> 0 MW) en cada hora del día. "
+               "Barras apiladas: el alto total es el compromiso del complejo.")
+
+    # ── Desglose por tipo de servicio y perfil horario ────────────────────────
+    c1, c2 = st.columns(2)
+    with c1:
+        tipos = sorted(comp["tipo_servicio"].unique())
+        piv = (comp.groupby(["tipo_servicio", "unidad"])["provision_mw"].sum()
+               .unstack("unidad").reindex(tipos).reindex(columns=UNIDADES))
+        f1 = go.Figure()
+        for u in UNIDADES:
+            if u not in piv.columns:
+                continue
+            f1.add_trace(go.Bar(
+                x=tipos, y=piv[u].fillna(0).values, name=LABELS[u],
+                marker_color=COLORES[u]["line"],
+                hovertemplate=f"<b>{LABELS[u]}</b><br>%{{x}}<br>%{{y:.1f}} MW-h<extra></extra>"))
+        f1.update_layout(
+            barmode="group",
+            title=dict(text="Provisión por tipo de servicio", font=dict(size=13, color="#0F172A"), x=0),
+            height=300, margin=dict(l=10, r=10, t=50, b=10), plot_bgcolor=BG, paper_bgcolor=BG,
+            xaxis=dict(tickfont=dict(color="#475569", size=11), showgrid=False),
+            yaxis=dict(gridcolor=GR, tickfont=dict(color="#94A3B8", size=10), title="MW-h"),
+            legend=dict(orientation="h", yanchor="bottom", y=1.02, x=0, font=dict(size=10)))
+        st.plotly_chart(f1, use_container_width=True, config={"displayModeBar": False},
+                        key="sscc_prog_tipo")
+    with c2:
+        perfil = comp.groupby(["unidad", "hora"])["provision_mw"].mean().reset_index()
+        f2 = go.Figure()
+        for u in UNIDADES:
+            s_u = perfil[perfil["unidad"] == u]
+            if s_u.empty:
+                continue
+            f2.add_trace(go.Scatter(
+                x=s_u["hora"], y=s_u["provision_mw"], name=LABELS[u], mode="lines+markers",
+                line=dict(color=COLORES[u]["line"], width=2), marker=dict(size=4),
+                hovertemplate=f"<b>{LABELS[u]}</b><br>Hora %{{x}}<br>%{{y:.1f}} MW<extra></extra>"))
+        f2.update_layout(
+            title=dict(text="Perfil horario medio de la provisión",
+                       font=dict(size=13, color="#0F172A"), x=0),
+            height=300, margin=dict(l=10, r=10, t=50, b=10), plot_bgcolor=BG, paper_bgcolor=BG,
+            xaxis=dict(showgrid=False, tickfont=dict(color="#94A3B8", size=10),
+                       title="Hora (1-24)", title_font=dict(color="#94A3B8", size=10), dtick=3),
+            yaxis=dict(gridcolor=GR, tickfont=dict(color="#94A3B8", size=10), title="MW"),
+            legend=dict(orientation="h", yanchor="bottom", y=1.02, x=0, font=dict(size=10)),
+            hovermode="x unified")
+        st.plotly_chart(f2, use_container_width=True, config={"displayModeBar": False},
+                        key="sscc_prog_perfil")
+    st.caption("Promedio sobre las horas efectivamente comprometidas. El perfil horario "
+               "muestra en qué franjas el CEN reserva capacidad de cada unidad.")
+
+    # ── Detalle ───────────────────────────────────────────────────────────────
+    with st.expander("Detalle horario programado"):
+        t = comp.copy()
+        t["Fecha y hora"] = t["fecha_hora"].dt.strftime("%d-%m-%Y %H:%M")
+        t["Unidad"] = t["unidad"].map(LABELS)
+        t = t.rename(columns={"tipo_servicio": "Servicio", "provision_mw": "Provisión MW",
+                              "barra": "Barra", "fecha_programa": "Programa del"})
+        st.dataframe(
+            t[["Fecha y hora", "Unidad", "Servicio", "Provisión MW", "Barra", "Programa del"]]
+            .sort_values("Fecha y hora", ascending=False),
+            use_container_width=True, hide_index=True)
+        st.caption("«Programa del» es la fecha en que el CEN corrió ese PCP: se conserva "
+                   "la versión más reciente de cada hora.")
 
 
 def _desempeno():

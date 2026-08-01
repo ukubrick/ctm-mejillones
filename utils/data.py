@@ -224,6 +224,35 @@ def load_sscc(s, e):
     return df
 
 
+@st.cache_data(ttl=3600)
+def load_sscc_programado(s, e):
+    """SSCC PROGRAMADO en el PCP (provisión MW por unidad y tipo de servicio).
+
+    Se adquiere 1×/día en su propio workflow (el endpoint ignora idCentral y hay
+    que paginar el SEN completo), así que normalmente el último día disponible es
+    ANTEAYER. Silencioso si la tabla aún no existe."""
+    desde, hasta = f"{s} 00:00:00", f"{e} 23:59:59"
+    try:
+        df = fetch(
+            "sscc_programado",
+            "unidad,tipo_servicio,fecha_hora,hora,provision_mw,barra,fecha_programa",
+            gte={"fecha_hora": desde}, lte={"fecha_hora": hasta}, order="fecha_hora",
+            sql="SELECT unidad, tipo_servicio, fecha_hora, hora, provision_mw, barra, "
+                "fecha_programa FROM sscc_programado "
+                "WHERE fecha_hora BETWEEN %s AND %s ORDER BY fecha_hora",
+            params=(desde, hasta),
+        )
+    except Exception:
+        return pd.DataFrame()
+    if not df.empty:
+        # errors="coerce": cinturón de seguridad ante la hora 24 del cambio de hora.
+        df["fecha_hora"] = pd.to_datetime(df["fecha_hora"], errors="coerce")
+        df = df.dropna(subset=["fecha_hora"])
+        df["provision_mw"] = pd.to_numeric(df["provision_mw"], errors="coerce")
+        df = df.sort_values(["unidad", "fecha_hora"])
+    return df
+
+
 @st.cache_data(ttl=300)
 def load_limitaciones(s, e):
     cols = ("id,correlativo,instalacion_nombre,status,fecha_perturbacion,fecha_retorno_estimada,"

@@ -1,7 +1,12 @@
 # CLAUDE.md — Dashboard CTM Mejillones
 > Contexto completo para Claude Code. Leer al inicio de cada sesión.
 > Autor: Erick Herrera — AES Andes, Antofagasta, Chile.
-> Última actualización: 2026-08-01 (reportes PDF/PPT reducidos a informe ejecutivo de
+> Última actualización: 2026-08-01 (2ª sesión: re-sondeo de los endpoints CEN pendientes y
+>   **SSCC programado PCP integrado** — tabla `sscc_programado`, workflow propio
+>   `adquisicion_sscc_prog.yml` (~21 min/día porque el endpoint ignora `idCentral`) y sub
+>   «Programado (PCP)» en la vista SSCC. Fetch validado en vivo; falta correr la migración.
+>   `costo-combustible` y `/reduccion` confirmados como recursos no suscritos en 3scale).
+> Anterior: 2026-08-01 (reportes PDF/PPT reducidos a informe ejecutivo de
 >   gerencia — 2 páginas / 4 slides, con la fuente del programa PID/PCP declarada; sidebar
 >   depurado a las fuentes reales post-migración CMG; fixes de layout verificados contra el
 >   DOM real: botones del sidebar, franja derecha del gráfico, pills del nodo CMG y menú
@@ -163,6 +168,24 @@ Destiladas de bugs y quirks reales del CEN/Streamlit:
     (la regla 19 quedó desactualizada; el CSS cubre ambos y por eso no se notó); (c) un widget con
     `key=` recibe la clase `.st-key-<key>` en su contenedor, que es el mejor ancla para CSS
     puntual (más estable que `st.container(key=...)` extra).
+33. **Medir el costo de un endpoint paginado SIEMPRE con el `limit` de producción, nunca con el
+    de exploración.** `servicios-complementarios-programados-pcp/v4` quedó descartado un mes por
+    "totalPages≈120.178" — ese número era con `limit` bajo. Con `limit=5000` y ventana de UN día
+    son **121 páginas**, o sea 500× menos. `totalPages` escala con `limit`, así que compararlo
+    entre endpoints medidos con distinto `limit` no significa nada; la métrica real es
+    páginas × segundos con el `limit` que se va a usar.
+34. **Bajo paginación sostenida la API SIP se estrangula: ~10 s/página, no los ~0,3-4 s de las
+    primeras llamadas.** Medido 2026-08-01: 121 páginas tardaron 1.252 s aunque las páginas
+    sueltas del sondeo respondían en 2,5-4,3 s. Estimar el timeout de un workflow con el ritmo
+    SOSTENIDO, no con el de la primera página.
+35. **`servicios-complementarios-programados-pcp/v4` IGNORA el filtro por central.** `idCentral`,
+    `id_central` y `centralId` devuelven los tres el sistema completo (verificado). Filtrar local
+    por `id_central ∈ {377,379}`. Además identifica la unidad en `configuracion`/`llave_sscc` como
+    **`ANGAMOS_1` / `COCHRANE_2`** — NO la convención `CCH` del SSCC instruido y de las
+    instrucciones CMG (mapeo propio `LLAVES_SSCC_PROG`).
+36. **Un `provision_mw` de 0 en el SSCC programado es un DATO** (la unidad no fue comprometida en
+    ese servicio esa hora), igual que el CMG=0 de la regla 28. No filtrarlo al adquirir; filtrarlo
+    solo al graficar. En un día típico solo ~5% de las filas tienen provisión > 0.
 
 ---
 
@@ -251,6 +274,8 @@ dashboard_api/
 ├── Adquisicion_diaria.py           ← cron 08:20 UTC — CMG real (4 barras) + CMG prog PCP, pronóstico
 │                                      demanda, solicitudes, maestro, mantenimiento mayor, demanda neta,
 │                                      mix diario, desempeño SSCC (días faltantes)
+├── Adquisicion_sscc_prog.py        ← cron 09:50 UTC — SSCC PROGRAMADO PCP (workflow propio: ~21 min
+│                                      por día, tope MAX_DIAS=2)
 ├── backfill_programada.py          ← utilidad puntual (recupera PCP por rango)
 ├── migracion_*.py                  ← migraciones puntuales (correr vía workflow migracion.yml)
 ├── utils/
@@ -283,7 +308,8 @@ dashboard_api/
 │   │                                  (SSCC + despacho + limitaciones + novedades manuales + solicitudes
 │   │                                  que mencionan Angamos/Cochrane), ayer x defecto
 │   ├── limitaciones.py / sscc.py / despacho_cmg.py / solicitudes.py   ← vistas de Restricciones
-│   │                                  (sscc.py incluye sub «Desempeño (CPF/CSF)» — panel de factores)
+│   │                                  (sscc.py incluye subs «Programado (PCP)» — provisión MW
+│   │                                   programada — y «Desempeño (CPF/CSF)» — panel de factores)
 │   ├── mantenimiento.py            ← render_mantenimiento — PMPM CTM: KPIs + timeline Gantt + tabla
 │   ├── manual.py                   ← render_programada_manual / render_real_manual (CRUD + override)
 │   ├── datos.py                    ← render_datos_horarios / render_bitacora
@@ -294,6 +320,7 @@ dashboard_api/
     ├── adquisicion_potencia.yml    ← cron :25/:55 (gen-real + CMG S3)
     ├── adquisicion_operaciones.yml ← cron :10/:40 (SSCC + despacho + limitaciones)
     ├── adquisicion_diaria.yml      ← cron 08:20 UTC (endpoints lentos que cambian poco)
+    ├── adquisicion_sscc_prog.yml   ← cron 09:50 UTC (SSCC programado PCP, timeout 60)
     └── migracion.yml               ← workflow_dispatch (corre cualquier migracion_*.py)
 ```
 
@@ -308,7 +335,7 @@ Se abandonaron las categorías desplegables (popovers). El menú es un **segment
 |-------|---------------|
 | **Resumen** | Gráfico por unidad (real/prog/CMG) + selector de nodo CMG + bitácora automática de la unidad + novedades |
 | **Análisis** | Costos · Estadísticas (consolidada) · Predicción (ML) |
-| **Restricciones** | Limitaciones · SSCC (incl. Desempeño CPF/CSF) · Despacho CMG · Solicitudes · Mant. mayor |
+| **Restricciones** | Limitaciones · SSCC (incl. Programado PCP y Desempeño CPF/CSF) · Despacho CMG · Solicitudes · Mant. mayor |
 | **Datos** | Ingreso Manual · Datos & Bitácora · Infotécnica (**las 2 primeras tras contraseña `jt`**) |
 
 - **El selector de nodo CMG vive en Resumen** (antes en el sidebar); persiste en
@@ -325,7 +352,7 @@ Se abandonaron las categorías desplegables (popovers). El menú es un **segment
 
 ---
 
-## ADQUISICIÓN — 4 WORKFLOWS ESCALONADOS
+## ADQUISICIÓN — 5 WORKFLOWS ESCALONADOS
 
 Réplica del patrón de separación por concern. El job horario único se pasaba del timeout en
 PCP/PID (lentos paginados) → se separaron los endpoints rápidos y los lentos-que-cambian-poco.
@@ -336,6 +363,7 @@ PCP/PID (lentos paginados) → se separaron los endpoints rápidos y los lentos-
 | Potencia | `Adquisicion_potencia.py` | gen-real + CMG online 15 min (últimas 6 págs) | `:25,:55` | — |
 | Operaciones | `Adquisicion_operaciones.py` | SSCC + Despacho CMG + Limitaciones | `:10,:40` | — |
 | Diaria | `Adquisicion_diaria.py` | CMG real (4 barras) + CMG prog PCP + pronóstico demanda + solicitudes + maestro + mantenimiento mayor + demanda neta + mix diario + desempeño SSCC | `08:20 UTC` | 60 min |
+| SSCC prog | `Adquisicion_sscc_prog.py` | SSCC programado PCP (1 día, ~21 min) | `09:50 UTC` | 60 min |
 
 - Crons espaciados para no solaparse. Cada script reutiliza las funciones de `Adquisicion.py`
   (el guard `if __name__` evita correr `run()` al importar).
@@ -361,6 +389,7 @@ REST (service_role) desde el dashboard; psycopg2 (postgres) desde la adquisició
 | `demanda_neta` | `fecha_hora` | horaria SEN (gen bruta/ERV/neta) — feature del forecast CMG |
 | `mix_generacion_diaria` | `(fecha, tecnologia)` | getDailySum por tecnología — peso térmico en Costos |
 | `sscc_instrucciones` | `(fecha, id_configuracion, instruccion_sscc, inicio_periodo)` | Cochrane = CCH1/CCH2 |
+| `sscc_programado` | `(unidad, tipo_servicio, fecha_hora)` | SSCC PROGRAMADO PCP (provisión MW). Unidad por `configuracion` = ANGAMOS_1/COCHRANE_2 (NO la convención CCH). Dedup por `fecha_programa` |
 | `instrucciones_cmg` | `(id_instruccion, unidad)` | Despacho por CMG. `central`→unidad en `LLAVES_INSTR_CMG` |
 | `limitaciones_transmision` | `id` (hex API) | id_unidad 1965=ANG1 1966=ANG2 1967=CCR1 1968=CCR2 |
 | `solicitudes_trabajo` | `id` | filtro relevancia CTM en el loader |
@@ -413,6 +442,25 @@ SIDEBAR_GRAD = "linear-gradient(168deg,#0E7E93,#2A38C9,#4A25A0)"                
 
 ## PENDIENTES VIVOS (lista única — actualizar aquí)
 
+- [ ] **SSCC programado PCP — falta el primer despliegue (2026-08-01).** El código está escrito y
+      el fetch validado contra la API real, pero **la tabla `sscc_programado` NO existe todavía en
+      Supabase** (la DDL no se puede correr desde red local — regla 11). Pasos, en orden:
+      (a) correr `migracion_sscc_programado.py` vía el workflow `migracion.yml` **sin argumento**:
+      ese workflow corta a los 30 min y cada día cuesta ~21, así que cabe UN solo día (el script
+      se autoacota con `MAX_DIAS=1`). Para acumular historia, disparar varias veces a mano
+      `adquisicion_sscc_prog.yml`, que tiene timeout 60 y admite 2 días;
+      (b) confirmar que el cron nuevo `adquisicion_sscc_prog.yml` (09:50 UTC) termina dentro del
+      timeout — es el más lento de los 5 y el único que se acerca al límite;
+      (c) mirar el panel «Programado (PCP)» en Restricciones > SSCC con datos reales.
+      Hasta (a), el loader devuelve vacío y el panel muestra su mensaje de "sin datos" — no rompe.
+
+- [ ] **Cruzar programado vs instruido vs desempeño (2026-08-01).** Ahora que existen las tres
+      piezas (`sscc_programado` · `sscc_instrucciones` · `desempeno_sscc`), el panel las muestra
+      por separado. El análisis que de verdad interesa es el cruce: ¿se instruyó lo que se
+      programó, y con qué nota se prestó? Requiere conciliar granularidades distintas
+      (programado = horario; instruido = períodos inicio→fin; desempeño = horario con rezago de
+      2-3 meses) → dejarlo para cuando haya suficiente historia de programado acumulada.
+
 - [ ] **Reportes ejecutivos (2026-08-01):** el PDF/PPT nuevo se probó con datos sintéticos y
       corriendo la app local contra la DB de producción, pero NADIE lo ha descargado todavía desde
       Streamlit Cloud ni lo ha visto un destinatario de gerencia. Al primer uso real revisar:
@@ -456,17 +504,23 @@ SIDEBAR_GRAD = "linear-gradient(168deg,#0E7E93,#2A38C9,#4A25A0)"                
       la primera vez) y que Costos/SSCC/Restricciones muestran los paneles nuevos con datos.
 - [ ] **Desempeño SSCC:** cuando el CEN publique feb/may/jun 2026, la diaria los incorpora sola
       (verificar en el panel). Evaluar sumarlo al PDF ejecutivo.
-- [ ] **Endpoints CEN sondeados 2026-07-03 — revividos pero NO integrados** (costo > beneficio):
-      · `/potencia-activa-reactiva-unidad/v4` → **200**, pero SCADA-level (KVAR), `totalPages≈38.687`,
-        no filtra por central. Valor nicho, paginación masiva → descartado por ahora.
-      · `/servicios-complementarios-programados-pcp/v4` → **200** (SSCC programado, provisión MW por
-        tipo), pero `totalPages≈120.178` e **ignora `idCentral`** → paginar todo el sistema. Sería
-        el de mayor valor SI el CEN agregara filtro por central; hoy el costo no compensa.
-      · `/instrucciones-operacionales-sscc/v4` → **200** (172 págs), pero **duplica** el SSCC que ya
-        se trae vía Operaciones `/servicios-complementarios/v1`. Aporte marginal → descartado.
-- [ ] **Endpoints CEN no disponibles:** `/net-power/v1/findByDate` (404) · `/costo-combustible/v3`
-      (502 persistente) · `/reduccion/v1/generacion` (404 "No Mapping Rule" — requiere suscribir el
-      recurso en 3scale; la key OPS actual no lo tiene).
+- [ ] **`/instrucciones-operacionales-sscc/v4` — descarte a re-evaluar.** Sigue vivo (200, 122 págs
+      con limit=100 en 7 días). Se descartó en 2026-07-08 por "duplicar" el SSCC de Operaciones
+      `/servicios-complementarios/v1`, pero NO se verificó fila a fila y expone tres campos que el
+      v1 no tiene a la vista: `disponibilidad`, `estado`, `sscc_baja`. Comparar contra
+      `sscc_instrucciones` antes de darlo por cerrado.
+
+- [ ] **`/potencia-activa-reactiva-unidad/v4` — vivo, sigue sin justificarse.** Re-sondeado
+      2026-08-01: devuelve **0 registros para ayer** (rezago), pero sí responde en fechas pasadas
+      (2.207 págs el 25/07, 1.730 el 02/07, 1.985 el 03/05, con limit=100). Sigue siendo SCADA-level
+      sin filtro por central y no alimenta nada del dashboard actual. Solo vale la pena si algún día
+      se quiere análisis de reactivos.
+
+- [ ] **Endpoints CEN no disponibles (re-verificado 2026-08-01):** `/net-power/v1/findByDate` (404
+      "Recurso no encontrado") · `/costo-combustible/v3` y `/v4` (404 **"No Mapping Rule matched"** —
+      EMPEORÓ: antes daba 502, o sea existía y estaba roto; ahora es recurso no suscrito) ·
+      `/reduccion/v1/generacion` (404 "No Mapping Rule"). Los dos últimos NO se arreglan con código:
+      hay que pedirle al CEN que agregue el recurso al plan en 3scale.
 
 Resueltos (histórico): PID integrado · Solicitudes integradas y filtradas · Pronóstico demanda
 integrado · Optimización PCP (1 llamada por rango) · RLS habilitado (2026-07-03) · Override
@@ -630,6 +684,33 @@ Limpieza de scripts probe/test/check.
     camino de fallo), fuera «Mant. mayor (inicio)» y fuera el bloque «Frecuencia». El rótulo de
     exportación pasó a «Exportar reporte ejecutivo». Verificado en la app real con Playwright: el
     área de trazado del gráfico queda a 4 px del borde derecho del contenedor (antes ~87).
+
+- **2026-08-01 (2ª sesión) — Re-sondeo de endpoints pendientes + SSCC programado PCP integrado:**
+  · **Re-sondeo en vivo de los 7 endpoints pendientes** con las keys reales. Tres notas de
+    PENDIENTES VIVOS estaban desactualizadas: `costo-combustible` v3/v4 pasó de 502 a 404 "No
+    Mapping Rule" (recurso no suscrito en 3scale, no se arregla con código, igual que
+    `/reduccion/v1/generacion`); `potencia-activa-reactiva-unidad` revivió (responde en fechas
+    pasadas, 0 filas para ayer por rezago) pero sigue sin justificarse; `net-power` sigue 404.
+  · **Hallazgo: `/servicios-complementarios-programados-pcp/v4` era mucho más barato de lo
+    documentado.** El "totalPages≈120.178" que lo tuvo descartado un mes estaba medido con `limit`
+    bajo — con `limit=5000` y ventana de UN día son **121 páginas**. Se paginó el día completo para
+    medirlo de verdad: 4.012 filas CTM, solo TER ANGAMOS/TER COCHRANE, los 6 servicios (CPF/CSF/CTF
+    en (+) y (−)), con `provision_mw`, `barra` y `fecha_programa`. Ver reglas 33 y 34.
+  · **Integrado** — cerraba el hueco real de tener el SSCC instruido y la nota de desempeño pero no
+    lo PROGRAMADO: `LLAVES_SSCC_PROG` (mapeo `ANGAMOS_1`/`COCHRANE_2` → unidad; este endpoint NO usa
+    la convención CCH — regla 35), `fetch_sscc_programado_pcp` (dedup por `fecha_programa` más
+    reciente, como el PCP de generación) + `upsert_sscc_programado`, tabla `sscc_programado`,
+    `migracion_sscc_programado.py`, loader `load_sscc_programado` y sub «Programado (PCP)» en la
+    vista SSCC (KPIs, provisión diaria apilada por unidad, desglose por servicio, perfil horario,
+    detalle). Los ceros no se filtran al adquirir (regla 36).
+  · **Workflow propio `adquisicion_sscc_prog.yml` (09:50 UTC), no dentro de la diaria:** el endpoint
+    ignora `idCentral` → hay que paginar el SEN completo, y la API se estrangula a ~10 s/página bajo
+    carga sostenida (121 págs = 1.252 s ≈ 21 min/día). `MAX_DIAS=2` acota la corrida al timeout de 60.
+  · **Fetch validado contra la API real** antes de commitear: 576 filas para el 31/07 = 4 unidades ×
+    6 servicios × 24 horas exactas, 0 duplicados de PK, horas 1-24, 47 con provisión > 0 (el resto
+    ceros legítimos). El dedup redujo las 4.012 filas crudas a las 576 correctas.
+  · **NO desplegado todavía:** la DDL no corre desde red local (regla 11) → la tabla aún no existe
+    en Supabase. Ver el primer pendiente vivo para la secuencia de despliegue.
 
 *Actualizado 2026-08-01. Proyecto CTM Mejillones (4 térmicas ANG/CCR).*
 *Stack: Streamlit + supabase-py/psycopg2 + GitHub Actions + API CEN (SIP/OPS) + CMG S3 + scikit-learn/xgboost.*

@@ -123,6 +123,16 @@ LLAVES_SSCC = {
     "COCHRANE-CCH2": "CCR2",
 }
 
+# Mapeo `configuracion`/`llave_sscc` del SSCC PROGRAMADO PCP → código interno.
+# Ojo: este endpoint NO usa la convención CCH del SSCC instruido ni de las
+# instrucciones CMG — identifica la unidad como CENTRAL_N (verificado 2026-08-01).
+LLAVES_SSCC_PROG = {
+    "ANGAMOS_1":  "ANG1",
+    "ANGAMOS_2":  "ANG2",
+    "COCHRANE_1": "CCR1",
+    "COCHRANE_2": "CCR2",
+}
+
 # Mapeo campo `central` de instrucciones operacionales CMG → código interno
 # (confirmado en producción 2026-06-23). Misma convención CCH que SSCC.
 LLAVES_INSTR_CMG = {
@@ -1818,6 +1828,126 @@ def dias_faltantes_desempeno(dias_atras: int = 150, margen: int = 20,
             faltantes.append(s)
         d -= timedelta(days=1)
     return faltantes
+
+
+def fetch_sscc_programado_pcp(fecha: str) -> list[dict]:
+    """
+    SSCC PROGRAMADO en el PCP para UN día — la provisión (MW) por unidad y tipo
+    de servicio que el CEN programó, contraparte del SSCC instruido que ya se
+    trae por Operaciones v1 y del desempeño CPF/CSF.
+
+    Endpoint: /servicios-complementarios-programados-pcp/v4/findByDate (SIP).
+
+    ⚠️ NO filtra por central en el servidor: `idCentral`, `id_central` y
+    `centralId` se ignoran (verificado en vivo 2026-08-01 — los tres devuelven
+    el sistema completo). Hay que paginar TODO el día y filtrar local por
+    id_central ∈ {377, 379}. Con limit=5000 son ~121 páginas por día y la API
+    estrangula a ~10 s/página bajo carga sostenida → ~21 min por día. Por eso
+    corre en su propio workflow, con ventana de UN día.
+
+    ⚠️ Igual que el PCP de generación, el día operativo llega con VARIAS
+    versiones (una por `fecha_programa`, ~7 en la práctica) → se conserva la
+    más reciente por (unidad, tipo_servicio, fecha_hora).
+
+    Un `provision_mw` de 0 es un DATO (la unidad no fue comprometida en ese
+    servicio esa hora), no un faltante — no se filtra.
+    """
+    url   = f"{API_BASE_SIP}/servicios-complementarios-programados-pcp/v4/findByDate"
+    limit = 5000
+    ids_objetivo = {ID_ANGAMOS, ID_COCHRANE, str(ID_ANGAMOS), str(ID_COCHRANE)}
+    # (unidad, tipo_servicio, fecha_hora) → (fecha_programa, registro)
+    mejores: dict[tuple[str, str, str], tuple[str, dict]] = {}
+
+    def _consumir(items):
+        for rec in items:
+            if rec.get("id_central") not in ids_objetivo:
+                continue
+            unidad = LLAVES_SSCC_PROG.get(str(rec.get("configuracion") or "").strip())
+            if unidad is None:
+                continue
+            fh = str(rec.get("fecha_hora") or "").replace("T", " ")[:19]
+            if len(fh) != 19:
+                continue
+            tipo = str(rec.get("tipo_servicio") or "").strip()
+            if not tipo:
+                continue
+            fprog = str(rec.get("fecha_programa") or "")[:10]
+            clave = (unidad, tipo, fh)
+            previo = mejores.get(clave)
+            if previo is not None and previo[0] >= fprog:
+                continue
+            try:
+                mw = float(rec.get("provision_mw") or 0.0)
+            except (TypeError, ValueError):
+                continue
+            mejores[clave] = (fprog, {
+                "unidad":         unidad,
+                "tipo_servicio":  tipo,
+                "fecha_hora":     fh,
+                "hora":           int(fh[11:13]) + 1,   # convención CEN 1-24
+                "provision_mw":   round(mw, 3),
+                "barra":          rec.get("barra"),
+                "llave_sscc":     rec.get("llave_sscc"),
+                "fecha_programa": fprog or None,
+            })
+
+    try:
+        primera     = _get_with_retry(url, {"user_key": CEN_USER_KEY, "startDate": fecha,
+                                            "endDate": fecha, "page": 1, "limit": limit},
+                                      timeout=90).json()
+        total_pages = int(primera.get("totalPages") or 1)
+        _consumir(primera.get("data", []))
+        for pg in range(2, total_pages + 1):
+            try:
+                body = _get_with_retry(url, {"user_key": CEN_USER_KEY, "startDate": fecha,
+                                             "endDate": fecha, "page": pg, "limit": limit},
+                                       timeout=90).json()
+            except Exception as e:
+                # Nunca loguear la excepción cruda: requests incluye la URL con la
+                # user_key y los logs de Actions son públicos.
+                log.warning(f"  SSCC programado: página {pg} falló ({e.__class__.__name__})")
+                continue
+            data = body.get("data", [])
+            if not data:
+                break
+            _consumir(data)
+            time.sleep(0.15)
+        log.info(f"  SSCC programado PCP ({fecha}): {len(mejores)} filas ANG/CCR "
+                 f"de {total_pages} páginas")
+    except Exception as e:
+        log.error(f"  Error SSCC programado {fecha}: {e.__class__.__name__}")
+
+    return [r for _, r in mejores.values()]
+
+
+def upsert_sscc_programado(registros: list[dict]) -> tuple[int, int]:
+    if not registros:
+        return 0, 0
+    sql = """
+        INSERT INTO sscc_programado
+            (unidad, tipo_servicio, fecha_hora, hora, provision_mw, barra,
+             llave_sscc, fecha_programa)
+        VALUES
+            (%(unidad)s, %(tipo_servicio)s, %(fecha_hora)s, %(hora)s,
+             %(provision_mw)s, %(barra)s, %(llave_sscc)s, %(fecha_programa)s)
+        ON CONFLICT (unidad, tipo_servicio, fecha_hora) DO UPDATE SET
+            provision_mw   = EXCLUDED.provision_mw,
+            barra          = EXCLUDED.barra,
+            llave_sscc     = EXCLUDED.llave_sscc,
+            fecha_programa = EXCLUDED.fecha_programa
+    """
+    nuevos = actualizados = 0
+    try:
+        with get_conn() as conn:
+            with conn.cursor() as cur:
+                for rec in registros:
+                    cur.execute(sql, rec)
+                    if cur.rowcount == 1: nuevos      += 1
+                    else:                actualizados += 1
+            conn.commit()
+    except Exception as e:
+        log.error(f"  Error upsert SSCC programado: {e}")
+    return nuevos, actualizados
 
 
 def _num_cl(v):
