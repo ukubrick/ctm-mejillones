@@ -69,6 +69,15 @@ def _row_evt(nombre, v, con_hora=True):
     )
 
 
+def _row_frec(nombre, cadencia):
+    """Fila informativa de cadencia de los crons (no depende de datos)."""
+    return (
+        '<div style="display:flex;align-items:center;justify-content:space-between;padding:2px 0">'
+        f'<span style="color:rgba(255,255,255,0.55);font-size:0.66rem">{nombre}</span>'
+        f'<span style="color:rgba(255,255,255,0.72);font-size:0.66rem;font-style:italic">{cadencia}</span></div>'
+    )
+
+
 def render_sidebar():
     """Renderiza el sidebar y devuelve dict de filtros."""
     with st.sidebar:
@@ -104,12 +113,22 @@ def render_sidebar():
         # (despacho/SSCC/limitaciones): la ausencia de registros recientes es
         # normal, así que se listan como "último registro" sin semántica de salud.
         hoy_cl = datetime.now(TZ_CHILE).date()
-        ts_real = last_ts("generacion_real", "fecha_hora")
-        ts_prog = last_ts("generacion_programada", "fecha_hora", {"fuente": "CEN_PCP"})
-        ts_cmg  = last_ts("costo_marginal", "fecha_hora")
-        ts_desp = last_ts("instrucciones_cmg", "fecha_hora")
-        ts_sscc = last_ts("sscc_instrucciones", "fecha")
-        ts_lim  = last_ts("limitaciones_transmision", "modified")
+        ts_real  = last_ts("generacion_real", "fecha_hora")
+        ts_pcp   = last_ts("generacion_programada", "fecha_hora", {"fuente": "CEN_PCP"})
+        ts_pid   = last_ts("generacion_programada", "fecha_hora", {"fuente": "CEN_PID"})
+        ts_cmin  = last_ts("costo_marginal_online_min", "fecha_minuto")
+        ts_cmg   = last_ts("costo_marginal", "fecha_hora")
+        ts_cprog = last_ts("costo_marginal_programado", "fecha_hora", {"fuente": "CEN_PID"})
+        ts_creal = last_ts("costo_marginal_real", "fecha_hora")
+        ts_desp  = last_ts("instrucciones_cmg", "fecha_hora")
+        ts_sscc  = last_ts("sscc_instrucciones", "fecha")
+        ts_lim   = last_ts("limitaciones_transmision", "modified")
+        ts_mant  = last_ts("mantenimiento_mayor", "fecha_inicio_programa")
+
+        # CMG online: el detalle de 15 min es la fuente primaria desde 2026-07-29;
+        # si aún no hay filas (API caída → fallback S3), se muestra el horario.
+        ts_online = ts_cmin or ts_cmg
+        lbl_online = "CMG online 15 min" if ts_cmin else "CMG online (S3)"
 
         st.markdown(f"""
         <div class="status-box">
@@ -119,13 +138,21 @@ def render_sidebar():
             </div>
             <div style="font-size:0.6rem;font-weight:700;letter-spacing:1.3px;color:#C4B5FD;text-transform:uppercase;margin-bottom:5px">Estado de adquisición · API CEN</div>
             {_row_cont("Gen. real", ts_real, hoy_cl)}
-            {_row_cont("Gen. programada", ts_prog, hoy_cl)}
-            {_row_cont("CMG online", ts_cmg, hoy_cl)}
+            {_row_cont("Programada PCP", ts_pcp, hoy_cl)}
+            {_row_cont("Programada PID", ts_pid, hoy_cl)}
+            {_row_cont(lbl_online, ts_online, hoy_cl)}
+            {_row_cont("CMG programado", ts_cprog, hoy_cl)}
             <div style="font-size:0.58rem;font-weight:700;letter-spacing:1.1px;color:rgba(255,255,255,0.4);text-transform:uppercase;margin:8px 0 3px;border-top:1px solid rgba(255,255,255,0.1);padding-top:7px">Último registro</div>
             {_row_evt("Despacho CMG", ts_desp)}
             {_row_evt("SSCC", ts_sscc, con_hora=False)}
             {_row_evt("Limitaciones", ts_lim)}
-            <div style="font-size:0.6rem;color:rgba(255,255,255,0.4);margin-top:8px;text-align:center;font-style:italic">Adquisición automática cada 30 min</div>
+            {_row_evt("CMG real (liquidado)", ts_creal, con_hora=False)}
+            {_row_evt("Mant. mayor (inicio)", ts_mant, con_hora=False)}
+            <div style="font-size:0.58rem;font-weight:700;letter-spacing:1.1px;color:rgba(255,255,255,0.4);text-transform:uppercase;margin:8px 0 3px;border-top:1px solid rgba(255,255,255,0.1);padding-top:7px">Frecuencia</div>
+            {_row_frec("Gen. real · CMG online", "cada 30 min")}
+            {_row_frec("SSCC · Despacho · Limitac.", "cada 30 min")}
+            {_row_frec("PCP · PID · CMG prog.", "cada hora")}
+            {_row_frec("CMG real · mant. · desempeño", "1 vez al día")}
         </div>
         """, unsafe_allow_html=True)
 

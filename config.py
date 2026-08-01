@@ -237,12 +237,20 @@ p,span,div,label {{ font-family:'Inter',sans-serif; }}
   background:rgba(255,255,255,0.18)!important; border-color:rgba(255,255,255,0.5)!important;
   transform:translateY(-1px)!important; box-shadow:0 4px 14px rgba(0,0,0,0.22)!important;
 }}
-/* El texto se centra por el justify-content:center nativo del botón (igual que
-   los botones del área principal). No se fuerza width/flex en los hijos: hacerlo
-   rompía el centrado nativo. Solo se asegura text-align por si el label es block. */
+/* El botón ya es flex con justify-content:center, pero Streamlit envuelve el label
+   en un div[data-testid="stMarkdownContainer"] que ocupa el ancho completo (flex:1)
+   → el texto queda pegado a la izquierda. Se corrige con text-align:center en el
+   contenedor y en el <p>. NO se toca width/display de los hijos (regla 20: hacerlo
+   rompe el centrado nativo del botón). */
+[data-testid="stSidebar"] [data-testid="stButton"] button > div,
+[data-testid="stSidebar"] [data-testid="stDownloadButton"] button > div,
+[data-testid="stSidebar"] [data-testid="stButton"] button [data-testid="stMarkdownContainer"],
+[data-testid="stSidebar"] [data-testid="stDownloadButton"] button [data-testid="stMarkdownContainer"] {{
+  text-align:center!important;
+}}
 [data-testid="stSidebar"] [data-testid="stButton"] button p,
 [data-testid="stSidebar"] [data-testid="stDownloadButton"] button p {{
-  text-align:center!important; margin:0!important;
+  text-align:center!important; margin:0!important; width:100%!important;
 }}
 [data-testid="stSidebar"] [data-baseweb="select"]>div {{ color:#E2E8F0!important; background:rgba(255,255,255,0.07)!important; }}
 .status-box {{

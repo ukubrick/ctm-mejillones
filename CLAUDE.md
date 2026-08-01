@@ -1,7 +1,10 @@
 # CLAUDE.md — Dashboard CTM Mejillones
 > Contexto completo para Claude Code. Leer al inicio de cada sesión.
 > Autor: Erick Herrera — AES Andes, Antofagasta, Chile.
-> Última actualización: 2026-07-29 (CMG online migrado del feed S3 a la API SIP
+> Última actualización: 2026-08-01 (reportes PDF/PPT reducidos a informe ejecutivo de
+>   gerencia — 2 páginas / 4 slides; panel de adquisición del sidebar ampliado a las
+>   fuentes y cadencias reales; fixes de CSS de botones y de margen derecho del gráfico).
+> Anterior: 2026-07-29 (CMG online migrado del feed S3 a la API SIP
 >   `/costo-marginal-online/v4`: 15 min, 4 barras incl. Angamos/Cochrane, y los CMG = 0 dejan
 >   de perderse; tabla `costo_marginal_online_min` + `migracion_cmg_online_min.py`).
 >
@@ -135,6 +138,15 @@ Destiladas de bugs y quirks reales del CEN/Streamlit:
     horarios (visto en CPF/CSF, 2026-04-04). `"... 24:00:00"` no es timestamp válido → rompe
     `pd.to_datetime` de TODA la vista. Al adquirir, saltar `h > 23`; en loaders de tablas nuevas
     usar `pd.to_datetime(..., errors="coerce")` + dropna como cinturón de seguridad.
+30. **Anotaciones de `add_hline`/`add_vline`: `annotation_position` sin prefijo (`"right"`,
+    `"left"`, `"top"`) las dibuja FUERA del área de trazado** → obliga a reservar margen y deja
+    una franja en blanco al costado del gráfico. Para que queden dentro usar las combinadas
+    (`"top right"`, `"bottom right"`, …) y mantener el margen chico (`r≈12`).
+31. **Centrado del texto en botones de Streamlit: el label va en un
+    `div[data-testid="stMarkdownContainer"]` que ocupa el ancho completo del botón**, así que el
+    `justify-content:center` del `<button>` no lo mueve. Se corrige con `text-align:center` en ese
+    contenedor y en el `<p>` — NO con `width`/`display:flex` en los hijos (eso rompe el centrado
+    nativo, ver regla 20).
 
 ---
 
@@ -227,11 +239,16 @@ dashboard_api/
 ├── utils/
 │   ├── db.py                       ← capa unificada REST/psycopg2 (fetch, write_*, last_ts, test_conn)
 │   ├── data.py                     ← loaders cacheados @st.cache_data (load_real/prog/cmg/sscc/...)
-│   ├── reports.py                  ← generar_pdf / generar_ppt ejecutivos (ReportLab + python-pptx)
+│   ├── reports.py                  ← generar_pdf (2 págs) / generar_ppt (4 slides) — INFORME
+│   │                                  EJECUTIVO para gerencia: KPIs del complejo (energía, ingreso
+│   │                                  estimado, FP, disponibilidad, CMG), destacados narrativos,
+│   │                                  tabla por unidad, series consolidadas y eventos agregados
 │   └── plotly_theme.py             ← apply_aes_layout, estilo_serie, hover, add_linea_ahora, hex_to_rgba
 ├── components/
 │   ├── _common.py                  ← metricas_precision, render_guia/tabla_guia, render_cards_unidad
-│   ├── sidebar.py                  ← render_sidebar → filtros; estado de adquisición; export PDF/PPT
+│   ├── sidebar.py                  ← render_sidebar → filtros; estado de adquisición (fuentes
+│   │                                  continuas + último registro + cadencia de los 4 crons);
+│   │                                  export PDF/PPT
 │   ├── kpis.py                     ← render_kpis — cards por unidad + alarma de TRIP (UMBRAL_TRIP=5 MW)
 │   ├── gen_unidad.py               ← render_gen_unidad — series real/prog/CMG + selector nodo CMG +
 │   │                                  ingreso estimado por unidad (junto al MAE, delta vs semana pasada) +
@@ -542,5 +559,32 @@ Limpieza de scripts probe/test/check.
   y el selector de nodo ahora ofrece las 4 barras. Migración: `migracion_cmg_online_min.py`.
   Verificado de paso: el programa PID volvió a emitirse (datos hasta 2026-07-31).
 
-*Actualizado 2026-07-29. Proyecto CTM Mejillones (4 térmicas ANG/CCR).*
+- **2026-08-01 — Reportes ejecutivos + panel de adquisición + fixes de layout:**
+  · **`utils/reports.py` reescrito como informe de gerencia.** Antes: portada + página/slide por
+    unidad + tablas largas de SSCC/limitaciones/bitácora (8-9 páginas). Ahora **PDF de 2 páginas**
+    (1: KPIs del complejo — energía GWh, ingreso estimado kUSD, factor de planta, disponibilidad,
+    CMG promedio — + «Puntos destacados» narrativos autogenerados + tabla por unidad + aporte por
+    unidad y eventos; 2: series consolidadas de generación de las 4 unidades y CMG) y **PPT de 4
+    slides** (portada · resumen ejecutivo · desempeño por unidad · CMG/aporte/eventos). Métricas
+    nuevas en `_metricas_unidad` / `_metricas_complejo`: energía, FP, disponibilidad (horas ≥ 5 MW,
+    regla 23), sesgo y MAE vs programa, ingreso = Σ (MWh × CMG de la hora). Los 4 gráficos por
+    unidad se reemplazaron por UNA figura con las 4 series (color por entidad, regla 22).
+  · **Origen del programa explícito** (`_fuente_programa`): el reporte declara si la referencia es
+    PCP, PID o manual y avisa cuando el CEN no emitió PID (pasó desde 2026-07-08 y la desviación se
+    leía como si siempre comparara contra lo mismo). En el dashboard, `gen_unidad.py` agrega un
+    caption bajo el gráfico con cuántas horas de la serie PID son en realidad PCP de relleno.
+  · **Panel de adquisición del sidebar actualizado a la realidad post-migración CMG:** fuentes
+    continuas Gen. real · Programada PCP · Programada PID · CMG online 15 min (cae a «CMG online
+    (S3)» si `costo_marginal_online_min` está vacío) · CMG programado; último registro de Despacho
+    CMG, SSCC, Limitaciones, CMG real liquidado y Mant. mayor; bloque nuevo «Frecuencia» con la
+    cadencia de los 4 crons (el texto fijo «cada 30 min» era falso para 3 de ellos).
+  · **Fix CSS botones del sidebar:** el label vive en un `div[data-testid="stMarkdownContainer"]`
+    que ocupa el ancho completo → el `justify-content:center` del botón no alcanzaba y el texto
+    quedaba a la izquierda. Se agregó `text-align:center` al contenedor y al `<p>` (sin tocar
+    width/display de los hijos, regla 20).
+  · **Fix margen derecho del gráfico de Resumen:** la anotación «Prom» del CMG usaba
+    `annotation_position="right"` (fuera del área de trazado) y obligaba a `margin r=70` → franja
+    en blanco a la derecha. Pasó a `"top right"` (dentro) y el margen bajó a 12.
+
+*Actualizado 2026-08-01. Proyecto CTM Mejillones (4 térmicas ANG/CCR).*
 *Stack: Streamlit + supabase-py/psycopg2 + GitHub Actions + API CEN (SIP/OPS) + CMG S3 + scikit-learn/xgboost.*

@@ -236,13 +236,15 @@ def _chart_unidad(unidad, df_r, df_p, df_pid, df_c, df_cp, df_dem, barra_dem,
                 **estilo_serie("demanda"),
             ), row=2, col=1, secondary_y=True)
         prom_cmg = df_c["cmg_usd_mwh"].mean()
+        # Anotación DENTRO del área de trazado ("top right"): con "right" Plotly la
+        # dibuja fuera del eje y obliga a reservar margen derecho (franja en blanco).
         fig.add_hline(y=prom_cmg, line_color="#94A3B8", line_width=1, line_dash="dot",
-                      annotation_text=f"Prom: {prom_cmg:.1f}", annotation_position="right",
+                      annotation_text=f"Prom: {prom_cmg:.1f}", annotation_position="top right",
                       annotation_font_color="#64748B", annotation_font_size=10, row=2, col=1,
                       secondary_y=False)
 
     fig.update_layout(
-        height=520, autosize=True, margin=dict(l=10, r=70, t=20, b=10),
+        height=520, autosize=True, margin=dict(l=10, r=12, t=20, b=10),
         template="plotly_white", plot_bgcolor=BG, paper_bgcolor="#FFFFFF",
         transition=dict(duration=300, easing="cubic-in-out"),
         legend=dict(orientation="h", yanchor="bottom", y=1.02, xanchor="left", x=0,
@@ -280,6 +282,18 @@ def _chart_unidad(unidad, df_r, df_p, df_pid, df_c, df_cp, df_dem, barra_dem,
 
     st.plotly_chart(fig, use_container_width=True,
                     config={"displayModeBar": False, "responsive": True}, key=f"chart_unidad_{unidad}")
+
+    # Origen real de la serie "Programada PID": load_prog_pid rellena con PCP las
+    # horas sin PID (el CEN deja de emitirlo a veces). Se deja escrito para no
+    # leer la desviación como si siempre comparara contra el mismo programa.
+    if tiene_pid and "fuente" in df_upid.columns:
+        cuenta = df_upid["fuente"].value_counts()
+        n_pcp = int(cuenta.get("CEN_PCP", 0))
+        if n_pcp:
+            st.caption(f"Programa mostrado: {int(cuenta.get('CEN_PID', 0))} h de PID "
+                       f"y {n_pcp} h rellenadas con PCP (el CEN no emitió PID en esas horas).")
+        else:
+            st.caption("Programa mostrado: PID (intra-día) en todo el rango.")
 
     if vis["pcp"] and df_up.empty:
         st.caption("Sin datos de programada — se importan automáticamente desde CEN PCP cada hora. "
