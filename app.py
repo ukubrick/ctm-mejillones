@@ -86,7 +86,7 @@ def _navegacion():
     st.markdown("<div class='menubar'>", unsafe_allow_html=True)
     vista = st.radio("Navegación", VISTAS, index=VISTAS.index(vista),
                      horizontal=True, label_visibility="collapsed", key="vista")
-    st.markdown("</div><div style='height:10px'></div>", unsafe_allow_html=True)
+    st.markdown("</div>", unsafe_allow_html=True)
     return vista
 
 

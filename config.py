@@ -346,6 +346,11 @@ p,span,div,label {{ font-family:'Inter',sans-serif; }}
 
 /* ── Barra de menú (popovers a todo el ancho, estilo escritorio) ──────── */
 .menubar {{ margin-bottom:2px; }}
+/* Menú principal compacto: el separador y el gap del bloque vertical dejaban
+   ~110px muertos arriba y abajo del segmented control. Se aprieta el <hr> del
+   área principal y el contenedor del radio (clase .st-key-vista, del key=). */
+[data-testid="stMain"] hr {{ margin-top:0.55rem!important; margin-bottom:0.55rem!important; }}
+.st-key-vista {{ margin-top:-0.55rem!important; margin-bottom:-0.55rem!important; }}
 [data-testid="stPopover"] > div > button {{
   width:100%; background:linear-gradient(180deg,#FFFFFF 0%,#F3F5FF 100%)!important;
   border:1.6px solid #C7CDF5!important; border-radius:10px!important;

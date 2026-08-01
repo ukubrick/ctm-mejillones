@@ -69,15 +69,6 @@ def _row_evt(nombre, v, con_hora=True):
     )
 
 
-def _row_frec(nombre, cadencia):
-    """Fila informativa de cadencia de los crons (no depende de datos)."""
-    return (
-        '<div style="display:flex;align-items:center;justify-content:space-between;padding:2px 0">'
-        f'<span style="color:rgba(255,255,255,0.55);font-size:0.66rem">{nombre}</span>'
-        f'<span style="color:rgba(255,255,255,0.72);font-size:0.66rem;font-style:italic">{cadencia}</span></div>'
-    )
-
-
 def render_sidebar():
     """Renderiza el sidebar y devuelve dict de filtros."""
     with st.sidebar:
@@ -123,7 +114,6 @@ def render_sidebar():
         ts_desp  = last_ts("instrucciones_cmg", "fecha_hora")
         ts_sscc  = last_ts("sscc_instrucciones", "fecha")
         ts_lim   = last_ts("limitaciones_transmision", "modified")
-        ts_mant  = last_ts("mantenimiento_mayor", "fecha_inicio_programa")
 
         # CMG online: el detalle de 15 min es la fuente primaria desde 2026-07-29;
         # si aún no hay filas (API caída → fallback S3), se muestra el horario.
@@ -132,10 +122,6 @@ def render_sidebar():
 
         st.markdown(f"""
         <div class="status-box">
-            <div style="display:flex;align-items:center;gap:6px;margin-bottom:10px">
-                <span class="dot-status {dot_db}"></span>
-                <span style="font-size:0.72rem;font-weight:600">{txt_db}</span>
-            </div>
             <div style="font-size:0.6rem;font-weight:700;letter-spacing:1.3px;color:#C4B5FD;text-transform:uppercase;margin-bottom:5px">Estado de adquisición · API CEN</div>
             {_row_cont("Gen. real", ts_real, hoy_cl)}
             {_row_cont("Programada PCP", ts_pcp, hoy_cl)}
@@ -147,12 +133,6 @@ def render_sidebar():
             {_row_evt("SSCC", ts_sscc, con_hora=False)}
             {_row_evt("Limitaciones", ts_lim)}
             {_row_evt("CMG real (liquidado)", ts_creal, con_hora=False)}
-            {_row_evt("Mant. mayor (inicio)", ts_mant, con_hora=False)}
-            <div style="font-size:0.58rem;font-weight:700;letter-spacing:1.1px;color:rgba(255,255,255,0.4);text-transform:uppercase;margin:8px 0 3px;border-top:1px solid rgba(255,255,255,0.1);padding-top:7px">Frecuencia</div>
-            {_row_frec("Gen. real · CMG online", "cada 30 min")}
-            {_row_frec("SSCC · Despacho · Limitac.", "cada 30 min")}
-            {_row_frec("PCP · PID · CMG prog.", "cada hora")}
-            {_row_frec("CMG real · mant. · desempeño", "1 vez al día")}
         </div>
         """, unsafe_allow_html=True)
 
@@ -173,7 +153,7 @@ def render_sidebar():
             st.cache_data.clear()
             st.rerun()
         st.markdown('<p style="font-size:0.62rem;font-weight:700;letter-spacing:0.14em;'
-                    'color:#C7D2FE;margin:6px 0 2px;text-transform:uppercase;text-align:center">Exportar reporte</p>',
+                    'color:#C7D2FE;margin:6px 0 2px;text-transform:uppercase;text-align:center">Exportar reporte ejecutivo</p>',
                     unsafe_allow_html=True)
         _render_export(fi, ff)
 

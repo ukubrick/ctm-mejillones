@@ -605,6 +605,12 @@ Limpieza de scripts probe/test/check.
   · **Selector de nodo CMG a ancho completo:** estaba dentro de `st.columns([1,2])`, así que las 4
     barras se envolvían en una grilla 2x2. Ahora va a ancho completo y el CSS (anclado en
     `.st-key-nodo_cmg`) reparte los 4 pills en una sola fila (277 px cada uno).
+  · **Ajustes finos (misma sesión):** menú principal compacto (el `<hr>` del área principal y el
+    contenedor `.st-key-vista` dejaban ~110 px muertos arriba y abajo; ahora ~35 px). Sidebar
+    depurado: fuera la fila «Conectado · Supabase» (el error de conexión se sigue mostrando en el
+    camino de fallo), fuera «Mant. mayor (inicio)» y fuera el bloque «Frecuencia». El rótulo de
+    exportación pasó a «Exportar reporte ejecutivo». Verificado en la app real con Playwright: el
+    área de trazado del gráfico queda a 4 px del borde derecho del contenedor (antes ~87).
 
 *Actualizado 2026-08-01. Proyecto CTM Mejillones (4 térmicas ANG/CCR).*
 *Stack: Streamlit + supabase-py/psycopg2 + GitHub Actions + API CEN (SIP/OPS) + CMG S3 + scikit-learn/xgboost.*
