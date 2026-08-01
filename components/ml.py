@@ -47,6 +47,9 @@ from utils.data import (load_instrucciones_cmg, load_limitaciones, load_sscc,
 INK       = "#1A1F36"
 INK_AXIS  = "#94A3B8"
 
+# Vida media del peso por recencia del entrenamiento (días). El CMG deriva de
+# régimen en semanas; sin esto el modelo aprende el precio de hace dos meses.
+VIDA_MEDIA_DIAS = 10
 # Regla 23: potencia real < 5 MW = unidad detenida, no 0 exacto.
 UMBRAL_TRIP = 5.0
 # Mapeo de las limitaciones de transmisión (regla: id_unidad 1965-1968).
@@ -281,8 +284,21 @@ def _dataset(nodo):
         return None, None, None, None
     d = d.set_index("fecha_hora").sort_index()[["cmg_usd_mwh"]]
     idx = pd.date_range(d.index.min(), d.index.max(), freq="h")
-    df = (d.reindex(idx).ffill(limit=3).dropna().reset_index()
-          .rename(columns={"index": "fecha_hora"}))
+    d = d.reindex(idx)
+
+    # Los huecos de la malla horaria NO son ausencia de dato: hasta el 27/07 el
+    # feed S3 no emitía fila cuando el CMG era 0 (regla 27). Verificado en Crucero:
+    # de los 142 huecos, los 138 que tienen liquidación son CERO el 100% de las
+    # veces. Un ffill los rellenaba con el último precio ALTO conocido, o sea
+    # inventaba precio justo en las horas de desacople y le enseñaba al modelo que
+    # el cero no existe. Se rellenan con el CMG real liquidado y lo que no se pueda
+    # rellenar se descarta — nunca se arrastra el valor anterior.
+    real = _load_cmg_real_ml(nodo)
+    falt = d["cmg_usd_mwh"].isna()
+    if falt.any() and not real.empty:
+        d.loc[falt, "cmg_usd_mwh"] = pd.Series(d.index[falt].map(real).values,
+                                               index=d.index[falt])
+    df = d.dropna().reset_index().rename(columns={"index": "fecha_hora"})
     df = _add_time(df)
 
     for l in LAGS_CORTOS + LAGS_LARGOS:
@@ -477,7 +493,6 @@ def _seccion_cmg():
     rmse = float(np.sqrt(mean_squared_error(y_true, y_pred)))
     r2 = float(1 - np.sum((y_true - y_pred) ** 2) / np.sum((y_true - y_true.mean()) ** 2))
     cobertura = R["cobertura"]
-    pin = R["pinball"]
     pico, valle = dff.loc[dff["cmg_pred"].idxmax()], dff.loc[dff["cmg_pred"].idxmin()]
 
     ingreso_esp, dff_ing = _ingreso_esperado(dff)
@@ -560,9 +575,17 @@ def _seccion_cmg():
             line=dict(color=AES_AZUL, width=2)))
         f2.add_trace(go.Scatter(x=test["fecha_hora"], y=y_pred, name="Predicho (P50)",
             line=dict(color=AES_AMBAR, width=1.8, dash="dash")))
-        _base_layout(f2, f"Validación · MAE {mae:.1f} · R² {r2:.2f} · cobertura {cobertura:.0f}% "
-                         f"· pinball {pin:.2f}", "CMG USD/MWh", height=320, hovermode="x unified")
+        _base_layout(f2, f"Validación · MAE {mae:.1f} · sesgo {R['sesgo']:+.1f} · R² {r2:.2f} "
+                         f"· cobertura {cobertura:.0f}%", "CMG USD/MWh", height=320,
+                     hovermode="x unified")
         _show(f2)
+        st.caption(
+            f"**Sesgo {R['sesgo']:+.1f} USD/MWh** — cuánto se corre el modelo en promedio "
+            f"(positivo = optimista). El CMG derivó de ~116 a ~40 USD/MWh en dos meses, así que "
+            f"el entrenamiento pondera lo reciente (vida media {VIDA_MEDIA_DIAS} días) y se "
+            f"resta la mediana del residuo medido fuera de muestra ({R['bias_corr']:+.1f}). "
+            f"El R² se calcula contra la media del período de prueba, que el modelo no conoce: "
+            f"bajo deriva puede salir negativo aun siendo mucho mejor que cualquier constante.")
     with cB:
         imp = R["importancia"].sort_values().tail(10)
         f3 = go.Figure(go.Bar(x=imp.values, y=imp.index, orientation="h", marker_color=AES_CYAN,
@@ -590,27 +613,41 @@ def _entrenar_cmg(nodo, sello):
     i1, i2 = int(n * 0.60), int(n * 0.80)
     train, calib, test = df.iloc[:i1], df.iloc[i1:i2], df.iloc[i2:]
 
+    # Peso por RECENCIA. El nivel del CMG deriva fuerte: en Crucero la media pasó
+    # de 116 (train) a 86 (calib) a 40 USD/MWh (test) en dos meses. Sin ponderar,
+    # el modelo aprende el régimen caro y sobreestima sistemáticamente el barato.
+    edad_d = (train["fecha_hora"].max() - train["fecha_hora"]).dt.total_seconds() / 86400
+    w = 0.5 ** (edad_d / VIDA_MEDIA_DIAS)
+
     def _fit(alpha=None):
         kw = dict(n_estimators=400, max_depth=5, learning_rate=0.05, subsample=0.8,
                   colsample_bytree=0.8, random_state=42, verbosity=0)
         if alpha is not None:
             kw.update(objective="reg:quantileerror", quantile_alpha=alpha)
         m = XGBRegressor(**kw)
-        m.fit(train[feats], train["cmg_usd_mwh"])
+        m.fit(train[feats], train["cmg_usd_mwh"], sample_weight=w)
         return m
 
     m50, m10, m90 = _fit(), _fit(0.10), _fit(0.90)
 
+    # Corrección de sesgo por deriva, medida en el set de CALIBRACIÓN (que el
+    # modelo nunca vio). Es la mediana del residuo: si el modelo viene corriendo
+    # alto contra datos frescos fuera de muestra, se le resta esa cantidad. No es
+    # ajustar contra el test — el test sigue siendo ciego.
+    yc = calib["cmg_usd_mwh"].values
+    bias_corr = float(np.median(yc - m50.predict(calib[feats]))) if len(yc) else 0.0
+
     # Los cuantiles crudos siempre dan bandas angostas (sobreconfianza). Sobre el
     # set de calibración se mide cuánto se salió la realidad de la banda y se
     # ensancha en el percentil 80 de ese error: banda bonita → banda honesta.
-    yc = calib["cmg_usd_mwh"].values
-    E = np.maximum(m10.predict(calib[feats]) - yc, yc - m90.predict(calib[feats]))
+    E = np.maximum((m10.predict(calib[feats]) + bias_corr) - yc,
+                   yc - (m90.predict(calib[feats]) + bias_corr))
     Q = float(np.quantile(E, 0.80)) if len(E) else 0.0
 
     y_true = test["cmg_usd_mwh"].values
-    y_pred = m50.predict(test[feats])
-    q10_t, q90_t = m10.predict(test[feats]), m90.predict(test[feats])
+    y_pred = m50.predict(test[feats]) + bias_corr
+    q10_t = m10.predict(test[feats]) + bias_corr
+    q90_t = m90.predict(test[feats]) + bias_corr
     lo_t, hi_t = q10_t - Q, q90_t + Q
 
     # Forecast 24h recursivo: para t+1 el lag_1h es dato real; de ahí en adelante
@@ -620,15 +657,17 @@ def _entrenar_cmg(nodo, sello):
     for h in range(1, 25):
         ndt = df["fecha_hora"].iloc[-1] + timedelta(hours=h)
         row = pd.DataFrame([_fila_futura(ndt, history, mapas, feats)])[feats]
-        p = float(m50.predict(row)[0])
-        preds.append({"fecha_hora": ndt, "cmg_pred": p,
-                      "lo": max(0.0, float(m10.predict(row)[0]) - Q),
-                      "hi": max(float(m90.predict(row)[0]) + Q, p)})
+        p = float(m50.predict(row)[0]) + bias_corr
+        preds.append({"fecha_hora": ndt, "cmg_pred": max(0.0, p),
+                      "lo": max(0.0, float(m10.predict(row)[0]) + bias_corr - Q),
+                      "hi": max(float(m90.predict(row)[0]) + bias_corr + Q, p)})
         history.append(p)
 
     return {
         "test": test, "forecast": pd.DataFrame(preds), "Q": Q,
         "y_true": y_true, "y_pred": y_pred, "lo_t": lo_t, "hi_t": hi_t,
+        "bias_corr": bias_corr,
+        "sesgo": float(np.mean(y_pred - y_true)),
         "cobertura": float(np.mean((y_true >= lo_t) & (y_true <= hi_t)) * 100),
         "pinball": (_pinball(y_true, q10_t, 0.10) + _pinball(y_true, q90_t, 0.90)) / 2,
         "importancia": pd.Series(m50.feature_importances_, index=feats),
@@ -677,7 +716,9 @@ def _benchmark_datos(nodo, sello):
                 continue
             m = XGBRegressor(n_estimators=350, max_depth=5, learning_rate=0.05,
                              subsample=0.8, colsample_bytree=0.8, random_state=42, verbosity=0)
-            m.fit(tr[feats_da], tr["cmg_usd_mwh"])
+            edad_d = (tr["fecha_hora"].max() - tr["fecha_hora"]).dt.total_seconds() / 86400
+            m.fit(tr[feats_da], tr["cmg_usd_mwh"],
+                  sample_weight=0.5 ** (edad_d / VIDA_MEDIA_DIAS))
             y = te["cmg_usd_mwh"].values
             fila = {"Ventana": nombre, "Horas": len(te),
                     "MAE modelo": float(np.mean(np.abs(y - m.predict(te[feats_da]))))}
