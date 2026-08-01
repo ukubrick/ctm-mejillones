@@ -169,7 +169,7 @@ def render_sidebar():
 
         # Bloque de acciones agrupado (botones juntos y centrados).
         st.markdown("<div style='height:14px'></div>", unsafe_allow_html=True)
-        if st.button("↻  Actualizar datos"):
+        if st.button("↻  Actualizar datos", width="stretch"):
             st.cache_data.clear()
             st.rerun()
         st.markdown('<p style="font-size:0.62rem;font-weight:700;letter-spacing:0.14em;'
@@ -206,22 +206,22 @@ def _datos_reporte(fi, ff):
 
 
 def _render_export(fi, ff):
-    if st.button("Generar PDF"):
+    if st.button("Generar PDF", width="stretch"):
         with st.spinner("Generando PDF..."):
             try:
                 dr, dp, dc, ds, dl, s_r, e_r = _datos_reporte(fi, ff)
                 pdf_bytes = generar_pdf(dr, dp, dc, s_r, e_r, df_sscc=ds, df_lim=dl)
-                st.download_button("Descargar PDF", data=pdf_bytes,
+                st.download_button("Descargar PDF", data=pdf_bytes, width="stretch",
                                    file_name=f"CTM-Reporte_{s_r}_{e_r}.pdf", mime="application/pdf")
             except Exception as ex:
                 st.error(f"Error generando PDF: {ex}")
 
-    if st.button("Generar PPT"):
+    if st.button("Generar PPT", width="stretch"):
         with st.spinner("Generando presentación..."):
             try:
                 dr, dp, dc, ds, dl, s_r, e_r = _datos_reporte(fi, ff)
                 ppt_bytes = generar_ppt(dr, dp, dc, s_r, e_r, df_sscc=ds, df_lim=dl)
-                st.download_button("Descargar PPT", data=ppt_bytes,
+                st.download_button("Descargar PPT", data=ppt_bytes, width="stretch",
                                    file_name=f"CTM-Reporte_{s_r}_{e_r}.pptx",
                                    mime="application/vnd.openxmlformats-officedocument.presentationml.presentation")
             except Exception as ex:

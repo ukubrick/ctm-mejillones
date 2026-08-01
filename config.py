@@ -237,20 +237,16 @@ p,span,div,label {{ font-family:'Inter',sans-serif; }}
   background:rgba(255,255,255,0.18)!important; border-color:rgba(255,255,255,0.5)!important;
   transform:translateY(-1px)!important; box-shadow:0 4px 14px rgba(0,0,0,0.22)!important;
 }}
-/* El botón ya es flex con justify-content:center, pero Streamlit envuelve el label
-   en un div[data-testid="stMarkdownContainer"] que ocupa el ancho completo (flex:1)
-   → el texto queda pegado a la izquierda. Se corrige con text-align:center en el
-   contenedor y en el <p>. NO se toca width/display de los hijos (regla 20: hacerlo
-   rompe el centrado nativo del botón). */
-[data-testid="stSidebar"] [data-testid="stButton"] button > div,
-[data-testid="stSidebar"] [data-testid="stDownloadButton"] button > div,
-[data-testid="stSidebar"] [data-testid="stButton"] button [data-testid="stMarkdownContainer"],
-[data-testid="stSidebar"] [data-testid="stDownloadButton"] button [data-testid="stMarkdownContainer"] {{
-  text-align:center!important;
-}}
+/* NOTA (verificada en el DOM real con Playwright, 2026-08-01): el label del botón
+   NO necesita CSS de centrado — Streamlit ya lo envuelve en un div flex con
+   justify-content:center. Lo que fallaba era el ANCHO: `width:100%` sobre el
+   <button> se resolvía contra el wrapper div[data-testid="stButton"], que es
+   shrink-to-fit (~145px). Por eso los botones salían angostos y de distinto
+   tamaño, alineados a la izquierda. Se arregla del lado de Python con
+   `width="stretch"` en cada st.button/st.download_button del sidebar. */
 [data-testid="stSidebar"] [data-testid="stButton"] button p,
 [data-testid="stSidebar"] [data-testid="stDownloadButton"] button p {{
-  text-align:center!important; margin:0!important; width:100%!important;
+  text-align:center!important; margin:0!important;
 }}
 [data-testid="stSidebar"] [data-baseweb="select"]>div {{ color:#E2E8F0!important; background:rgba(255,255,255,0.07)!important; }}
 .status-box {{
@@ -424,6 +420,23 @@ p,span,div,label {{ font-family:'Inter',sans-serif; }}
 }}
 [data-testid="stMain"] [data-testid="stRadioGroup"] > label:has(input:checked) p,
 .block-container div[data-testid="stRadio"] [role="radiogroup"] > label:has(input:checked) p {{ color:#FFFFFF; }}
+
+/* Selector de nodo CMG (Resumen): una sola fila de 4 pills repartidos en todo el
+   ancho, en vez de la grilla 2x2 apretada que quedaba al ir dentro de una columna.
+   Se ancla en `.st-key-nodo_cmg`, la clase que Streamlit pone en el contenedor del
+   widget a partir de su `key=`. OJO: en 1.58.0 el grupo NO tiene
+   data-testid="stRadioGroup" — es `div[role="radiogroup"]` (verificado en el DOM). */
+.st-key-nodo_cmg,
+.st-key-nodo_cmg [data-testid="stRadio"] {{ width:100%!important; }}
+.st-key-nodo_cmg [role="radiogroup"],
+.st-key-nodo_cmg [data-testid="stRadioGroup"] {{
+  display:flex!important; width:100%!important; flex-wrap:nowrap!important; gap:6px;
+}}
+.st-key-nodo_cmg [role="radiogroup"] > label,
+.st-key-nodo_cmg [data-testid="stRadioGroup"] > label {{
+  flex:1 1 0!important; min-width:0!important; padding:9px 8px!important;
+}}
+.st-key-nodo_cmg [role="radiogroup"] > label p {{ white-space:nowrap; }}
 
 /* ── Gráficos Plotly ──────────────────────────────────────────────────── */
 [data-testid="stPlotlyChart"] {{ border-radius:12px; overflow:hidden; box-shadow:0 2px 10px rgba(0,0,0,0.06); animation:fadeInUp 0.5s ease both; transition:box-shadow 0.2s ease; }}

@@ -142,8 +142,11 @@ def _chart_unidad(unidad, df_r, df_p, df_pid, df_c, df_cp, df_dem, barra_dem,
     n_rows  = 2 if tiene_cmg else 1
     heights = [0.62, 0.38] if n_rows == 2 else [1.0]
 
-    # La fila del CMG lleva eje secundario para la demanda (MWh)
-    specs = [[{"secondary_y": False}], [{"secondary_y": True}]] if n_rows == 2 else [[{"secondary_y": False}]]
+    # La fila del CMG lleva eje secundario SOLO si la demanda está visible: un
+    # secondary_y declarado pero vacío igual recorta el dominio x de TODAS las
+    # filas (shared_xaxes) y deja una franja en blanco a la derecha del gráfico.
+    specs = ([[{"secondary_y": False}], [{"secondary_y": tiene_dem}]] if n_rows == 2
+             else [[{"secondary_y": False}]])
     fig = make_subplots(rows=n_rows, cols=1, shared_xaxes=True, row_heights=heights,
                         vertical_spacing=0.12, specs=specs)
 
@@ -334,12 +337,13 @@ def render_gen_unidad(df_r, df_p, df_c, mostrar_prog, mostrar_cmg, nodo_cmg, s=N
 
     # Selector de nodo CMG (antes en el sidebar). Persiste en session_state["nodo_cmg"]
     # → app.py lo lee para cargar df_c en la próxima corrida.
+    # Ancho completo (antes iba en una columna de 1/3 → las 4 barras se envolvían
+    # en una grilla 2x2 apretada). Streamlit marca el contenedor del widget con la
+    # clase `st-key-<key>`, que el CSS usa para estirar los pills en una sola fila.
     _nodos = list(NOMBRES_NODO.keys())
-    sc1, _ = st.columns([1, 2])
-    with sc1:
-        nodo_cmg = st.radio("Nodo CMG", _nodos,
-                            index=_nodos.index(nodo_cmg) if nodo_cmg in _nodos else 0,
-                            format_func=lambda x: NOMBRES_NODO[x], horizontal=True, key="nodo_cmg")
+    nodo_cmg = st.radio("Nodo CMG", _nodos,
+                        index=_nodos.index(nodo_cmg) if nodo_cmg in _nodos else 0,
+                        format_func=lambda x: NOMBRES_NODO[x], horizontal=True, key="nodo_cmg")
     nl = NOMBRES_NODO.get(nodo_cmg, "Crucero 220kV")
 
     # ── Control de series visibles ──────────────────────────────────────────

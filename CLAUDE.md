@@ -138,15 +138,29 @@ Destiladas de bugs y quirks reales del CEN/Streamlit:
     horarios (visto en CPF/CSF, 2026-04-04). `"... 24:00:00"` no es timestamp válido → rompe
     `pd.to_datetime` de TODA la vista. Al adquirir, saltar `h > 23`; en loaders de tablas nuevas
     usar `pd.to_datetime(..., errors="coerce")` + dropna como cinturón de seguridad.
-30. **Anotaciones de `add_hline`/`add_vline`: `annotation_position` sin prefijo (`"right"`,
-    `"left"`, `"top"`) las dibuja FUERA del área de trazado** → obliga a reservar margen y deja
-    una franja en blanco al costado del gráfico. Para que queden dentro usar las combinadas
-    (`"top right"`, `"bottom right"`, …) y mantener el margen chico (`r≈12`).
-31. **Centrado del texto en botones de Streamlit: el label va en un
-    `div[data-testid="stMarkdownContainer"]` que ocupa el ancho completo del botón**, así que el
-    `justify-content:center` del `<button>` no lo mueve. Se corrige con `text-align:center` en ese
-    contenedor y en el `<p>` — NO con `width`/`display:flex` en los hijos (eso rompe el centrado
-    nativo, ver regla 20).
+30. **Franja en blanco a la derecha de un `make_subplots`: la causa es un `secondary_y` declarado
+    y vacío.** Con `specs=[[...],[{"secondary_y": True}]]` Plotly recorta el dominio x al
+    **(0, 0.94)** de TODAS las filas (con `shared_xaxes`), aunque no haya ninguna traza en el eje
+    secundario → 6% del ancho perdido. Declarar `secondary_y` solo cuando la serie está visible
+    (en `gen_unidad.py` va condicionado a `tiene_dem`). Secundario: las anotaciones de
+    `add_hline` con `annotation_position` sin prefijo (`"right"`, `"left"`, `"top"`) se dibujan
+    FUERA del área y obligan a reservar margen; usar las combinadas (`"top right"`, …).
+31. **Botones angostos/desalineados en el sidebar: el problema es el ANCHO del wrapper, no el
+    centrado del texto.** `width:100%` sobre el `<button>` se resuelve contra
+    `div[data-testid="stButton"]`, que es shrink-to-fit (~145 px) → cada botón queda del ancho de
+    su texto y pegado a la izquierda. La solución es de Python: `width="stretch"` en cada
+    `st.button`/`st.download_button` (Streamlit ≥1.55). El label ya viene centrado de fábrica
+    (Streamlit lo envuelve en un div flex con `justify-content:center`), así que NO hace falta CSS
+    de centrado — agregarlo solo enmascara el síntoma.
+32. **Verificar el DOM real antes de escribir CSS a medida para Streamlit.** Levantar la app en un
+    puerto local + Playwright (`page.evaluate`) y consultar `getBoundingClientRect` y qué reglas
+    ganan; deducir el DOM desde una captura de pantalla llevó a dos diagnósticos equivocados
+    seguidos. Comprobado así el 2026-08-01: (a) `data-testid="stButton"` SÍ existe (vive en el
+    chunk `Button.*.js`, por eso no aparece si se hace grep sobre `index.*.js`); (b) en **1.58.0 el
+    grupo de radios NO tiene `data-testid="stRadioGroup"`** — es `div[role="radiogroup"]` a secas
+    (la regla 19 quedó desactualizada; el CSS cubre ambos y por eso no se notó); (c) un widget con
+    `key=` recibe la clase `.st-key-<key>` en su contenedor, que es el mejor ancla para CSS
+    puntual (más estable que `st.container(key=...)` extra).
 
 ---
 
@@ -578,13 +592,19 @@ Limpieza de scripts probe/test/check.
     (S3)» si `costo_marginal_online_min` está vacío) · CMG programado; último registro de Despacho
     CMG, SSCC, Limitaciones, CMG real liquidado y Mant. mayor; bloque nuevo «Frecuencia» con la
     cadencia de los 4 crons (el texto fijo «cada 30 min» era falso para 3 de ellos).
-  · **Fix CSS botones del sidebar:** el label vive en un `div[data-testid="stMarkdownContainer"]`
-    que ocupa el ancho completo → el `justify-content:center` del botón no alcanzaba y el texto
-    quedaba a la izquierda. Se agregó `text-align:center` al contenedor y al `<p>` (sin tocar
-    width/display de los hijos, regla 20).
-  · **Fix margen derecho del gráfico de Resumen:** la anotación «Prom» del CMG usaba
-    `annotation_position="right"` (fuera del área de trazado) y obligaba a `margin r=70` → franja
-    en blanco a la derecha. Pasó a `"top right"` (dentro) y el margen bajó a 12.
+  · **Fix botones del sidebar (2º intento, este sí):** el primer diagnóstico (centrado del label
+    por CSS) era incorrecto. Inspeccionando el DOM real con Playwright: el `<button>` ya tenía
+    `width:100%`, pero su wrapper `div[data-testid="stButton"]` es shrink-to-fit (145 px) → botones
+    angostos, de distinto ancho y pegados a la izquierda. Se resolvió con `width="stretch"` en los
+    `st.button`/`st.download_button` del sidebar. Verificado: 260 px los tres, texto a 0 px del
+    centro. Ver reglas 31 y 32.
+  · **Fix franja en blanco del gráfico de Resumen (2º intento):** la anotación «Prom» fuera del
+    área era solo parte del problema. La causa real: el `specs=[[...],[{"secondary_y": True}]]`
+    de la fila del CMG recortaba el dominio x a (0, 0.94) aunque la demanda no estuviera visible.
+    Ahora `secondary_y` se declara solo si `tiene_dem`; margen derecho 70 → 12. Ver regla 30.
+  · **Selector de nodo CMG a ancho completo:** estaba dentro de `st.columns([1,2])`, así que las 4
+    barras se envolvían en una grilla 2x2. Ahora va a ancho completo y el CSS (anclado en
+    `.st-key-nodo_cmg`) reparte los 4 pills en una sola fila (277 px cada uno).
 
 *Actualizado 2026-08-01. Proyecto CTM Mejillones (4 térmicas ANG/CCR).*
 *Stack: Streamlit + supabase-py/psycopg2 + GitHub Actions + API CEN (SIP/OPS) + CMG S3 + scikit-learn/xgboost.*
