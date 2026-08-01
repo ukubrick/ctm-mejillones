@@ -504,11 +504,14 @@ def render_gen_unidad(df_r, df_p, df_c, mostrar_prog, mostrar_cmg, nodo_cmg, s=N
             st.caption("Contexto")
             v_dem  = st.checkbox("Demanda pronosticada", value=False, key="vis_dem",
                                  disabled=not v_cmg)
-            v_ev   = st.checkbox("Eventos (limitaciones y mantenimiento)", value=True,
+            v_ev   = st.checkbox("Eventos de la unidad", value=True,
                                  key="vis_ev",
-                                 help="Franjas de las ventanas de limitación de transmisión, "
-                                      "mantenimiento mayor e intervenciones del corredor "
-                                      "de evacuación que afectan a la unidad.")
+                                 help="Franjas de las ventanas de limitación de transmisión y "
+                                      "de mantenimiento mayor / outage que intervienen esta "
+                                      "unidad. NO incluye los trabajos en líneas y "
+                                      "subestaciones del corredor de evacuación: esos duran "
+                                      "semanas y afectan a las 4 unidades por igual "
+                                      "(se ven en Operación > Panorama).")
 
     vis = {"pcp": v_pcp, "pid": v_pid, "desv": v_desv and (v_pid or v_pcp),
            "cmg": v_cmg, "cmg_prog": v_cmgp, "demanda": v_dem, "eventos": v_ev}
@@ -550,11 +553,15 @@ def render_gen_unidad(df_r, df_p, df_c, mostrar_prog, mostrar_cmg, nodo_cmg, s=N
         f'{LABELS[u_act]} · Real vs Programada (MW) + CMG {nl} (USD/MWh)</p>',
         unsafe_allow_html=True,
     )
-    # Eventos de la unidad activa (limitaciones con ventana real + mantenimiento
-    # mayor del PMPM, incluido el corredor de evacuación). Alimentan la alarma
-    # atribuida, las bandas de la serie y el aviso de eventos latentes.
+    # Eventos de la unidad activa: limitaciones con ventana real + mantenimiento
+    # mayor que interviene la MÁQUINA. `incluir_corredor=False` deja fuera las
+    # intervenciones de líneas y subestaciones (S/E O'Higgins, Laberinto,
+    # Mejillones–O'Higgins): duran semanas, aplican a las 4 unidades por igual y
+    # llenaban la serie de una franja permanente que no dice nada de la unidad.
+    # Ese contexto sigue disponible en Operación > Panorama y en Mant. mayor.
     df_ev = eventos_unidad(u_act,
                            df_lim=load_limitaciones(s, e) if (s and e) else None,
-                           df_mant=load_mantenimiento_mayor())
+                           df_mant=load_mantenimiento_mayor(),
+                           incluir_corredor=False)
     _chart_unidad(u_act, df_r, df_p, df_pid, df_c, df_cp, df_dem, barra_dem, vis, nl,
                   nodo_cmg=nodo_cmg, s=s, e=e, df_ev=df_ev)
