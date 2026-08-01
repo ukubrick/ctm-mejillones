@@ -2,10 +2,11 @@
 > Contexto completo para Claude Code. Leer al inicio de cada sesión.
 > Autor: Erick Herrera — AES Andes, Antofagasta, Chile.
 > Última actualización: 2026-08-01 (2ª sesión: re-sondeo de los endpoints CEN pendientes y
->   **SSCC programado PCP integrado** — tabla `sscc_programado`, workflow propio
->   `adquisicion_sscc_prog.yml` (~21 min/día porque el endpoint ignora `idCentral`) y sub
->   «Programado (PCP)» en la vista SSCC. Fetch validado en vivo; falta correr la migración.
->   `costo-combustible` y `/reduccion` confirmados como recursos no suscritos en 3scale).
+>   **SSCC programado PCP integrado, desplegado y verificado en producción** — tabla
+>   `sscc_programado` (576 filas del 01/08), workflow propio `adquisicion_sscc_prog.yml`
+>   (~21 min/día porque el endpoint ignora `idCentral`) y sub «Programado (PCP)» en la vista SSCC.
+>   Falta la primera corrida por schedule del cron. `costo-combustible` y `/reduccion` confirmados
+>   como recursos no suscritos en 3scale).
 > Anterior: 2026-08-01 (reportes PDF/PPT reducidos a informe ejecutivo de
 >   gerencia — 2 páginas / 4 slides, con la fuente del programa PID/PCP declarada; sidebar
 >   depurado a las fuentes reales post-migración CMG; fixes de layout verificados contra el
@@ -186,6 +187,22 @@ Destiladas de bugs y quirks reales del CEN/Streamlit:
 36. **Un `provision_mw` de 0 en el SSCC programado es un DATO** (la unidad no fue comprometida en
     ese servicio esa hora), igual que el CMG=0 de la regla 28. No filtrarlo al adquirir; filtrarlo
     solo al graficar. En un día típico solo ~5% de las filas tienen provisión > 0.
+37. **Tras crear una tabla nueva, el primer sospechoso de un panel vacío es `st.cache_data`, no la
+    adquisición.** Los loaders nuevos llevan `except Exception: return pd.DataFrame()` para no
+    reventar antes de que exista la tabla — pero eso hace que un fallo REAL se vea idéntico a
+    "sin datos". Si además se abrió el panel antes de correr la migración, el vacío queda cacheado
+    el TTL completo (1 h). Orden de diagnóstico: (a) «↻ Actualizar datos» del sidebar
+    (`st.cache_data.clear()` + `rerun`); (b) Reboot desde Manage app; (c) recién ahí quitar el catch
+    silencioso para ver el error. Pasó el 2026-08-01 con `sscc_programado`.
+38. **`st.metric`: usar `delta_color="off"` cuando el texto secundario es una PROPORCIÓN y no una
+    variación.** Por defecto Streamlit le pone flecha verde hacia arriba, así que un «7% de las
+    filas» se lee como si algo hubiera mejorado. Y el valor principal debe ser CORTO: un
+    `"CSF (-) · 266 MW-h"` no cabe en la card y se trunca con puntos suspensivos — la magnitud va
+    en la línea de detalle, no en el valor.
+39. **Gráfico de barras por día con UN solo día: pasar el eje x a `type="category"`.** Con eje
+    temporal Plotly estira la única barra a todo el ancho del área de trazado y parece un bloque de
+    color, no una barra. Como categoría, `bargap` la mantiene de ancho razonable (`categoryarray`
+    con los días ordenados conserva el orden cronológico).
 
 ---
 
@@ -442,17 +459,19 @@ SIDEBAR_GRAD = "linear-gradient(168deg,#0E7E93,#2A38C9,#4A25A0)"                
 
 ## PENDIENTES VIVOS (lista única — actualizar aquí)
 
-- [ ] **SSCC programado PCP — falta el primer despliegue (2026-08-01).** El código está escrito y
-      el fetch validado contra la API real, pero **la tabla `sscc_programado` NO existe todavía en
-      Supabase** (la DDL no se puede correr desde red local — regla 11). Pasos, en orden:
-      (a) correr `migracion_sscc_programado.py` vía el workflow `migracion.yml` **sin argumento**:
-      ese workflow corta a los 30 min y cada día cuesta ~21, así que cabe UN solo día (el script
-      se autoacota con `MAX_DIAS=1`). Para acumular historia, disparar varias veces a mano
-      `adquisicion_sscc_prog.yml`, que tiene timeout 60 y admite 2 días;
-      (b) confirmar que el cron nuevo `adquisicion_sscc_prog.yml` (09:50 UTC) termina dentro del
-      timeout — es el más lento de los 5 y el único que se acerca al límite;
-      (c) mirar el panel «Programado (PCP)» en Restricciones > SSCC con datos reales.
-      Hasta (a), el loader devuelve vacío y el panel muestra su mensaje de "sin datos" — no rompe.
+- [ ] **SSCC programado PCP — falta la PRIMERA corrida automática del cron (2026-08-01).** La
+      migración corrió OK y el panel está verificado en producción (ver historial), pero
+      `adquisicion_sscc_prog.yml` **todavía no se ha ejecutado por schedule**: la primera es el
+      2026-08-02 ~09:50 UTC. Esa corrida pedirá el 01/08, que ya está cargado → el log debe decir
+      `0 nuevas, 576 actualizadas` (correcto, no es fallo). Confirmar además que termina dentro del
+      timeout de 60 min; la migración equivalente tardó 23m40s, así que el margen es holgado.
+      · Solo hay UN día en la tabla (01/08). Para que los gráficos diarios muestren una serie en
+        vez de una barra, disparar a mano `adquisicion_sscc_prog.yml` con `dias_atras=2` varias
+        veces (el cron solo agrega un día por jornada).
+      · **Validar con criterio de negocio el reparto entre unidades**: el 01/08 dio ANG2 206,3 ·
+        CCR1 134,5 · ANG1 80,0 · CCR2 67,4 MW-h. La diferencia de 3× entre ANG2 y CCR2 es el punto
+        donde un error de mapeo pasaría desapercibido, porque este endpoint usa `ANGAMOS_2` en vez
+        de la convención `CCH` del resto del proyecto (`LLAVES_SSCC_PROG`, regla 35).
 
 - [ ] **Cruzar programado vs instruido vs desempeño (2026-08-01).** Ahora que existen las tres
       piezas (`sscc_programado` · `sscc_instrucciones` · `desempeno_sscc`), el panel las muestra
@@ -709,8 +728,21 @@ Limpieza de scripts probe/test/check.
   · **Fetch validado contra la API real** antes de commitear: 576 filas para el 31/07 = 4 unidades ×
     6 servicios × 24 horas exactas, 0 duplicados de PK, horas 1-24, 47 con provisión > 0 (el resto
     ceros legítimos). El dedup redujo las 4.012 filas crudas a las 576 correctas.
-  · **NO desplegado todavía:** la DDL no corre desde red local (regla 11) → la tabla aún no existe
-    en Supabase. Ver el primer pendiente vivo para la secuencia de despliegue.
+  · **Desplegado y verificado en producción la misma sesión.** `migracion_sscc_programado.py` vía
+    `migracion.yml`: **success en 23m40s**, tabla creada y 576 filas del 01/08 (4 unidades × 6
+    servicios × 24 h, 0 duplicados de PK, 43 con provisión > 0, 488,2 MW-h; reparto ANG2 206,3 ·
+    CCR1 134,5 · ANG1 80,0 · CCR2 67,4). Ojo: la migración cuenta desde HOY hacia atrás, así que
+    con 1 día carga hoy, no ayer (el cron sí toma ayer).
+    · Se descubrió al mirar `migracion.yml` que su timeout es de **30 min** y cada día cuesta ~21
+      → el default de 3 días del script se habría pasado; corregido a `MAX_DIAS=1` con aviso.
+    · Primer render del panel salió VACÍO pese a haber datos: era `st.cache_data` sirviendo el
+      resultado vacío cacheado de antes de la migración (el panel se abrió mientras corría).
+      Se resolvió con «↻ Actualizar datos». Ver regla 37.
+  · **Pulido del panel con datos reales (commit aparte):** el KPI «Servicio dominante» se truncaba
+    (`CSF (-) · 266 M…`) → la magnitud bajó a la línea de detalle; `delta_color="off"` en los dos
+    KPIs cuyo texto secundario es una proporción y no una variación (Streamlit los pintaba con
+    flecha verde de mejora); y el gráfico diario pasó a eje x categórico con `bargap` porque con un
+    solo día el eje temporal estiraba la barra a todo el ancho. Ver reglas 38 y 39.
 
 *Actualizado 2026-08-01. Proyecto CTM Mejillones (4 térmicas ANG/CCR).*
 *Stack: Streamlit + supabase-py/psycopg2 + GitHub Actions + API CEN (SIP/OPS) + CMG S3 + scikit-learn/xgboost.*
