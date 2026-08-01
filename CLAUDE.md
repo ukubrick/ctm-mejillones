@@ -1,7 +1,14 @@
 # CLAUDE.md — Dashboard CTM Mejillones
 > Contexto completo para Claude Code. Leer al inicio de cada sesión.
 > Autor: Erick Herrera — AES Andes, Antofagasta, Chile.
-> Última actualización: 2026-08-01 (2ª sesión: re-sondeo de los endpoints CEN pendientes y
+> Última actualización: 2026-08-01 (3ª sesión: **suite ML rediseñada** — Anomalías y Regímenes
+>   reemplazadas por «Desviación explicada» (cascada de atribución contra las fuentes del CEN) y
+>   «Riesgo de desacople» (clasificador day-ahead); el pronóstico de CMG gana banda cuantílica
+>   calibrada por conformal (CQR) y benchmark contra el PCP/PID. **Hallazgo de datos mayor:** el
+>   feed S3 no emitía fila cuando el CMG era 0 → esas horas están AUSENTES, no en cero, y eso
+>   sesgaba +10,7% el CMG medio a 30 días en Costos y Estadísticas. `migracion_cmg_ceros.py`
+>   escrita para reponerlas desde el liquidado — **PENDIENTE DE EJECUTAR**).
+> Anterior: 2026-08-01 (2ª sesión: re-sondeo de los endpoints CEN pendientes y
 >   **SSCC programado PCP integrado, desplegado y verificado en producción** — tabla
 >   `sscc_programado` (576 filas del 01/08), workflow propio `adquisicion_sscc_prog.yml`
 >   (~21 min/día porque el endpoint ignora `idCentral`) y sub «Programado (PCP)» en la vista SSCC.
@@ -204,6 +211,69 @@ Destiladas de bugs y quirks reales del CEN/Streamlit:
     color, no una barra. Como categoría, `bargap` la mantiene de ancho razonable (`categoryarray`
     con los días ordenados conserva el orden cronológico).
 
+40. **Un hueco en `costo_marginal` anterior al 2026-07-27 ES UN CERO, no un dato faltante.** El
+    feed S3 no emitía fila cuando la barra se desacoplaba (corolario duro de la regla 27).
+    Verificado 2026-08-01: de los 142 huecos de la malla horaria de Crucero, TODOS anteriores al
+    27/07, los 138 que tienen liquidación son cero el 100% de las veces (máximo 0,00). Consecuencias:
+    · **NUNCA `ffill` sobre la malla horaria del CMG online.** Rellenar con el último precio
+      conocido inventa precio ALTO justo en las horas de desacople. Le costó al modelo de CMG un
+      sesgo de +24,6 USD/MWh (sobreestimaba el 92% de las horas) y una predicción mínima de 14,2
+      cuando el real llegaba a 0.
+    · **Todo lo que promedie el CMG online sobre un período que cruce esa frontera está sesgado
+      hacia arriba** (+10,7% a 30 días, +9,5% a 60): KPI «CMG promedio», curva de duración,
+      heatmap hora×día, correlación gen-CMG, y sobre todo la elasticidad precio-demanda, cuyo
+      scatter descarta justo los puntos de precio cero (los de mayor inyección ERV). El ingreso
+      (Σ gen × CMG) NO se ve afectado: esas horas aportan 0 igual.
+    · **El único histórico honesto de ceros es `costo_marginal_real`** (liquidado, nunca los
+      filtró). Es el target correcto para cualquier modelo del evento «desacople»: entrenar el
+      clasificador sobre el online daba 0 positivos en train y AUC 0,500 exacto.
+    · Angamos/Cochrane no tienen huecos (su online arranca el 27/07) pero **sí tienen el problema
+      inverso**: su serie online y el CMG real (rezago ~10 días) NO SE SOLAPAN, así que cruzarlas
+      deja el set en CERO filas justo en las barras de las propias centrales.
+
+41. **Una causa que abarca meses no explica nada: topear las ventanas de atribución.**
+    `limitaciones_transmision` trae registros abiertos (visto: 29/04 → 31/12 con `potencia` 0) y
+    `fecha_efectiva_retorno` viene casi siempre NULL. Sin tope, esas cuatro filas atribuían 234 de
+    las 323 horas desviadas de ANG1. Reglas: (a) si no hay retorno efectivo, acotar la ventana
+    (estimada, o +7 días), nunca `Timestamp.max`; (b) descartar ventanas > 30 días; (c) una causa
+    de SUBRENDIMIENTO (limitación, mantenimiento, SSCC) no puede explicar un desvío AL ALZA.
+
+42. **Umbral de detección: percentil de la propia serie, nunca un valor absoluto.** Un corte fijo
+    de 27,5 MW (10% de Pmax) marcaba el 50% de las horas como «desviadas», porque el desvío real
+    vs programa del complejo tiene mediana ~28 MW y p90 ~200 MW (las unidades entran y salen de
+    servicio). Con percentil el detector se autocalibra por unidad y el tamaño de la lista pasa a
+    ser una decisión explícita del usuario. Mostrar el MW resultante junto al percentil.
+
+43. **El CMG deriva de régimen en semanas: ponderar el entrenamiento por recencia.** Medido: la
+    media de Crucero cayó de 116 (train) → 86 (calib) → 40 USD/MWh (test) en dos meses. Sin peso,
+    el modelo aprende el régimen caro. Decaimiento exponencial con vida media ~10 días
+    (`sample_weight=0.5**(edad_dias/10)`) + resta de la mediana del residuo medida en el set de
+    CALIBRACIÓN (nunca en el de prueba) llevó el sesgo de +24,6 a +3,4 y el MAE de 25,7 a 17,4.
+    · **Un R² negativo bajo deriva NO significa modelo malo:** se calcula contra la media del
+      período de prueba, que el modelo no conoce. Contrastar siempre con una referencia honesta
+      (predecir la media del train daba MAE 76 contra los 17 del modelo). Publicar el SESGO junto
+      al MAE: es la métrica que delata la deriva y la que el usuario ve a ojo en el gráfico.
+
+44. **Banda de incertidumbre: regresión cuantílica + conformal, nunca un ensanchamiento ~√h.**
+    Tres XGBoost (`objective="reg:quantileerror"`, `quantile_alpha` 0,10/0,50/0,90) y partición
+    cronológica 60/20/20. Los cuantiles crudos cubrían el 21% de la realidad (sobreconfianza);
+    ensanchando por el percentil 80 del error medido en calibración quedan en 80% verificado.
+    Publicar SIEMPRE la cobertura: es lo único que distingue una banda honesta de una decorativa.
+
+45. **No dibujar el «ahora» a mano: usar `utils.plotly_theme.add_linea_ahora`.** Escribir un
+    `fig.add_vline(x=ts.timestamp()*1000)` propio (a) depende del huso del contenedor y (b) suele
+    terminar marcando el ÚLTIMO DATO en vez del instante actual — dos errores que se suman y dejan
+    la línea corrida varias horas. El helper usa `datetime.now(TZ_CHILE)` y dibuja con `add_shape`
+    (`add_vline` con `annotation_text` revienta en ejes de fecha en plotly 5.x).
+
+46. **Verificar paneles Streamlit sin navegador con `streamlit.testing.v1.AppTest`.** Complementa
+    la regla 32 (Playwright sirve para el DOM/CSS; AppTest para la LÓGICA). `AppTest.from_string`
+    corre el script headless contra la DB real y expone `.exception`, `.warning`, `.info`,
+    `.dataframe`: detecta NameError y guards mal puestos en segundos y permite barrer todas las
+    combinaciones de widgets (`at.session_state["key"]=...`) antes de commitear. Para inspeccionar
+    una figura Plotly, `AppTest` no la expone → monkeypatchear el helper de render (`_show`) y
+    capturar el objeto.
+
 ---
 
 ## CONVENCIONES DE CÓDIGO
@@ -295,6 +365,9 @@ dashboard_api/
 │                                      por día, tope MAX_DIAS=2)
 ├── backfill_programada.py          ← utilidad puntual (recupera PCP por rango)
 ├── migracion_*.py                  ← migraciones puntuales (correr vía workflow migracion.yml)
+│                                      · migracion_cmg_ceros.py: repone en costo_marginal las horas
+│                                        de CMG = 0 que el S3 nunca emitió (modo simulación por
+│                                        defecto; `apply` para escribir). PENDIENTE DE EJECUTAR
 ├── utils/
 │   ├── db.py                       ← capa unificada REST/psycopg2 (fetch, write_*, last_ts, test_conn)
 │   ├── data.py                     ← loaders cacheados @st.cache_data (load_real/prog/cmg/sscc/...)
@@ -317,9 +390,11 @@ dashboard_api/
 │   │                                  cascada de ingreso, calidad del pronóstico CMG
 │   ├── estadisticas.py             ← render_estadisticas — heatmap CMG hora×día, curva de duración,
 │   │                                  ingreso acumulado, perfil horario gen, aporte/FP, correlación, precisión
-│   ├── ml.py                       ← render_ml — suite: forecast CMG probabilístico (XGBoost, banda
-│   │                                  P10-P90 + ingreso esperado 24h), anomalías (IsolationForest +
-│   │                                  severidad), regímenes operacionales (KMeans de perfiles diarios)
+│   ├── ml.py                       ← render_ml — suite de 3 modelos (rediseño 2026-08):
+│   │                                  «Pronóstico CMG» (3 XGBoost cuantílicos + CQR, peso por
+│   │                                  recencia y debias, ingreso esperado 24h, benchmark vs PCP/PID),
+│   │                                  «Desviación explicada» (2 detectores + cascada de atribución),
+│   │                                  «Riesgo de desacople» (clasificador day-ahead sobre CMG real)
 │   ├── novedades.py                ← render_novedades — estado actual por unidad (bajo la serie CMG)
 │   ├── bitacora_auto.py            ← render_bitacora_auto — bitácora cronológica de la unidad activa
 │   │                                  (SSCC + despacho + limitaciones + novedades manuales + solicitudes
@@ -351,7 +426,7 @@ Se abandonaron las categorías desplegables (popovers). El menú es un **segment
 | Vista | Sub-secciones |
 |-------|---------------|
 | **Resumen** | Gráfico por unidad (real/prog/CMG) + selector de nodo CMG + bitácora automática de la unidad + novedades |
-| **Análisis** | Costos · Estadísticas (consolidada) · Predicción (ML) |
+| **Análisis** | Costos · Estadísticas (consolidada) · Predicción (ML: Pronóstico CMG · Desviación explicada · Riesgo de desacople) |
 | **Restricciones** | Limitaciones · SSCC (incl. Programado PCP y Desempeño CPF/CSF) · Despacho CMG · Solicitudes · Mant. mayor |
 | **Datos** | Ingreso Manual · Datos & Bitácora · Infotécnica (**las 2 primeras tras contraseña `jt`**) |
 
@@ -397,7 +472,7 @@ REST (service_role) desde el dashboard; psycopg2 (postgres) desde la adquisició
 |-------|-------------|-------|
 | `generacion_real` | `(unidad, fecha_hora)` DO UPDATE | + col `origen` ('MANUAL' protege del upsert automático) |
 | `generacion_programada` | `(unidad, fecha_hora, fuente)` DO UPDATE | `fuente` ∈ CEN_PCP / CEN_PID / MANUAL. `load_prog`: MANUAL > PCP, excluye PID |
-| `costo_marginal` | `(barra_transf, fecha_hora)` DO UPDATE | CMG online HORARIO (promedio de los 15 min de la API SIP; S3 solo de fallback). 4 barras |
+| `costo_marginal` | `(barra_transf, fecha_hora)` DO UPDATE | CMG online HORARIO (promedio de los 15 min de la API SIP; S3 solo de fallback). 4 barras. **Las horas < 2026-07-27 con CMG = 0 FALTAN** (el S3 no emitía fila) → `migracion_cmg_ceros.py` las repone marcadas `origen='LIQUIDADO'` |
 | `costo_marginal_online_min` | `(barra_transf, fecha_minuto)` | CMG online 15 min desde `/costo-marginal-online/v4`. 4 barras, incluye CMG=0 |
 | `costo_marginal_programado` | `(barra, fecha_hora, fuente)` | CMG PID (horario) + PCP (diaria). 4 barras: + Angamos/Cochrane. `fuente` desde `migracion_endpoints_ctm.py` |
 | `costo_marginal_real` | `(barra_transf, fecha_hora)` | CMG real liquidado, rezago ~10 días. `limit=50`. 4 barras (+ ANGAMOS/COCHRANE 220) |
@@ -458,6 +533,42 @@ SIDEBAR_GRAD = "linear-gradient(168deg,#0E7E93,#2A38C9,#4A25A0)"                
 ---
 
 ## PENDIENTES VIVOS (lista única — actualizar aquí)
+
+- [ ] **EJECUTAR `migracion_cmg_ceros.py` (2026-08-01, 3ª sesión) — es lo primero de la lista.**
+      Repone en `costo_marginal` las 272 horas de CMG = 0 que el feed S3 nunca emitió (regla 40),
+      tomándolas del liquidado. Hasta que corra, el KPI «CMG promedio» y varios gráficos de Costos
+      y Estadísticas sobreestiman ~10% en cualquier ventana que cruce el 27/07.
+      · Correr primero SIN argumento (modo simulación: imprime filas y efecto por barra, no escribe).
+      · Después `migracion.yml → script=migracion_cmg_ceros.py · arg=apply`.
+      · Al terminar, «↻ Actualizar datos» en el dashboard (regla 37) y verificar que el CMG medio
+        de Crucero a 30 días baja de ~95,8 a ~85,6 USD/MWh.
+      · El script detecta en runtime si `costo_marginal.fecha_hora` es TEXT o timestamp: esa tabla
+        guarda el formato con «T» y `costo_marginal_real` con espacio. NO se pudo comprobar el tipo
+        desde local (regla 10) — si la simulación imprime algo raro ahí, revisar antes de aplicar.
+
+- [ ] **Costos y Estadísticas: revisar los paneles tras la migración (2026-08-01, 3ª sesión).**
+      La auditoría identificó QUÉ está sesgado pero no se tocó ningún panel: la corrección es de
+      datos, no de código. Una vez repuestos los ceros, confirmar que (a) el KPI «CMG promedio»
+      baja, (b) el heatmap hora×día deja de tener huecos, (c) la **elasticidad precio-demanda**
+      cambia de pendiente — es la más afectada, porque su scatter descartaba justo los puntos de
+      precio cero, que son los de mayor inyección ERV.
+
+- [ ] **Pronóstico CMG: sesgo residual y barras sin histórico (2026-08-01, 3ª sesión).**
+      Tras el fix quedan +3,4 USD/MWh de sesgo y R² −0,21 en Crucero (Tarapacá ya da R² +0,20).
+      No se cierra más con 2 meses de datos y sin hidrología ni costo de combustible — el
+      `costo-combustible` sigue siendo recurso no suscrito en 3scale. Revisar cuando haya ~3 meses
+      de histórico limpio post-27/07.
+      · **Angamos y Cochrane muestran «datos insuficientes» en el panel de Pronóstico** y es
+        correcto: su CMG online arranca el 27/07 (~130 horas). Se destraba solo con el tiempo;
+        el umbral está en 400 filas dentro de `_seccion_cmg`.
+
+- [ ] **El modelo pierde el NIVEL de precio contra el PID del Coordinador (2026-08-01).** Medido en
+      las 3 ventanas del benchmark (78h: 36,9 vs 23,8). Es esperable — el PCP/PID sale de una
+      optimización del sistema completo — y el panel lo declara explícitamente. Se probó anclar el
+      modelo al PCP y predecir el RESIDUO: perdió peor (54 vs 29), así que la idea está descartada,
+      no pendiente. Lo que sí valdría la pena si algún día se quiere ganar esa comparación es
+      replicar las exógenas de Pulsar: energía embalsada del SEN y lluvia acumulada 72h sobre las
+      cuencas. Hoy no están en este proyecto.
 
 - [ ] **SSCC programado PCP — falta la PRIMERA corrida automática del cron (2026-08-01).** La
       migración corrió OK y el panel está verificado en producción (ver historial), pero
@@ -744,5 +855,38 @@ Limpieza de scripts probe/test/check.
     flecha verde de mejora); y el gráfico diario pasó a eje x categórico con `bargap` porque con un
     solo día el eje temporal estiraba la barra a todo el ancho. Ver reglas 38 y 39.
 
-*Actualizado 2026-08-01. Proyecto CTM Mejillones (4 térmicas ANG/CCR).*
+- **2026-08-01 (3ª sesión) — Rediseño de la suite ML + hallazgo del sesgo de ceros en el CMG:**
+  · **Punto de partida:** el usuario pidió portar el «pronóstico recursivo de 12h» de Pulsar y
+    reemplazar Anomalías y Regímenes por algo con aporte real. Al comparar contra
+    `Metodologia_ML_Pulsar.pdf` resultó que el recursivo YA estaba implementado (y a 24h): lo que
+    faltaba de Pulsar era la banda CALIBRADA (su análisis 02), el benchmark contra el Coordinador
+    (04) y la anomalía EXPLICADA (03). Se descartó el optimizador de encendido/apagado porque esa
+    decisión es exclusiva del CEN y la empresa siempre quiere las unidades en servicio.
+  · **«Pronóstico CMG» reforzado:** 3 XGBoost cuantílicos (`reg:quantileerror`) + conformal (CQR)
+    sobre partición cronológica 60/20/20 → cobertura de 21% (cruda) a 80% (calibrada); exógenas
+    nuevas (CMG programado PCP de la propia hora + peso ERV del mix diario); PID y PCP dibujados
+    sobre todo el rango; benchmark day-ahead contra PCP/PID reentrenado por ventana.
+  · **«Desviación explicada»** (reemplaza Anomalías): 2 detectores (percentil + IsolationForest) y
+    cascada de atribución contra `instrucciones_cmg` → `limitaciones_transmision` →
+    `sscc_instrucciones` → `mantenimiento_mayor`; la salida es la lista de horas SIN explicar.
+  · **«Riesgo de desacople»** (reemplaza Regímenes): clasificador day-ahead con dataset propio
+    anclado al CMG liquidado. AUC 0,63–0,73 sobre base 20–24%, + ingreso en riesgo en USD.
+  · **Hallazgo mayor (regla 40):** el feed S3 no emitía fila cuando el CMG era 0 → esas horas
+    están AUSENTES, no en cero. `_dataset` las rellenaba con `ffill` (precio alto inventado justo
+    en las horas de desacople) → el modelo sobreestimaba el 92% de las horas de prueba, sesgo
+    +24,6 USD/MWh, R² −1,23. Lo detectó el USUARIO mirando el gráfico de validación, no las
+    métricas. Corregido con parche desde el liquidado + peso por recencia + debias en calibración:
+    Crucero MAE 25,7→17,4 y sesgo +24,6→+3,4; Tarapacá 24,4→16,9 y +23,3→−2,9 (R² +0,20).
+  · **Auditoría de Costos y Estadísticas:** el mismo defecto los afecta (+10,7% en el CMG medio a
+    30 días). Se escribió `migracion_cmg_ceros.py` (272 filas, todas con liquidado 0,00 exacto;
+    modo simulación por defecto, detecta el tipo de `fecha_hora` en runtime). **No ejecutada** —
+    escribe en producción y quedó como decisión del usuario.
+  · **Fixes menores:** la línea «ahora» del gráfico marcaba el último dato con
+    `add_vline(x=...timestamp()*1000)` en vez de usar el helper compartido `add_linea_ahora`
+    (regla 45); el CMG programado PID existía en la DB y alimentaba el modelo pero no se dibujaba.
+  · **Método:** todo verificado contra la DB real con `streamlit.testing.v1.AppTest` headless
+    (regla 46) — 4 barras × 3 secciones × 4 unidades sin excepciones — y el entrenamiento quedó
+    cacheado por (nodo, última hora): 9,2 s → 0,2 s en reruns.
+
+*Actualizado 2026-08-01 (3ª sesión). Proyecto CTM Mejillones (4 térmicas ANG/CCR).*
 *Stack: Streamlit + supabase-py/psycopg2 + GitHub Actions + API CEN (SIP/OPS) + CMG S3 + scikit-learn/xgboost.*
