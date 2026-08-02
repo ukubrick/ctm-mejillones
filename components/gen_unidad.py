@@ -4,6 +4,8 @@ components/gen_unidad.py — Generación real vs programada + CMG por unidad.
 Selector de unidad por botones (evita el bug de Plotly width=0 dentro de
 st.tabs) y gráfico de 1 o 2 filas según haya CMG.
 """
+from datetime import datetime
+
 import streamlit as st
 import pandas as pd
 import plotly.graph_objects as go
@@ -13,7 +15,7 @@ from config import LABELS, NOMBRES_NODO, UNIDADES, BG, GR, POT_MIN_TECNICA, SERI
 from utils.data import (load_cmg_prog, load_prog_pid, load_pronostico_demanda,
                         load_real, load_cmg, load_cmg_min, load_limitaciones,
                         load_mantenimiento_mayor)
-from utils.plotly_theme import add_linea_ahora, estilo_serie, hover
+from utils.plotly_theme import TZ_CHILE, add_linea_ahora, estilo_serie, hover
 from utils.eventos import (TIPO_EVENTO, dias_hasta, eventos_latentes,
                            eventos_unidad, explicar_horas)
 from components._common import fmt_usd, metricas_precision
@@ -80,6 +82,112 @@ def _ingreso_semana_pasada(unidad, nodo_cmg, e):
     if dr is None or dr.empty:
         return None
     return _ingreso(dr[dr["unidad"] == unidad], dc)
+
+
+# MW/h a partir de los cuales un cambio de programa se considera rampa (y no ruido
+# de seguimiento). Con 15 MW/h una unidad de ~277 MW tarda ~18 h en el rango
+# completo, así que todo movimiento operacionalmente relevante queda dentro.
+UMBRAL_RAMPA_MW = 15.0
+
+
+def _rampas(df_prog, umbral=UMBRAL_RAMPA_MW):
+    """Bloques de subida/bajada de carga en una serie de programa horario.
+
+    Devuelve una lista de dicts con el tramo en que el programa se mueve de forma
+    sostenida en un mismo sentido: inicio, fin, MW de partida y de llegada. Las
+    horas consecutivas con el mismo signo se fusionan (una subida de 60 → 275 MW
+    en tres horas es UN evento de rampa, no tres).
+    """
+    if df_prog is None or df_prog.empty:
+        return []
+    d = (df_prog[["fecha_hora", "gen_programada_mw"]]
+         .dropna().sort_values("fecha_hora").drop_duplicates("fecha_hora"))
+    if len(d) < 2:
+        return []
+    ts = d["fecha_hora"].tolist()
+    mw = d["gen_programada_mw"].tolist()
+
+    rampas, act = [], None
+    for i in range(1, len(ts)):
+        dt_h = (ts[i] - ts[i - 1]).total_seconds() / 3600.0
+        # Un salto de datos (>2 h sin fila) no es una rampa: corta el bloque.
+        delta = mw[i] - mw[i - 1]
+        signo = 0 if (dt_h > 2 or abs(delta) < umbral) else (1 if delta > 0 else -1)
+        if signo and act and act["signo"] == signo and act["fin"] == ts[i - 1]:
+            act.update(fin=ts[i], mw_fin=mw[i])
+        else:
+            if act:
+                rampas.append(act)
+                act = None
+            if signo:
+                act = dict(signo=signo, ini=ts[i - 1], fin=ts[i],
+                           mw_ini=mw[i - 1], mw_fin=mw[i])
+    if act:
+        rampas.append(act)
+    return rampas
+
+
+def _panel_rampas(unidad, df_prog, fuente):
+    """Horarios de subida y bajada de carga programados, como referencia previa.
+
+    Dos lecturas: (a) las rampas que quedan POR DELANTE en el programa vigente
+    (con cuenta regresiva) para prepararse a la maniobra, y (b) el horario
+    habitual del período — a qué hora del día suele subir y bajar esta unidad.
+    """
+    rampas = _rampas(df_prog)
+    if not rampas:
+        return
+    # `fecha_hora` es naive en hora de Chile → el "ahora" debe serlo también. Con
+    # Timestamp.now() a secas el servidor de Streamlit Cloud (UTC) adelantaría la
+    # cuenta regresiva 4 h. Ver regla de timezone: siempre datetime.now(TZ_CHILE).
+    ahora = pd.Timestamp(datetime.now(TZ_CHILE)).tz_localize(None)
+    if getattr(df_prog["fecha_hora"].dt, "tz", None) is not None:
+        ahora = ahora.tz_localize(df_prog["fecha_hora"].dt.tz)
+
+    futuras = [r for r in rampas if r["fin"] >= ahora][:4]
+    filas = []
+    for r in futuras:
+        sube = r["signo"] > 0
+        color = "#22A95B" if sube else "#DC2626"
+        verbo = "Sube carga" if sube else "Baja carga"
+        horas = max((r["fin"] - r["ini"]).total_seconds() / 3600.0, 1.0)
+        falta = (r["ini"] - ahora).total_seconds() / 3600.0
+        cuando = ("en curso" if falta <= 0 else
+                  f"en {falta:.0f} h" if falta < 24 else f"en {falta / 24:.0f} d")
+        filas.append(
+            f'<li><b>{r["ini"].strftime("%d-%m %H:%M")} → '
+            f'{r["fin"].strftime("%H:%M")}</b> ({horas:.0f} h, {cuando}) — '
+            f'<span style="color:{color};font-weight:700">{verbo}</span> '
+            f'{r["mw_ini"]:.0f} → {r["mw_fin"]:.0f} MW '
+            f'({r["mw_fin"] - r["mw_ini"]:+.0f} MW, '
+            f'{(r["mw_fin"] - r["mw_ini"]) / horas:+.0f} MW/h)</li>')
+
+    def _habitual(signo):
+        hs = [r["ini"].hour for r in rampas if r["signo"] == signo]
+        if not hs:
+            return "sin registro en el período"
+        s = pd.Series(hs)
+        top = s.value_counts().head(2).index.tolist()
+        rango = f"{min(hs):02d}:00–{max(hs):02d}:00"
+        top_txt = " y ".join(f"{h:02d}:00" for h in sorted(top))
+        return f"{rango} (más frecuente: {top_txt}) · {len(hs)} eventos"
+
+    cuerpo = (f'<ul style="margin:6px 0 0;padding-left:26px;font-weight:500">'
+              f'{"".join(filas)}</ul>' if filas else
+              '<div style="margin-top:6px">Sin rampas por delante en el programa '
+              'cargado (el CEN aún no publica más horas).</div>')
+
+    st.markdown(
+        f'<div style="background:#F0F9FF;border:1px solid #BAE6FD;border-left:5px solid #1FB6E5;'
+        f'border-radius:8px;padding:10px 16px;margin:2px 0 10px;color:#0C4A6E;font-size:0.84rem">'
+        f'<div style="font-weight:700">Horario de cambios de carga · {LABELS[unidad]} '
+        f'<span style="font-weight:500;color:#0369A1">(programa {fuente}, '
+        f'rampa ≥ {UMBRAL_RAMPA_MW:.0f} MW/h)</span></div>'
+        f'{cuerpo}'
+        f'<div style="margin-top:8px;font-size:0.8rem;color:#075985">'
+        f'<b>Horario habitual del período</b> — subidas: {_habitual(1)} · '
+        f'bajadas: {_habitual(-1)}</div>'
+        f'</div>', unsafe_allow_html=True)
 
 
 def _bloques(ts_serie, salto=pd.Timedelta("2h")):
@@ -420,6 +528,15 @@ def _chart_unidad(unidad, df_r, df_p, df_pid, df_c, df_cp, df_dem, barra_dem,
 
     st.plotly_chart(fig, use_container_width=True,
                     config={"displayModeBar": False, "responsive": True}, key=f"chart_unidad_{unidad}")
+
+    # Horarios de subida/bajada de carga: se leen del programa más fresco que haya
+    # (PID intra-día si existe, si no PCP). Va ARRIBA de la nota de origen del
+    # programa porque es la lectura operacional del gráfico: a qué hora hay que
+    # estar listo para la maniobra.
+    df_rampa, fuente_rampa = ((df_upid, "PID") if not df_upid.empty
+                              else ((df_up, "PCP") if not df_up.empty else (None, None)))
+    if df_rampa is not None:
+        _panel_rampas(unidad, df_rampa, fuente_rampa)
 
     # Origen real de la serie "Programada PID": load_prog_pid rellena con PCP las
     # horas sin PID (el CEN deja de emitirlo a veces). Se deja escrito para no
