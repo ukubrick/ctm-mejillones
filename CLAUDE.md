@@ -349,6 +349,15 @@ Destiladas de bugs y quirks reales del CEN/Streamlit:
       real, misma unidad/hora/despacho y distinto `id_instruccion`. Agrupar por folio duplica el
       evento → los bloques se arman por (unidad, código) y la bitácora colapsa la reemisión
       (`_dedup_reemisiones`), quedándose con la que trae folio.
+    · **Una instrucción NO es un registro horario: es un EVENTO DE ESTADO** con hora exacta
+      (23:13) que rige hasta la SIGUIENTE instrucción de esa unidad. Cerrar la ventana «una hora
+      después» daba por terminada una limitación vigente: verificado 2026-08-03, el SICF de ANG1
+      del 02/08 23:13 era la última instrucción emitida y la unidad seguía clavada en su mínimo
+      técnico (~60 MW) 10 h más tarde. Sin instrucción posterior la ventana queda ABIERTA hasta
+      «ahora», topeada a 7 días (regla 41).
+    · El aviso palpitante junto al título de la serie (`_badge_evento_activo` en gen_unidad.py)
+      solo aparece con la ventana VIGENTE ahora, y el verbo sigue al documento: SICF/IL
+      «limitada», SDCF «desconectada», IF «fuera de servicio».
     · Pista sin confirmar: esas filas son las únicas con `estado = 'LF'` (el resto es 'RO'). Si
       LF/LP resultan ser limitación forzosa/programada, serían una señal más limpia que el texto.
 

@@ -270,14 +270,18 @@ def marcar_instrucciones(df):
 def eventos_desde_instrucciones(df_instr, unidad=None, ref=None):
     """Eventos de limitación derivados del TEXTO de las instrucciones de despacho.
 
-    Cada hora instruida que cita un SICF/SDCF/IL/IF es una hora limitada. Las
-    horas consecutivas de la misma unidad y el mismo documento se agrupan en una
-    sola ventana (huelgo `GAP_INSTRUCCION_H`), de modo que la serie muestre una
-    franja continua y no una franja por hora.
+    Una instrucción operacional NO es un registro horario: es un EVENTO DE ESTADO
+    con hora exacta (23:13) que rige hasta que el CEN emite la siguiente
+    instrucción para esa unidad. Por eso la ventana de la limitación se cierra
+    con la **próxima instrucción de la misma unidad**, no una hora después.
+    Verificado 2026-08-03: el SICF de ANG1 del 02/08 23:13 es la última
+    instrucción emitida y la unidad lleva desde entonces clavada en su mínimo
+    técnico (~60 MW) — la limitación seguía vigente y una ventana de +1 h la
+    daba por cerrada.
 
-    A diferencia de `limitaciones_transmision`, aquí la ventana sale de datos
-    horarios reales, así que no hace falta suponer un cierre (regla 47): el
-    evento termina cuando termina la última hora instruida con ese documento.
+    Si no hay instrucción posterior, la ventana queda ABIERTA hasta `ref` (ahora),
+    topeada a `VENTANA_DEFECTO_DIAS` para no atribuirle desvíos indefinidamente
+    (regla 41).
     """
     ref = _ts(ref) if ref is not None else _ahora()
     cols = ["tipo", "unidad", "ini", "fin", "titulo", "detalle", "mw", "estado",
@@ -286,6 +290,13 @@ def eventos_desde_instrucciones(df_instr, unidad=None, ref=None):
         return pd.DataFrame(columns=cols)
 
     d = marcar_instrucciones(df_instr)
+    # Todas las instrucciones de cada unidad (limitadas o no): la próxima, sea
+    # cual sea, es la que cierra la ventana de la anterior.
+    todas = d.copy()
+    todas["_dt"] = pd.to_datetime(todas.get("fecha_hora"), errors="coerce")
+    todas = todas.dropna(subset=["_dt"])
+    ts_por_unidad = {u: sorted(g["_dt"].unique()) for u, g in todas.groupby("unidad")}
+
     d = d[d["_es_limitacion"]].copy()
     if unidad is not None:
         d = d[d["unidad"] == unidad]
@@ -295,6 +306,14 @@ def eventos_desde_instrucciones(df_instr, unidad=None, ref=None):
     d["_dt"] = pd.to_datetime(d.get("fecha_hora"), errors="coerce")
     d = d.dropna(subset=["_dt"])
     d["_folio"] = d.apply(folio_instruccion, axis=1)
+
+    def _cierre(uni, ultimo):
+        """Próxima instrucción de la unidad, o ventana abierta hasta ahora."""
+        for t in ts_por_unidad.get(uni, []):
+            if t > ultimo:
+                return pd.Timestamp(t), False
+        tope = ultimo + pd.Timedelta(days=VENTANA_DEFECTO_DIAS)
+        return (min(ref, tope) if ref > ultimo else tope), True
 
     out = []
     # Una fila puede citar más de un documento (p. ej. «Cancela IL … según SICF …»).
@@ -308,7 +327,7 @@ def eventos_desde_instrucciones(df_instr, unidad=None, ref=None):
         salto = g["_dt"].diff() > pd.Timedelta(hours=GAP_INSTRUCCION_H)
         for _, blq in g.groupby(salto.cumsum()):
             ini = blq["_dt"].min()
-            fin = blq["_dt"].max() + pd.Timedelta(hours=1)
+            fin, abierta = _cierre(uni, blq["_dt"].max())
             desp = pd.to_numeric(blq.get("despacho"), errors="coerce").dropna()
             mw = float(desp.min()) if not desp.empty else None
             motivos = [str(m).strip() for m in blq.get("motivo", pd.Series(dtype=str))
@@ -316,6 +335,8 @@ def eventos_desde_instrucciones(df_instr, unidad=None, ref=None):
             det = motivos[0][:180] if motivos else ""
             det = (det + " · " if det else "") + \
                   f"{MARCAS_INSTRUCCION[codigo]} citada en la instrucción de despacho"
+            if abierta:
+                det += " · sin instrucción posterior que la cierre (ventana abierta)"
             folios = [f for f in dict.fromkeys(blq["_folio"]) if f]
             ident = f"{codigo} {folios[0]}" if folios else codigo
             if len(folios) > 1:
