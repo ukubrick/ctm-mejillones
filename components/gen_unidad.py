@@ -292,6 +292,49 @@ def _alerta_detencion(unidad, df_cero, df_ev):
         f'</div>', unsafe_allow_html=True)
 
 
+# Verbo del aviso según el documento citado: un SICF/IL limita la unidad, un
+# SDCF/IF la saca de servicio. Decirlo mal en un badge palpitante sería peor que
+# no decirlo, así que el texto distingue los dos casos.
+_VERBO_MARCA = {
+    "SICF": "limitada",
+    "IL":   "limitada",
+    "SDCF": "desconectada",
+    "IF":   "fuera de servicio",
+}
+
+
+def _badge_evento_activo(df_ev):
+    """Aviso palpitante junto al título cuando la unidad tiene un evento VIGENTE.
+
+    Solo se muestra si la ventana del evento contiene el instante actual: es un
+    indicador de estado en vivo, no un resumen del período. Si no hay nada
+    activo devuelve "" y el título queda como siempre.
+    """
+    if df_ev is None or df_ev.empty:
+        return ""
+    act = df_ev[df_ev["estado"] == "activa"]
+    if act.empty:
+        return ""
+    # El más reciente manda; si hay varios se indica el resto en el tooltip.
+    ev = act.sort_values("ini", ascending=False).iloc[0]
+    ident = str(ev.get("id") or "").strip()
+    if ev["tipo"] == "limitacion":
+        codigo = str(ev.get("codigo") or "").strip()
+        codigo = codigo if codigo in _VERBO_MARCA else ""   # NaN en los de transmisión
+        verbo = _VERBO_MARCA.get(codigo, "limitada")
+        ref = f"según {ident}" if codigo and ident else (f"· {ev['titulo']}" if ident else "")
+        texto = f"Unidad {verbo} {ref}".strip()
+        clase = "badge-live"
+    else:
+        texto = f"{ev['titulo']} en curso"
+        clase = "badge-live mant"
+    desde = ev["ini"].strftime("%d-%m %H:%M")
+    hasta = ev["fin"].strftime("%d-%m %H:%M")
+    extra = f" · +{len(act) - 1} evento(s) activo(s)" if len(act) > 1 else ""
+    tip = f"Vigente desde {desde} hasta {hasta}{extra}"
+    return f'<span class="{clase}" title="{tip}">{texto}</span>'
+
+
 def _banner_latentes(unidad, df_ev):
     """Eventos FUTUROS ya publicados: mantenimiento mayor / outage por venir.
 
@@ -665,11 +708,6 @@ def render_gen_unidad(df_r, df_p, df_c, mostrar_prog, mostrar_cmg, nodo_cmg, s=N
     df_pid = load_prog_pid(s, e) if (vis["pid"] and s and e) else None
     barra_dem = CMG_A_DEMANDA.get(nodo_cmg, "Crucero220")
     df_dem = load_pronostico_demanda(s, e, barra_dem) if (vis["demanda"] and s and e) else None
-    st.markdown(
-        f'<p style="color:#334155;font-weight:600;font-size:0.9rem;margin:0.4rem 0 0.3rem">'
-        f'{LABELS[u_act]} · Real vs Programada (MW) + CMG {nl} (USD/MWh)</p>',
-        unsafe_allow_html=True,
-    )
     # Eventos de la unidad activa: limitaciones con ventana real + mantenimiento
     # mayor que interviene la MÁQUINA. `incluir_corredor=False` deja fuera las
     # intervenciones de líneas y subestaciones (S/E O'Higgins, Laberinto,
@@ -681,5 +719,11 @@ def render_gen_unidad(df_r, df_p, df_c, mostrar_prog, mostrar_cmg, nodo_cmg, s=N
                            df_mant=load_mantenimiento_mayor(),
                            df_instr=load_instrucciones_cmg(s, e) if (s and e) else None,
                            incluir_corredor=False)
+    st.markdown(
+        f'<p style="color:#334155;font-weight:600;font-size:0.9rem;margin:0.4rem 0 0.3rem">'
+        f'{LABELS[u_act]} · Real vs Programada (MW) + CMG {nl} (USD/MWh)'
+        f'{_badge_evento_activo(df_ev)}</p>',
+        unsafe_allow_html=True,
+    )
     _chart_unidad(u_act, df_r, df_p, df_pid, df_c, df_cp, df_dem, barra_dem, vis, nl,
                   nodo_cmg=nodo_cmg, s=s, e=e, df_ev=df_ev)

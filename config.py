@@ -190,6 +190,8 @@ def get_css() -> str:
 @keyframes fadeInLeft {{ from{{opacity:0;transform:translateX(-12px)}} to{{opacity:1;transform:translateX(0)}} }}
 @keyframes pulse-pend {{ 0%,100%{{box-shadow:0 0 0 0 rgba(217,119,6,0.7)}} 70%{{box-shadow:0 0 0 6px rgba(217,119,6,0)}} }}
 @keyframes pulse-sscc {{ 0%,100%{{box-shadow:0 0 0 0 rgba(100,116,139,0.5)}} 70%{{box-shadow:0 0 0 5px rgba(100,116,139,0)}} }}
+@keyframes pulse-live {{ 0%,100%{{box-shadow:0 0 0 0 rgba(220,38,38,0.65)}} 70%{{box-shadow:0 0 0 7px rgba(220,38,38,0)}} }}
+@keyframes pulse-live-v {{ 0%,100%{{box-shadow:0 0 0 0 rgba(124,77,224,0.6)}} 70%{{box-shadow:0 0 0 7px rgba(124,77,224,0)}} }}
 @keyframes pulse-green {{ 0%{{box-shadow:0 0 0 0 rgba(90,184,72,0.7)}} 70%{{box-shadow:0 0 0 7px rgba(90,184,72,0)}} 100%{{box-shadow:0 0 0 0 rgba(90,184,72,0)}} }}
 
 /* ── Base ─────────────────────────────────────────────────────────────── */
@@ -367,6 +369,15 @@ p,span,div,label {{ font-family:'Inter',sans-serif; }}
   font-size:0.86rem; animation:fadeInUp 0.4s ease both;
 }}
 .sscc-latest {{ animation:pulse-sscc 2.2s infinite; }}
+/* Aviso palpitante junto al título de la serie cuando la unidad tiene un evento
+   VIGENTE ahora mismo (limitación, desconexión forzosa, mantenimiento). */
+.badge-live {{
+  display:inline-block; margin-left:0.55rem; padding:2px 9px; border-radius:5px;
+  background:#FEE2E2; color:#991B1B; font-size:0.72rem; font-weight:700;
+  text-transform:uppercase; letter-spacing:0.02em; vertical-align:middle;
+  animation:pulse-live 1.6s infinite;
+}}
+.badge-live.mant {{ background:#EDE9FE; color:#5B21B6; animation:pulse-live-v 1.6s infinite; }}
 
 /* ── Barra de menú (popovers a todo el ancho, estilo escritorio) ──────── */
 .menubar {{ margin-bottom:2px; }}
