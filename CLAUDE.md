@@ -1,7 +1,15 @@
 # CLAUDE.md — Dashboard CTM Mejillones
 > Contexto completo para Claude Code. Leer al inicio de cada sesión.
 > Autor: Erick Herrera — AES Andes, Antofagasta, Chile.
-> Última actualización: 2026-08-02 (4ª sesión: **modelo unificado de EVENTOS** en `utils/eventos.py`
+> Última actualización: 2026-08-03 (**limitaciones declaradas en la instrucción de despacho**:
+>   cuando el motivo de una fila de `instrucciones_cmg` cita un **SICF / SDCF / IL / IF**, esa
+>   ventana es una limitación de la MÁQUINA que el CEN no publica en `limitaciones_transmision`
+>   (regla 50). Se detectan en `utils/eventos.py` y entran como evento `limitacion` a la serie de
+>   la unidad, la bitácora, Panorama, Despacho CMG y una sección propia del panel Limitaciones.
+>   Aviso **palpitante** junto al título de la serie mientras la ventana está vigente
+>   («Unidad limitada según SICF …»). Hallazgo del modelo: una instrucción es un EVENTO DE ESTADO
+>   que rige hasta la siguiente instrucción de la unidad, no un registro horario.)
+> Anterior: 2026-08-02 (4ª sesión: **modelo unificado de EVENTOS** en `utils/eventos.py`
 >   — la vigencia de una limitación se juzga por su VENTANA y no por el `status` del CEN, que
 >   nunca cierra (hallazgo: 0 limitaciones realmente vigentes contra 16 «pendientes» de papel).
 >   La serie de cada unidad ahora pinta las ventanas de limitación/mantenimiento, atribuye cada
@@ -462,7 +470,13 @@ dashboard_api/
 │   │                                  EJECUTIVO para gerencia: KPIs del complejo (energía, ingreso
 │   │                                  estimado, FP, disponibilidad, CMG), destacados narrativos,
 │   │                                  tabla por unidad, series consolidadas y eventos agregados
-│   └── plotly_theme.py             ← apply_aes_layout, estilo_serie, hover, add_linea_ahora, hex_to_rgba
+│   ├── plotly_theme.py             ← apply_aes_layout, estilo_serie, hover, add_linea_ahora, hex_to_rgba
+│   └── eventos.py                  ← modelo unificado de EVENTOS: ventana/estado de limitación
+│                                      (regla 47), mapeo mantenimiento→unidad, eventos_unidad,
+│                                      explicar_horas, eventos_latentes + limitaciones declaradas
+│                                      en la instrucción de despacho (SICF/SDCF/IL/IF — regla 50:
+│                                      MARCAS_INSTRUCCION, marcas_instruccion, folio_instruccion,
+│                                      marcar_instrucciones, eventos_desde_instrucciones)
 ├── components/
 │   ├── _common.py                  ← metricas_precision, render_guia/tabla_guia, render_cards_unidad,
 │   │                                  fmt_usd + render_kpi_grid (KPIs sin truncado — regla 49)
@@ -472,7 +486,10 @@ dashboard_api/
 │   ├── kpis.py                     ← render_kpis — cards por unidad + alarma de TRIP (UMBRAL_TRIP=5 MW)
 │   ├── gen_unidad.py               ← render_gen_unidad — series real/prog/CMG + selector nodo CMG +
 │   │                                  ingreso estimado por unidad (junto al MAE, delta vs semana pasada) +
-│   │                                  alerta potencia 0 (<5 MW = trip) en la serie (UMBRAL_CERO=5.0)
+│   │                                  alerta potencia 0 (<5 MW = trip) en la serie (UMBRAL_CERO=5.0) +
+│   │                                  franjas de evento de la máquina, atribución de detenciones,
+│   │                                  banner de eventos latentes y aviso PALPITANTE junto al título
+│   │                                  mientras hay evento vigente (_badge_evento_activo, .badge-live)
 │   ├── costo.py                    ← render_costo — deep-dive económico: benchmarking CMG (online/prog/
 │   │                                  real), elasticidad precio-demanda, ingreso diario, mapa de valor,
 │   │                                  cascada de ingreso, calidad del pronóstico CMG
@@ -493,7 +510,9 @@ dashboard_api/
 │   │                                  y cobertura documental del desvío
 │   ├── limitaciones.py / sscc.py / despacho_cmg.py / solicitudes.py   ← vistas de Operación
 │   │                                  (sscc.py incluye subs «Programado (PCP)» — provisión MW
-│   │                                   programada — y «Desempeño (CPF/CSF)» — panel de factores)
+│   │                                   programada — y «Desempeño (CPF/CSF)» — panel de factores;
+│   │                                   limitaciones.py suma la sección «Declaradas en despacho»
+│   │                                   y despacho_cmg.py el KPI/columna/filtro de SICF-SDCF-IL-IF)
 │   ├── mantenimiento.py            ← render_mantenimiento — PMPM CTM: KPIs + timeline Gantt + tabla
 │   ├── manual.py                   ← render_programada_manual / render_real_manual (CRUD + override)
 │   ├── datos.py                    ← render_datos_horarios / render_bitacora
@@ -517,7 +536,7 @@ Se abandonaron las categorías desplegables (popovers). El menú es un **segment
 
 | Vista | Sub-secciones |
 |-------|---------------|
-| **Resumen** | Gráfico por unidad (real/prog/CMG) + **franjas de evento de la MÁQUINA** (limitación / mantenimiento de la unidad; nunca corredor — regla 48) con atribución de las detenciones y aviso de eventos latentes + selector de nodo CMG + bitácora automática + novedades |
+| **Resumen** | Aviso palpitante de evento vigente junto al título + gráfico por unidad (real/prog/CMG) + **franjas de evento de la MÁQUINA** (limitación / mantenimiento de la unidad; nunca corredor — regla 48) con atribución de las detenciones y aviso de eventos latentes + selector de nodo CMG + bitácora automática + novedades |
 | **Análisis** | Costos · Estadísticas (consolidada) · Predicción (ML: Pronóstico CMG · Desviación explicada · Riesgo de desacople) |
 | **Operación** | **Panorama** · Limitaciones · SSCC (incl. Programado PCP y Desempeño CPF/CSF) · Despacho CMG · Solicitudes · Mant. mayor |
 | **Datos** | Ingreso Manual · Datos & Bitácora · Infotécnica (**las 2 primeras tras contraseña `jt`**) |
@@ -643,6 +662,26 @@ SIDEBAR_GRAD = "linear-gradient(168deg,#0E7E93,#2A38C9,#4A25A0)"                
       · El script detecta en runtime si `costo_marginal.fecha_hora` es TEXT o timestamp: esa tabla
         guarda el formato con «T» y `costo_marginal_real` con espacio. NO se pudo comprobar el tipo
         desde local (regla 10) — si la simulación imprime algo raro ahí, revisar antes de aplicar.
+
+- [ ] **`estado` de `instrucciones_cmg`: confirmar qué significan LF y LP (2026-08-03).** Las dos
+      únicas filas con `estado='LF'` son justo las del SICF de ANG1; el resto del período es 'RO'
+      (1.269), 'LP' (25), 'PO' (20), 'N' (4). Si LF/LP son «limitación forzosa / programada»,
+      serían una señal ESTRUCTURADA de limitación, mucho más robusta que el texto libre del
+      motivo (regla 50), y detectarían casos donde el operador no escribe el documento. No se
+      implementó porque es una inferencia sin confirmar. Preguntar al CEN o contrastar contra
+      días con limitación conocida.
+
+- [ ] **Verificar el badge y las franjas nuevas con un caso de SDCF/IL/IF real (2026-08-03).** El
+      único caso que existe en la DB es un SICF (ANG1, 02/08). Los otros tres códigos y sus verbos
+      («desconectada», «fuera de servicio») se probaron solo con filas sintéticas. Revisar el
+      primer caso real, sobre todo que la ventana abierta se cierre bien cuando llegue la
+      instrucción siguiente.
+
+- [ ] **Ventana abierta topeada a 7 días: revisar si el tope es razonable (2026-08-03).** Si el
+      CEN dejara de emitir instrucciones para una unidad (o la adquisición fallara), una
+      limitación quedaría «vigente» hasta 7 días y el badge palpitaría todo ese tiempo. Con una
+      cadencia normal de instrucciones el caso no se da, pero conviene mirarlo si aparece un
+      badge que no corresponde.
 
 - [ ] **Outage mayor de Angamos (octubre 2026) — esperando publicación del CEN (2026-08-02).**
       El usuario decidió NO crear registro manual: el evento aparecerá solo cuando el Coordinador
@@ -1050,5 +1089,42 @@ Limpieza de scripts probe/test/check.
   · **Método:** `AppTest` headless contra la DB real, 14 combinaciones vista × subsección ×
     unidad sin excepciones, + Playwright sobre la app local para el DOM y las capturas.
 
-*Actualizado 2026-08-02 (4ª sesión). Proyecto CTM Mejillones (4 térmicas ANG/CCR).*
+- **2026-08-03 — Limitaciones declaradas en la instrucción de despacho (SICF/SDCF/IL/IF):**
+  · **Punto de partida (aviso del usuario):** «si en el detalle de una instrucción de despacho
+    aparece SICF (solicitud de intervención de curso forzoso) o IL (informe de limitación), eso
+    es una limitación de unidad»; en el mismo turno agregó SDCF (solicitud de desconexión de
+    curso forzoso) e IF (informe de falla). Es una fuente que el proyecto no estaba mirando: el
+    CEN NO publica estas limitaciones en `limitaciones_transmision`.
+  · **Implementado en `utils/eventos.py`** (regla 50): `MARCAS_INSTRUCCION`, `marcas_instruccion`
+    (busca en motivo/consigna/instruccion_cmg/estado/zona_desaclope/control_tension),
+    `folio_instruccion`, `marcar_instrucciones` y `eventos_desde_instrucciones`, que agrupa las
+    instrucciones del mismo documento en una ventana y produce un evento `limitacion` normal.
+    `eventos_unidad` gana el parámetro `df_instr`.
+  · **Consumidores:** serie de la unidad (franja + atribución de detenciones), bitácora automática
+    (badge Limitación en vez de Despacho), Operación > Panorama, Operación > Despacho CMG (KPI
+    «Horas con limitación», columna y filtro) y Operación > Limitaciones, donde van en una
+    **sección propia** de card punteada («Declarada en despacho») porque no comparten campos con
+    el registro del CEN (sin correlativo, sin retorno, sin observación).
+  · **Error propio, detectado por el usuario (1):** el primer barrido reportó «0 casos en 1.320
+    instrucciones» — falso. El folio va PEGADO al código (`Según SICF2026087731`,
+    `Según SICFXXXXXX`), así que el `\b` de cierre del patrón no calzaba nunca. Se ancla solo el
+    inicio; IL/IF exigen mayúscula y sin LETRA pegada detrás (para no comerse «ILUMINACION»).
+  · **Error propio, detectado por el usuario (2):** el aviso palpitante no aparecía. La causa no
+    era la vista sino el modelo: yo cerraba la ventana «+1 hora» después de la instrucción, pero
+    una instrucción es un EVENTO DE ESTADO que rige hasta la SIGUIENTE de esa unidad. Comprobado
+    contra la DB: el SICF de ANG1 del 02/08 23:13 es la última instrucción emitida y la unidad
+    llevaba 10 h clavada en su mínimo técnico (~60 MW) → seguía limitada. Ahora `fin` = próxima
+    instrucción de la unidad; sin ella la ventana queda abierta hasta «ahora», topeada a 7 días.
+  · **Reemisión del CEN:** la misma instrucción llega dos veces (folio en blanco → folio real,
+    distinto `id_instruccion`). Los bloques se arman por (unidad, código) y la bitácora colapsa la
+    reemisión con `_dedup_reemisiones`; se agregó `id_instruccion` a `load_instrucciones_cmg`.
+  · **Aviso palpitante** junto al título de la serie (`_badge_evento_activo` + `.badge-live` /
+    `@keyframes pulse-live` en config.py), SOLO con la ventana vigente ahora. El verbo sigue al
+    documento: SICF/IL «limitada», SDCF «desconectada», IF «fuera de servicio»; mantenimiento en
+    violeta. Tooltip con la ventana y cuántos otros eventos hay activos.
+  · **Método:** `AppTest` headless contra la DB real (4 unidades × Resumen, las 6 subsecciones de
+    Limitaciones, Panorama y Despacho CMG, sin excepciones) + Playwright sobre el CSS real para
+    confirmar que el badge anima y no desborda el párrafo. 4 commits pusheados a main.
+
+*Actualizado 2026-08-03. Proyecto CTM Mejillones (4 térmicas ANG/CCR).*
 *Stack: Streamlit + supabase-py/psycopg2 + GitHub Actions + API CEN (SIP/OPS) + CMG S3 + scikit-learn/xgboost.*
