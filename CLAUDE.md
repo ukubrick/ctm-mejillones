@@ -336,6 +336,9 @@ Destiladas de bugs y quirks reales del CEN/Streamlit:
     limitación de la MÁQUINA (aviso del usuario, 2026-08-03). Vive en `utils/eventos.py`
     (`MARCAS_INSTRUCCION`, `marcas_instruccion`, `eventos_desde_instrucciones`) y entra a
     `eventos_unidad(..., df_instr=...)` como evento `limitacion` junto a las de transmisión.
+    · En el panel Operación > Limitaciones van en una sección PROPIA (card de borde punteado,
+      badge «Declarada en despacho»), no mezcladas en la tabla del CEN: no comparten campos
+      (sin correlativo, sin retorno estimado, sin observación).
     · **El folio va PEGADO al código** («Según SICF2026087731», «Según SICFXXXXXX») → un patrón
       `\bSICF\b` NO calza nunca y da 0 resultados sobre datos que sí los tienen (pasó: se reportó
       «no hay casos» teniéndolos). Anclar solo el INICIO del código.

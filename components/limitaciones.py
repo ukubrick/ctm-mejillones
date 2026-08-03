@@ -3,9 +3,10 @@ import streamlit as st
 import pandas as pd
 import plotly.graph_objects as go
 
-from config import ID_UNIDAD_LABEL, ID_CENTRAL_LABEL, STATUS_COLOR_LIM, UNIDADES
-from utils.data import load_limitaciones
-from utils.eventos import preparar_limitaciones
+from config import (ID_UNIDAD_LABEL, ID_CENTRAL_LABEL, LABELS, STATUS_COLOR_LIM,
+                    UNIDADES)
+from utils.data import load_instrucciones_cmg, load_limitaciones
+from utils.eventos import eventos_desde_instrucciones, preparar_limitaciones
 from components._common import render_kpi_grid
 
 MAX_CARDS = 5
@@ -80,11 +81,74 @@ def _card_html(row):
             f'<div>{fila2}</div>{obs_div}</div>')
 
 
+def _card_despacho_html(ev):
+    """Card de una limitación declarada en la instrucción de despacho.
+
+    Se distingue a propósito de las de transmisión (borde punteado, badge de
+    origen): no es un registro formal del CEN sino un documento citado en el
+    texto de la instrucción, y no trae correlativo, retorno ni observación.
+    """
+    unidad = ev.get("unidad", "")
+    ini, fin = str(ev["ini"])[:16], str(ev["fin"])[:16]
+    mw = ev.get("mw")
+    mw_str = f"{float(mw):.0f} MW despachados" if pd.notna(mw) else ""
+    badge_txt, c_txt, c_bg = _ESTADO_VIS.get(
+        "activa" if ev.get("estado") == "activa" else "cerrada",
+        ("CERRADA", "#166534", "#DCFCE7"))
+    if ev.get("estado") == "futura":
+        badge_txt, c_txt, c_bg = _ESTADO_VIS["futura"]
+    _bcls = ' class="badge-pend"' if ev.get("estado") == "activa" else ''
+    partes = [
+        f'<span{_bcls} style="background:{c_bg};color:{c_txt};padding:2px 8px;border-radius:4px;'
+        f'font-size:0.71rem;font-weight:700;text-transform:uppercase">{badge_txt}</span>',
+        f'<span style="font-weight:600;font-size:0.84rem">{ev.get("titulo", "")}</span>',
+    ]
+    if unidad:
+        partes.append(f'<span style="background:#EDE9FE;color:#6D28D9;padding:1px 7px;'
+                      f'border-radius:4px;font-size:0.71rem;font-weight:600">{unidad}</span>')
+    partes.append('<span style="background:#DBEAFE;color:#1D4ED8;padding:1px 6px;'
+                  'border-radius:4px;font-size:0.67rem">Declarada en despacho</span>')
+    fila2 = (f'<span style="font-size:0.71rem;color:#475569">Ventana instruida: '
+             f'<b>{ini}</b> &rarr; <b>{fin}</b></span>')
+    if mw_str:
+        fila2 += f'&nbsp;&nbsp;&nbsp;<span style="font-size:0.77rem;font-weight:700;color:#DC2626">{mw_str}</span>'
+    det = str(ev.get("detalle") or "")
+    det_div = f'<div style="font-size:0.71rem;color:#64748B;margin-top:3px">{det}</div>' if det else ""
+    return (f'<div style="border:1px dashed #CBD5E1;border-radius:8px;padding:10px 14px;'
+            f'margin-bottom:8px;background:#FAFAFA">'
+            f'<div style="display:flex;gap:6px;flex-wrap:wrap;align-items:center;margin-bottom:3px">'
+            f'{"".join(partes)}</div><div>{fila2}</div>{det_div}</div>')
+
+
+def _seccion_despacho(df_ins_ev, unidad=None):
+    d = df_ins_ev if unidad is None else df_ins_ev[df_ins_ev["unidad"] == unidad]
+    if d.empty:
+        return
+    titulo = ("Declaradas en la instrucción de despacho"
+              if unidad is None else
+              f"Declaradas en la instrucción de despacho · {LABELS.get(unidad, unidad)}")
+    st.markdown(f'<p style="color:#334155;font-weight:600;font-size:0.84rem;'
+                f'margin:0.9rem 0 0.35rem">{titulo}</p>', unsafe_allow_html=True)
+    st.markdown("".join(_card_despacho_html(r) for _, r in d.iterrows()), unsafe_allow_html=True)
+
+
 def render_limitaciones(s, e):
     st.markdown('<div class="sec">Limitaciones de transmisión</div>', unsafe_allow_html=True)
     df_lim = load_limitaciones(s, e)
+
+    # Segundo origen: los SICF/SDCF/IL/IF citados en el texto de la instrucción
+    # de despacho, que el CEN no publica como limitación de transmisión
+    # (regla 50). Se muestran aparte, no mezclados en la tabla del CEN: no
+    # comparten campos (no hay correlativo, retorno ni observación).
+    df_ins_ev = eventos_desde_instrucciones(load_instrucciones_cmg(s, e))
+
     if df_lim.empty:
-        st.info("Sin limitaciones registradas para el período seleccionado.")
+        if df_ins_ev.empty:
+            st.info("Sin limitaciones registradas para el período seleccionado.")
+        else:
+            st.info("Sin limitaciones de transmisión registradas por el CEN en el período. "
+                    "Sí hay limitaciones declaradas en la instrucción de despacho:")
+            _seccion_despacho(df_ins_ev)
         return
 
     # El `status` del CEN no cierra nunca: la vigencia se juzga por la VENTANA
@@ -110,7 +174,11 @@ def render_limitaciones(s, e):
         ("Total en período", n_total, "registros cargados"),
         ("Afectan SSCC", n_sscc, "con impacto declarado"),
         ("Mayor limitación vigente", pot_str, "potencia limitada"),
-    ], por_fila=5)
+        ("Declaradas en despacho", len(df_ins_ev), "SICF / SDCF / IL / IF",
+         "Limitaciones citadas en el texto de la instrucción de despacho por CMG. "
+         "El CEN no las publica como limitación de transmisión, así que no están "
+         "en la tabla de este panel."),
+    ], por_fila=3)
 
     if n_vigentes == 0 and n_fantasma:
         st.success(f"Ninguna limitación vigente en este momento. Hay {n_fantasma} registro(s) "
@@ -121,14 +189,19 @@ def render_limitaciones(s, e):
                    horizontal=True, label_visibility="collapsed", key="lim_sub")
     if sub in UNIDADES:
         df_u = df_sorted[df_sorted["_unidad"] == sub]
-        if df_u.empty:
+        sin_despacho = df_ins_ev.empty or df_ins_ev[df_ins_ev["unidad"] == sub].empty
+        if df_u.empty and sin_despacho:
             st.info(f"Sin limitaciones para {sub} en el período.")
+        elif df_u.empty:
+            st.caption(f"Sin limitaciones de transmisión del CEN para {sub} en el período.")
         else:
             st.markdown("".join(_card_html(r) for _, r in df_u.head(MAX_CARDS).iterrows()), unsafe_allow_html=True)
             if len(df_u) > MAX_CARDS:
                 st.caption(f"+{len(df_u) - MAX_CARDS} más en «Todas»")
+        _seccion_despacho(df_ins_ev, sub)
     elif sub == "Todas":
         st.markdown("".join(_card_html(r) for _, r in df_sorted.iterrows()), unsafe_allow_html=True)
+        _seccion_despacho(df_ins_ev)
     else:
         _estadisticas(df_lim)
 
