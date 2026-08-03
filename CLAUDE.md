@@ -329,6 +329,26 @@ Destiladas de bugs y quirks reales del CEN/Streamlit:
     · La flecha del delta se oculta con `[class*="st-key-kpigrid_"] [data-testid="stMetricDelta"]
       svg`: `delta_color="off"` (regla 38) apaga el color pero NO la flecha.
 
+50. **Parte de las limitaciones de unidad NO están en `limitaciones_transmision`: van en el TEXTO
+    de la instrucción de despacho.** Cuando el motivo de una fila de `instrucciones_cmg` cita un
+    **SICF** (solicitud de intervención de curso forzoso), **SDCF** (solicitud de desconexión de
+    curso forzoso), **IL** (informe de limitación) o **IF** (informe de falla), esa hora es una
+    limitación de la MÁQUINA (aviso del usuario, 2026-08-03). Vive en `utils/eventos.py`
+    (`MARCAS_INSTRUCCION`, `marcas_instruccion`, `eventos_desde_instrucciones`) y entra a
+    `eventos_unidad(..., df_instr=...)` como evento `limitacion` junto a las de transmisión.
+    · **El folio va PEGADO al código** («Según SICF2026087731», «Según SICFXXXXXX») → un patrón
+      `\bSICF\b` NO calza nunca y da 0 resultados sobre datos que sí los tienen (pasó: se reportó
+      «no hay casos» teniéndolos). Anclar solo el INICIO del código.
+    · IL/IF son de dos letras: aceptarlos SOLO en mayúscula y sin otra LETRA pegada detrás
+      (`(?![A-Za-z…])`), o «ILUMINACION» y cualquier «if» en minúscula entran como falso positivo.
+      Los dígitos del folio sí pueden ir pegados.
+    · **El CEN reemite la instrucción**: primero con el folio en blanco y después con el número
+      real, misma unidad/hora/despacho y distinto `id_instruccion`. Agrupar por folio duplica el
+      evento → los bloques se arman por (unidad, código) y la bitácora colapsa la reemisión
+      (`_dedup_reemisiones`), quedándose con la que trae folio.
+    · Pista sin confirmar: esas filas son las únicas con `estado = 'LF'` (el resto es 'RO'). Si
+      LF/LP resultan ser limitación forzosa/programada, serían una señal más limpia que el texto.
+
 ---
 
 ## CONVENCIONES DE CÓDIGO

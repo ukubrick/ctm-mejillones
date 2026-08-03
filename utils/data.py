@@ -317,8 +317,8 @@ def load_solicitudes(s, e):
 @st.cache_data(ttl=300)
 def load_instrucciones_cmg(s, e):
     """Instrucciones operacionales de despacho por CMG (ANG/CCR). Silencioso si la tabla no existe."""
-    cols = ("unidad,central,fecha_hora,fecha,hora,despacho,estado,estado_operativo,"
-            "consigna,instruccion_cmg,motivo")
+    cols = ("id_instruccion,unidad,central,fecha_hora,fecha,hora,despacho,estado,"
+            "estado_operativo,consigna,instruccion_cmg,motivo")
     try:
         df = fetch(
             "instrucciones_cmg", cols,

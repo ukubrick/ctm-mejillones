@@ -16,7 +16,9 @@ import pandas as pd
 import streamlit as st
 
 from config import COLORES, LABELS, ID_UNIDAD_LABEL, UNIDADES
-from utils.eventos import estado_limitacion, ventana_limitacion
+from utils.eventos import (MARCAS_INSTRUCCION, estado_limitacion,
+                           folio_instruccion, marcar_instrucciones,
+                           ventana_limitacion)
 from utils.data import (load_sscc, load_instrucciones_cmg, load_limitaciones,
                         load_bit, load_solicitudes, load_mantenimiento_mayor)
 
@@ -63,9 +65,35 @@ def _eventos_sscc(df, eventos):
         eventos.append({"dt": dt, "unidad": u, "tipo": "SSCC", "desc": desc})
 
 
+def _dedup_reemisiones(df):
+    """Colapsa las REEMISIONES de una misma instrucción con documento citado.
+
+    El CEN emite primero la instrucción con el folio en blanco («Según SICFXXXXXX»)
+    y luego la reemite con el número real («Según SICF2026087731»): misma unidad,
+    misma hora, mismo despacho, distinto `id_instruccion`. Sin colapsarlas, la
+    bitácora mostraba dos filas de limitación para un único hecho operacional.
+    Se conserva la que trae folio; si ninguna lo trae, la última emitida.
+    """
+    if df is None or df.empty or "_es_limitacion" not in df.columns:
+        return df
+    d = df.copy()
+    d["_folio"] = d.apply(folio_instruccion, axis=1)
+    lim, resto = d[d["_es_limitacion"]], d[~d["_es_limitacion"]]
+    if lim.empty:
+        return d
+    # Con folio primero y, dentro de eso, la emisión más reciente: `drop_duplicates`
+    # se queda con la primera de cada (unidad, hora, despacho).
+    orden = ["_con_folio"] + (["id_instruccion"] if "id_instruccion" in lim.columns else [])
+    lim = lim.assign(_con_folio=lim["_folio"].ne("")) \
+             .sort_values(orden, ascending=[False] * len(orden)) \
+             .drop_duplicates(subset=["unidad", "fecha_hora", "despacho"], keep="first")
+    return pd.concat([resto, lim], ignore_index=True)
+
+
 def _eventos_despacho(df, eventos):
     if df is None or df.empty:
         return
+    df = _dedup_reemisiones(marcar_instrucciones(df))
     for _, r in df.iterrows():
         u = r.get("unidad")
         if u not in LABELS:
@@ -77,6 +105,14 @@ def _eventos_despacho(df, eventos):
         desc = f"Instrucción de despacho CMG · <b>{desp}</b> · consigna {consigna}"
         if motivo:
             desc += f" — {motivo[:80]}"
+        # Si la instrucción cita un SICF/SDCF/IL/IF, esa hora está limitada por
+        # documento: se clasifica como Limitación, no como despacho normal.
+        marcas = r.get("_marcas") or []
+        if marcas:
+            docs = " · ".join(f"{c} ({MARCAS_INSTRUCCION[c]})" for c in marcas)
+            desc += f"<br><b>Limitación de unidad declarada:</b> {docs}"
+            eventos.append({"dt": dt, "unidad": u, "tipo": "Limitación", "desc": desc})
+            continue
         eventos.append({"dt": dt, "unidad": u, "tipo": "Despacho", "desc": desc})
 
 

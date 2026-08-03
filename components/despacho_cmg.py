@@ -5,6 +5,7 @@ import plotly.graph_objects as go
 
 from config import COLORES, LABELS, UNIDADES
 from utils.data import load_instrucciones_cmg
+from utils.eventos import marcar_instrucciones
 from components._common import render_guia, tabla_guia, render_cards_unidad
 
 _CUERPO_GUIA = (
@@ -17,7 +18,14 @@ _CUERPO_GUIA = (
         ("Consigna", "Tipo de orden: MT (mínimo técnico), PC (potencia coordinada), EP (en pruebas), etc."),
         ("Instrucción CMG", "Razón económica: OM (orden de mérito), OT (otro), etc."),
         ("Motivo", "Justificación en texto libre cuando el despacho se aparta del orden de mérito"),
+        ("SICF / SDCF", "Solicitud de intervención / desconexión de curso forzoso"),
+        ("IL / IF", "Informe de limitación / informe de falla"),
     ])
+    + "<p>Cuando el motivo de la instrucción cita un <strong>SICF, SDCF, IL o IF</strong>, esa hora "
+      "corresponde a una <strong>limitación de la unidad</strong>: el despacho no responde al orden "
+      "de mérito sino a una intervención documentada. El dashboard las trata como evento de "
+      "limitación (franja en la serie de la unidad, bitácora y Panorama), porque el CEN no las "
+      "registra en <em>limitaciones de transmisión</em>.</p>"
 )
 
 
@@ -31,13 +39,18 @@ def render_despacho_cmg(s, e):
                 "Los datos se adquieren automáticamente cada hora.")
         return
 
+    df = marcar_instrucciones(df)
     dias = df["fecha"].nunique()
     con_motivo = df["motivo"].fillna("").str.strip().ne("").sum()
-    k1, k2, k3, k4 = st.columns(4)
+    n_lim = int(df["_es_limitacion"].sum())
+    k1, k2, k3, k4, k5 = st.columns(5)
     k1.metric("Instrucciones totales", len(df))
     k2.metric("Unidades con despacho", f"{df['unidad'].nunique()} / 4")
     k3.metric("Con motivo registrado", int(con_motivo))
-    k4.metric("Días con datos", dias)
+    k4.metric("Horas con limitación", n_lim,
+              help="Instrucciones cuyo texto cita un SICF, SDCF, IL o IF "
+                   "(limitación de la unidad documentada)")
+    k5.metric("Días con datos", dias)
     st.markdown("")
 
     sub = st.radio("Sección", ["Por unidad", "Despacho instruido", "Tabla completa"], horizontal=True,
@@ -98,9 +111,20 @@ def _tabla(df):
     d = df.copy()
     d["motivo"] = d["motivo"].fillna("").str[:100]
     d["despacho"] = pd.to_numeric(d["despacho"], errors="coerce").round(0)
+    if "_marcas" not in d.columns:
+        d = marcar_instrucciones(d)
+    d["limitacion"] = d["_marcas"].apply(lambda m: " / ".join(m) if m else "")
+    solo_lim = st.checkbox("Solo instrucciones con limitación declarada (SICF/SDCF/IL/IF)",
+                           key="despacho_solo_lim")
+    if solo_lim:
+        d = d[d["_es_limitacion"]]
+        if d.empty:
+            st.caption("Ninguna instrucción del período cita un SICF, SDCF, IL o IF.")
+            return
     st.dataframe(
         d[["fecha_hora", "unidad", "despacho", "consigna", "instruccion_cmg",
-           "estado_operativo", "motivo"]].rename(
+           "estado_operativo", "limitacion", "motivo"]].rename(
             columns={"fecha_hora": "Fecha/Hora", "despacho": "Despacho MW", "consigna": "Consigna",
-                     "instruccion_cmg": "Instr. CMG", "estado_operativo": "Estado op.", "motivo": "Motivo"}),
+                     "instruccion_cmg": "Instr. CMG", "estado_operativo": "Estado op.",
+                     "limitacion": "Limitación", "motivo": "Motivo"}),
         use_container_width=True, hide_index=True)

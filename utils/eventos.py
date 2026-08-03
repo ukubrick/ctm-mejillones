@@ -26,6 +26,8 @@ Sobre esa base se construye un evento genérico (limitación, mantenimiento
 mayor, compromiso SSCC) con la misma forma, para poder pintarlos todos en la
 serie de tiempo de la unidad y cruzarlos contra los desvíos reales.
 """
+import re
+
 import pandas as pd
 
 from config import ID_UNIDAD_LABEL, UNIDADES
@@ -48,6 +50,35 @@ TIPO_EVENTO = {
 # restringen su salida al sistema → aplican a las 4.
 CLAVES_CORREDOR = ("O'HIGGINS", "O´HIGGINS", "OHIGGINS", "MEJILLONES",
                    "LABERINTO", "KAPATUR", "CRUCERO", "CHACAYA")
+
+# ── Limitaciones declaradas DENTRO de la instrucción de despacho ─────────────
+# El CEN documenta parte de las limitaciones de unidad en el texto de la propia
+# instrucción operacional por CMG (tabla `instrucciones_cmg`), no en
+# `limitaciones_transmision`. Cuando el motivo/consigna de la instrucción cita
+# uno de estos documentos, esa hora está intervenida por una limitación de la
+# MÁQUINA (aviso del usuario, 2026-08-03).
+MARCAS_INSTRUCCION = {
+    "SICF": "Solicitud de intervención de curso forzoso",
+    "SDCF": "Solicitud de desconexión de curso forzoso",
+    "IL":   "Informe de limitación",
+    "IF":   "Informe de falla",
+}
+# OJO con los límites de palabra: el CEN escribe el folio PEGADO al código
+# («Según SICF2026087731», «Según SICFXXXXXX»), así que un `\b` de cierre no
+# calza nunca. Solo se ancla el INICIO del código.
+# SICF/SDCF son inequívocas → sin distinguir mayúsculas. IL/IF son de dos letras
+# y aparecerían dentro de cualquier texto en minúscula («il», «if»), así que
+# solo se aceptan en MAYÚSCULA y sin otra letra pegada detrás (para no comerse
+# «ILUMINACION» ni «IFEM»); los dígitos del folio sí pueden ir pegados.
+_PAT_MARCAS = re.compile(r"\b(SICF|SDCF)", re.I)
+_PAT_MARCAS_CORTAS = re.compile(r"\b(IL|IF)(?![A-Za-zÁÉÍÓÚÑáéíóúñ])")
+# Folio del documento: «IL 2026081164», «SICF N°123», «SICF2026087731».
+_PAT_FOLIO = re.compile(r"(?:SICF|SDCF|IL|IF)[\s.:N°ºno-]*(\d{3,})", re.I)
+# Campos de la instrucción donde puede venir declarado el documento.
+CAMPOS_INSTRUCCION = ("motivo", "consigna", "instruccion_cmg", "estado",
+                      "zona_desaclope", "control_tension")
+# Huelgo para unir instrucciones consecutivas en una sola ventana de evento.
+GAP_INSTRUCCION_H = 2
 
 
 def _ahora():
@@ -205,8 +236,104 @@ def _evento(tipo, unidad, ini, fin, titulo, detalle="", mw=None, ref=None,
             "dias": max((fin - ini).total_seconds() / 86400, 0)}
 
 
+def marcas_instruccion(row):
+    """Códigos de documento de limitación citados en una instrucción de despacho.
+
+    Devuelve la lista de códigos presentes (SICF / SDCF / IL / IF), en orden de
+    aparición del diccionario. Vacía si la instrucción no cita ninguno.
+    """
+    txt = " ".join(str(row.get(c) or "") for c in CAMPOS_INSTRUCCION
+                   if str(row.get(c) or "").lower() != "null")
+    if not txt.strip():
+        return []
+    hallados = {m.upper() for m in _PAT_MARCAS.findall(txt)}
+    hallados |= set(_PAT_MARCAS_CORTAS.findall(txt))
+    return [c for c in MARCAS_INSTRUCCION if c in hallados]
+
+
+def folio_instruccion(row):
+    txt = " ".join(str(row.get(c) or "") for c in CAMPOS_INSTRUCCION)
+    m = _PAT_FOLIO.search(txt)
+    return m.group(1) if m else ""
+
+
+def marcar_instrucciones(df):
+    """Añade `_marcas` (lista) y `_es_limitacion` (bool) a las instrucciones CMG."""
+    if df is None or df.empty:
+        return df
+    d = df.copy()
+    d["_marcas"] = d.apply(marcas_instruccion, axis=1)
+    d["_es_limitacion"] = d["_marcas"].apply(bool)
+    return d
+
+
+def eventos_desde_instrucciones(df_instr, unidad=None, ref=None):
+    """Eventos de limitación derivados del TEXTO de las instrucciones de despacho.
+
+    Cada hora instruida que cita un SICF/SDCF/IL/IF es una hora limitada. Las
+    horas consecutivas de la misma unidad y el mismo documento se agrupan en una
+    sola ventana (huelgo `GAP_INSTRUCCION_H`), de modo que la serie muestre una
+    franja continua y no una franja por hora.
+
+    A diferencia de `limitaciones_transmision`, aquí la ventana sale de datos
+    horarios reales, así que no hace falta suponer un cierre (regla 47): el
+    evento termina cuando termina la última hora instruida con ese documento.
+    """
+    ref = _ts(ref) if ref is not None else _ahora()
+    cols = ["tipo", "unidad", "ini", "fin", "titulo", "detalle", "mw", "estado",
+            "fuente", "id", "dias"]
+    if df_instr is None or df_instr.empty:
+        return pd.DataFrame(columns=cols)
+
+    d = marcar_instrucciones(df_instr)
+    d = d[d["_es_limitacion"]].copy()
+    if unidad is not None:
+        d = d[d["unidad"] == unidad]
+    if d.empty:
+        return pd.DataFrame(columns=cols)
+
+    d["_dt"] = pd.to_datetime(d.get("fecha_hora"), errors="coerce")
+    d = d.dropna(subset=["_dt"])
+    d["_folio"] = d.apply(folio_instruccion, axis=1)
+
+    out = []
+    # Una fila puede citar más de un documento (p. ej. «Cancela IL … según SICF …»).
+    d = d.explode("_marcas")
+    # El bloque se arma por unidad + código, NO por folio: el CEN reemite la misma
+    # instrucción con el folio primero en blanco («SICF XXXXXX») y luego con el
+    # número real, y agrupar por folio duplicaba el evento sobre la misma hora.
+    for (uni, codigo), g in d.groupby(["unidad", "_marcas"], dropna=False):
+        g = g.sort_values("_dt")
+        # Corte de bloque: salto mayor al huelgo entre instrucciones sucesivas.
+        salto = g["_dt"].diff() > pd.Timedelta(hours=GAP_INSTRUCCION_H)
+        for _, blq in g.groupby(salto.cumsum()):
+            ini = blq["_dt"].min()
+            fin = blq["_dt"].max() + pd.Timedelta(hours=1)
+            desp = pd.to_numeric(blq.get("despacho"), errors="coerce").dropna()
+            mw = float(desp.min()) if not desp.empty else None
+            motivos = [str(m).strip() for m in blq.get("motivo", pd.Series(dtype=str))
+                       if str(m).strip() and str(m).strip().lower() != "null"]
+            det = motivos[0][:180] if motivos else ""
+            det = (det + " · " if det else "") + \
+                  f"{MARCAS_INSTRUCCION[codigo]} citada en la instrucción de despacho"
+            folios = [f for f in dict.fromkeys(blq["_folio"]) if f]
+            ident = f"{codigo} {folios[0]}" if folios else codigo
+            if len(folios) > 1:
+                ident = f"{codigo} {', '.join(folios)}"
+            ev = _evento("limitacion", uni, ini, fin,
+                         f"Limitación {ident}", det, mw, ref,
+                         fuente="Instrucción de despacho CMG", ident=ident)
+            if ev:
+                ev["codigo"] = codigo
+                out.append(ev)
+
+    if not out:
+        return pd.DataFrame(columns=cols)
+    return pd.DataFrame(out).sort_values("ini", ascending=False).reset_index(drop=True)
+
+
 def eventos_unidad(unidad, df_lim=None, df_mant=None, df_sscc=None, ref=None,
-                   incluir_corredor=True):
+                   incluir_corredor=True, df_instr=None):
     """DataFrame de eventos que afectan a `unidad`, de todas las fuentes.
 
     Columnas: tipo · unidad · ini · fin · titulo · detalle · mw · estado ·
@@ -273,11 +400,19 @@ def eventos_unidad(unidad, df_lim=None, df_mant=None, df_sscc=None, ref=None,
             if ev:
                 out.append(ev)
 
-    if not out:
-        return pd.DataFrame(columns=["tipo", "unidad", "ini", "fin", "titulo",
-                                     "detalle", "mw", "estado", "fuente", "id", "dias"])
-    df = pd.DataFrame(out).sort_values("ini", ascending=False).reset_index(drop=True)
-    return df
+    cols = ["tipo", "unidad", "ini", "fin", "titulo", "detalle", "mw", "estado",
+            "fuente", "id", "dias"]
+    df = pd.DataFrame(out) if out else pd.DataFrame(columns=cols)
+
+    # Limitaciones declaradas en el texto de la instrucción de despacho
+    # (SICF/SDCF/IL/IF) — el CEN no las registra en limitaciones_transmision.
+    df_ins = eventos_desde_instrucciones(df_instr, unidad=unidad, ref=ref)
+    if not df_ins.empty:
+        df = pd.concat([df, df_ins], ignore_index=True) if not df.empty else df_ins
+
+    if df.empty:
+        return pd.DataFrame(columns=cols)
+    return df.sort_values("ini", ascending=False).reset_index(drop=True)
 
 
 # ─────────────────────────────────────────────────────────────────────────────

@@ -14,7 +14,7 @@ from plotly.subplots import make_subplots
 from config import LABELS, NOMBRES_NODO, UNIDADES, BG, GR, POT_MIN_TECNICA, SERIE, CMG_A_DEMANDA
 from utils.data import (load_cmg_prog, load_prog_pid, load_pronostico_demanda,
                         load_real, load_cmg, load_cmg_min, load_limitaciones,
-                        load_mantenimiento_mayor)
+                        load_mantenimiento_mayor, load_instrucciones_cmg)
 from utils.plotly_theme import TZ_CHILE, add_linea_ahora, estilo_serie, hover
 from utils.eventos import (TIPO_EVENTO, dias_hasta, eventos_latentes,
                            eventos_unidad, explicar_horas)
@@ -679,6 +679,7 @@ def render_gen_unidad(df_r, df_p, df_c, mostrar_prog, mostrar_cmg, nodo_cmg, s=N
     df_ev = eventos_unidad(u_act,
                            df_lim=load_limitaciones(s, e) if (s and e) else None,
                            df_mant=load_mantenimiento_mayor(),
+                           df_instr=load_instrucciones_cmg(s, e) if (s and e) else None,
                            incluir_corredor=False)
     _chart_unidad(u_act, df_r, df_p, df_pid, df_c, df_cp, df_dem, barra_dem, vis, nl,
                   nodo_cmg=nodo_cmg, s=s, e=e, df_ev=df_ev)

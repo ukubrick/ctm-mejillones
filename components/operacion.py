@@ -22,7 +22,8 @@ import plotly.graph_objects as go
 import streamlit as st
 
 from config import BG_TRANSP, C_GRID, COLORES, LABELS, UNIDADES
-from utils.data import load_limitaciones, load_mantenimiento_mayor
+from utils.data import (load_instrucciones_cmg, load_limitaciones,
+                        load_mantenimiento_mayor)
 from utils.eventos import (TIPO_EVENTO, dias_hasta, eventos_latentes,
                            eventos_unidad, explicar_horas)
 from components._common import fmt_usd, render_guia, render_kpi_grid
@@ -337,7 +338,11 @@ def render_panorama(s, e, df_r, df_p, df_c):
 
     df_lim = load_limitaciones(s, e)
     df_mant = load_mantenimiento_mayor()
-    eventos_por_u = {u: eventos_unidad(u, df_lim=df_lim, df_mant=df_mant)
+    # Las limitaciones citadas en el texto de la instrucción de despacho
+    # (SICF/SDCF/IL/IF) no viven en limitaciones_transmision — entran por aquí.
+    df_ins = load_instrucciones_cmg(s, e)
+    eventos_por_u = {u: eventos_unidad(u, df_lim=df_lim, df_mant=df_mant,
+                                       df_instr=df_ins)
                      for u in UNIDADES}
 
     todos = pd.concat([d for d in eventos_por_u.values() if d is not None and not d.empty],
