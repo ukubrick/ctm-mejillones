@@ -80,6 +80,31 @@ CAMPOS_INSTRUCCION = ("motivo", "consigna", "instruccion_cmg", "estado",
 # Huelgo para unir instrucciones consecutivas en una sola ventana de evento.
 GAP_INSTRUCCION_H = 2
 
+# `estado` de la instrucción mientras la unidad está limitada: LF (forzosa) y
+# LP (programada). Confirmado con datos el 2026-08-04: las 6 instrucciones que
+# siguen al SICF de ANG1 (02/08 23:13) mantienen LF y despacho 87 MW — el
+# estado vuelve a RO recién cuando la limitación se levanta.
+ESTADOS_LIMITACION = {"LF", "LP"}
+# Margen para considerar que la unidad "subió carga" respecto del despacho
+# limitado (ruido de consigna, no una liberación real).
+MARGEN_SUBIDA_MW = 5.0
+# Una instrucción posterior puede declarar el documento cancelado/finalizado.
+_PAT_CANCELA = re.compile(
+    r"(cancela\w*|anula\w*|finaliza\w*|termina\w*|levanta\w*|deja sin efecto|"
+    r"fin de|fin\s+(?:de\s+)?limitaci[oó]n|normaliza\w*)", re.I)
+
+
+def _cancela_marca(txt, codigo):
+    """¿La instrucción declara cancelado/finalizado el documento `codigo`?
+
+    Exige el verbo de cierre Y la mención del código (o de «limitación») en el
+    mismo texto: un «Fin subida anticipada» no cierra una SICF.
+    """
+    t = str(txt or "")
+    if not _PAT_CANCELA.search(t):
+        return False
+    return bool(re.search(codigo, t, re.I) or re.search(r"limitaci[oó]n", t, re.I))
+
 
 def _ahora():
     return pd.Timestamp.now(tz=TZ_CHILE).tz_localize(None)
@@ -290,12 +315,16 @@ def eventos_desde_instrucciones(df_instr, unidad=None, ref=None):
         return pd.DataFrame(columns=cols)
 
     d = marcar_instrucciones(df_instr)
-    # Todas las instrucciones de cada unidad (limitadas o no): la próxima, sea
-    # cual sea, es la que cierra la ventana de la anterior.
+    # Todas las instrucciones de cada unidad: entre ellas está la que LEVANTA la
+    # limitación (ver `_cierre`). La siguiente instrucción a secas NO cierra nada.
     todas = d.copy()
     todas["_dt"] = pd.to_datetime(todas.get("fecha_hora"), errors="coerce")
-    todas = todas.dropna(subset=["_dt"])
-    ts_por_unidad = {u: sorted(g["_dt"].unique()) for u, g in todas.groupby("unidad")}
+    todas = todas.dropna(subset=["_dt"]).sort_values("_dt")
+    todas["_desp"] = pd.to_numeric(todas.get("despacho"), errors="coerce")
+    todas["_estado"] = todas.get("estado", pd.Series(dtype=str)).astype(str).str.strip().str.upper()
+    todas["_txt"] = todas.apply(
+        lambda r: " ".join(str(r.get(c) or "") for c in CAMPOS_INSTRUCCION), axis=1)
+    instr_por_unidad = {u: g for u, g in todas.groupby("unidad")}
 
     d = d[d["_es_limitacion"]].copy()
     if unidad is not None:
@@ -307,13 +336,35 @@ def eventos_desde_instrucciones(df_instr, unidad=None, ref=None):
     d = d.dropna(subset=["_dt"])
     d["_folio"] = d.apply(folio_instruccion, axis=1)
 
-    def _cierre(uni, ultimo):
-        """Próxima instrucción de la unidad, o ventana abierta hasta ahora."""
-        for t in ts_por_unidad.get(uni, []):
-            if t > ultimo:
-                return pd.Timestamp(t), False
+    def _cierre(uni, ultimo, codigo, mw_lim, estado_lim):
+        """Instante en que la limitación se LEVANTA, y por qué.
+
+        Reglas del operador (2026-08-04): la limitación termina cuando la unidad
+        vuelve a SUBIR CARGA o cuando una instrucción posterior declara la
+        SICF/SDCF/IL/IF cancelada o finalizada. La simple emisión de la
+        siguiente instrucción NO la cierra: verificado contra la DB, el SICF de
+        ANG1 del 02/08 23:13 va seguido de seis instrucciones más, todas con
+        `estado='LF'` y despacho clavado en 87 MW — la unidad seguía limitada.
+
+        Devuelve (fin, motivo_cierre) con motivo ∈ {cancelacion, estado, carga,
+        abierta}.
+        """
+        post = instr_por_unidad.get(uni)
+        if post is not None:
+            post = post[post["_dt"] > ultimo]
+            for _, r in post.iterrows():
+                t = pd.Timestamp(r["_dt"])
+                if _cancela_marca(r["_txt"], codigo):
+                    return t, "cancelacion"
+                # Sale del estado de limitación (LF forzosa / LP programada).
+                if estado_lim in ESTADOS_LIMITACION and r["_estado"] not in ESTADOS_LIMITACION:
+                    return t, "estado"
+                # Sube carga por encima del despacho limitado.
+                if (mw_lim is not None and pd.notna(r["_desp"])
+                        and float(r["_desp"]) > mw_lim + MARGEN_SUBIDA_MW):
+                    return t, "carga"
         tope = ultimo + pd.Timedelta(days=VENTANA_DEFECTO_DIAS)
-        return (min(ref, tope) if ref > ultimo else tope), True
+        return (min(ref, tope) if ref > ultimo else tope), "abierta"
 
     out = []
     # Una fila puede citar más de un documento (p. ej. «Cancela IL … según SICF …»).
@@ -327,16 +378,23 @@ def eventos_desde_instrucciones(df_instr, unidad=None, ref=None):
         salto = g["_dt"].diff() > pd.Timedelta(hours=GAP_INSTRUCCION_H)
         for _, blq in g.groupby(salto.cumsum()):
             ini = blq["_dt"].min()
-            fin, abierta = _cierre(uni, blq["_dt"].max())
             desp = pd.to_numeric(blq.get("despacho"), errors="coerce").dropna()
             mw = float(desp.min()) if not desp.empty else None
+            est = blq.get("estado", pd.Series(dtype=str)).astype(str).str.strip().str.upper()
+            est_lim = next((e for e in est if e in ESTADOS_LIMITACION), "")
+            fin, motivo_cierre = _cierre(uni, blq["_dt"].max(), codigo, mw, est_lim)
             motivos = [str(m).strip() for m in blq.get("motivo", pd.Series(dtype=str))
                        if str(m).strip() and str(m).strip().lower() != "null"]
             det = motivos[0][:180] if motivos else ""
             det = (det + " · " if det else "") + \
                   f"{MARCAS_INSTRUCCION[codigo]} citada en la instrucción de despacho"
-            if abierta:
-                det += " · sin instrucción posterior que la cierre (ventana abierta)"
+            det += " · " + {
+                "cancelacion": "cerrada por instrucción posterior que la cancela/finaliza",
+                "estado": "cerrada cuando la unidad salió del estado de limitación",
+                "carga": "cerrada cuando la unidad volvió a subir carga",
+                "abierta": "sigue vigente: la unidad no ha subido carga ni hay "
+                           "instrucción que la cancele (ventana abierta)",
+            }[motivo_cierre]
             folios = [f for f in dict.fromkeys(blq["_folio"]) if f]
             ident = f"{codigo} {folios[0]}" if folios else codigo
             if len(folios) > 1:

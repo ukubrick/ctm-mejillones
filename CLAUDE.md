@@ -1,7 +1,11 @@
 # CLAUDE.md — Dashboard CTM Mejillones
 > Contexto completo para Claude Code. Leer al inicio de cada sesión.
 > Autor: Erick Herrera — AES Andes, Antofagasta, Chile.
-> Última actualización: 2026-08-03 (**limitaciones declaradas en la instrucción de despacho**:
+> Última actualización: 2026-08-04 (**la limitación se cierra al SUBIR CARGA o al cancelarse el
+>   documento, no con la siguiente instrucción** — corrección del usuario. `_cierre` en
+>   `utils/eventos.py`; `estado` LF/LP confirmado como estado de limitación. ANG1 sigue limitada
+>   desde el 02/08 23:13.)
+> Anterior: 2026-08-03 (**limitaciones declaradas en la instrucción de despacho**:
 >   cuando el motivo de una fila de `instrucciones_cmg` cita un **SICF / SDCF / IL / IF**, esa
 >   ventana es una limitación de la MÁQUINA que el CEN no publica en `limitaciones_transmision`
 >   (regla 50). Se detectan en `utils/eventos.py` y entran como evento `limitacion` a la serie de
@@ -358,16 +362,24 @@ Destiladas de bugs y quirks reales del CEN/Streamlit:
       evento → los bloques se arman por (unidad, código) y la bitácora colapsa la reemisión
       (`_dedup_reemisiones`), quedándose con la que trae folio.
     · **Una instrucción NO es un registro horario: es un EVENTO DE ESTADO** con hora exacta
-      (23:13) que rige hasta la SIGUIENTE instrucción de esa unidad. Cerrar la ventana «una hora
-      después» daba por terminada una limitación vigente: verificado 2026-08-03, el SICF de ANG1
-      del 02/08 23:13 era la última instrucción emitida y la unidad seguía clavada en su mínimo
-      técnico (~60 MW) 10 h más tarde. Sin instrucción posterior la ventana queda ABIERTA hasta
-      «ahora», topeada a 7 días (regla 41).
+      (23:13). Pero **la siguiente instrucción NO cierra la limitación** (corrección del usuario,
+      2026-08-04): la limitación termina cuando la unidad **vuelve a SUBIR CARGA** o cuando una
+      instrucción posterior declara la SICF/SDCF/IL/IF **cancelada o finalizada**. Verificado en
+      la DB: tras el SICF de ANG1 del 02/08 23:13 vienen SEIS instrucciones más, todas con
+      `estado='LF'` y despacho clavado en 87 MW (real ~60 MW, mínimo técnico) — la unidad seguía
+      limitada dos días después. `_cierre` (utils/eventos.py) cierra por (a) texto de cancelación
+      + mención del código o de «limitación», (b) salida de `ESTADOS_LIMITACION = {LF, LP}`, o
+      (c) despacho por encima del limitado + `MARGEN_SUBIDA_MW = 5`. Si nada de eso ocurre, la
+      ventana queda ABIERTA hasta «ahora», topeada a 7 días (regla 41).
+    · **`estado` LF/LP SÍ es señal de limitación** (confirmado con datos 2026-08-04, ya no es
+      inferencia): el bloque LF de ANG1 coincide exacto con el SICF, y los 25 LP de ANG2 (julio)
+      alternan despacho 87/60 MW. Se usa como criterio de CIERRE; el texto sigue siendo el que
+      DETECTA el documento.
     · El aviso palpitante junto al título de la serie (`_badge_evento_activo` en gen_unidad.py)
       solo aparece con la ventana VIGENTE ahora, y el verbo sigue al documento: SICF/IL
       «limitada», SDCF «desconectada», IF «fuera de servicio».
-    · Pista sin confirmar: esas filas son las únicas con `estado = 'LF'` (el resto es 'RO'). Si
-      LF/LP resultan ser limitación forzosa/programada, serían una señal más limpia que el texto.
+    · El aviso palpitante y las franjas se apagan solos en cuanto llegue la instrucción que
+      cancele el documento o suba la carga.
 
 ---
 
@@ -663,13 +675,12 @@ SIDEBAR_GRAD = "linear-gradient(168deg,#0E7E93,#2A38C9,#4A25A0)"                
         guarda el formato con «T» y `costo_marginal_real` con espacio. NO se pudo comprobar el tipo
         desde local (regla 10) — si la simulación imprime algo raro ahí, revisar antes de aplicar.
 
-- [ ] **`estado` de `instrucciones_cmg`: confirmar qué significan LF y LP (2026-08-03).** Las dos
-      únicas filas con `estado='LF'` son justo las del SICF de ANG1; el resto del período es 'RO'
-      (1.269), 'LP' (25), 'PO' (20), 'N' (4). Si LF/LP son «limitación forzosa / programada»,
-      serían una señal ESTRUCTURADA de limitación, mucho más robusta que el texto libre del
-      motivo (regla 50), y detectarían casos donde el operador no escribe el documento. No se
-      implementó porque es una inferencia sin confirmar. Preguntar al CEN o contrastar contra
-      días con limitación conocida.
+- [ ] **`estado` LF/LP como DETECTOR de limitación (2026-08-04).** Ya se usa para CERRAR la
+      ventana (regla 50), pero no para abrirla: hoy la limitación solo se detecta por el texto
+      del motivo. Los 25 LP de ANG2 de julio no citan ningún documento y quedan invisibles.
+      Falta confirmar con el CEN que LF/LP = limitación forzosa/programada antes de tratarlos
+      como evento por sí solos (si lo son, aparecerían limitaciones donde el operador no
+      escribió el documento).
 
 - [ ] **Verificar el badge y las franjas nuevas con un caso de SDCF/IL/IF real (2026-08-03).** El
       único caso que existe en la DB es un SICF (ANG1, 02/08). Los otros tres códigos y sus verbos
@@ -1128,3 +1139,18 @@ Limpieza de scripts probe/test/check.
 
 *Actualizado 2026-08-03. Proyecto CTM Mejillones (4 térmicas ANG/CCR).*
 *Stack: Streamlit + supabase-py/psycopg2 + GitHub Actions + API CEN (SIP/OPS) + CMG S3 + scikit-learn/xgboost.*
+
+- **2026-08-04 — Cierre correcto de la limitación declarada en despacho:**
+  · **Aviso del usuario:** «la limitación finaliza cuando la unidad por lo general sube carga, o
+    si la instrucción dice cancelada/finalizada la SICF; ANG1 sigue limitada a esta hora». El
+    modelo del 03/08 cerraba la ventana con la SIGUIENTE instrucción de la unidad, así que la
+    limitación de ANG1 moría el 03/08 00:00 y el badge se apagaba.
+  · **Verificado en la DB:** tras el SICF de ANG1 (02/08 23:13) hay seis instrucciones más, todas
+    `estado='LF'` con despacho 87 MW, y la generación real de hoy está clavada en 60,7 MW.
+  · **`_cierre` reescrito** (utils/eventos.py): cierra por texto de cancelación (`_PAT_CANCELA` +
+    mención del código o de «limitación», para que un «Fin subida anticipada» no cuente), por
+    salida de `ESTADOS_LIMITACION = {LF, LP}`, o por despacho sobre el limitado +
+    `MARGEN_SUBIDA_MW = 5`. Si nada ocurre, ventana abierta hasta ahora topeada a 7 días. El
+    `detalle` del evento declara cuál de los cuatro motivos cerró la ventana.
+  · Resultado sobre datos reales: 1 evento, ANG1, 02/08 23:13 → ahora, estado **activa**.
+    `AppTest` headless sobre Resumen y Operación sin excepciones.
