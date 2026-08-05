@@ -248,6 +248,57 @@ def _fila_html(ev):
     )
 
 
+def _aviso_novedades_fuera(unidad, dia):
+    """Avisa si la unidad tiene novedades manuales fuera del día seleccionado.
+
+    Las novedades son pocas, escritas a mano y por eso mismo las más valiosas de
+    la bitácora — pero quedaban invisibles por partida doble: el sidebar acota el
+    período (7 días por defecto) y la bitácora muestra UN solo día. Una novedad
+    de hace tres semanas solo aparecía si el usuario acertaba la fecha exacta en
+    el selector, así que en la práctica no aparecía nunca.
+
+    El aviso NO cambia la semántica del filtro: la tabla sigue siendo del día
+    elegido. Solo dice que el dato existe y dónde está.
+    """
+    # Ventana deliberadamente amplia: se busca fuera del período del sidebar,
+    # que es justamente lo que las estaba escondiendo. La tabla `bitacora` es de
+    # ingreso manual (decenas de filas), así que leerla entera no cuesta nada.
+    df = load_bit("2000-01-01", date.today().isoformat(), unidad)
+    if df is None or df.empty:
+        return
+
+    otras = []
+    for _, r in df.iterrows():
+        dt = _dt(r.get("fecha"), r.get("hora"))
+        if pd.isna(dt) or dt.date() == dia:
+            continue
+        otras.append((dt, str(r.get("comentario") or "").strip(),
+                      str(r.get("autor") or "").strip()))
+    if not otras:
+        return
+
+    otras.sort(key=lambda x: x[0], reverse=True)
+    n = len(otras)
+    plural = "novedad" if n == 1 else "novedades"
+    reciente = otras[0][0].strftime("%d-%m-%Y")
+    st.markdown(
+        f'<div style="background:#F5F3FF;border:1px solid #DDD6FE;'
+        f'border-left:4px solid #7C4DE0;border-radius:8px;padding:8px 14px;'
+        f'margin:2px 0 10px;color:#5B21B6;font-size:0.82rem;font-weight:600">'
+        f'{LABELS[unidad]} tiene {n} {plural} fuera de este día '
+        f'<span style="font-weight:500">— la más reciente el {reciente}</span></div>',
+        unsafe_allow_html=True)
+
+    with st.expander(f"Ver las {n} {plural} de {LABELS[unidad]}", expanded=False):
+        for dt, com, autor in otras:
+            firma = f" <span style='color:#94A3B8'>— {autor}</span>" if autor else ""
+            st.markdown(
+                f'<div style="padding:6px 0;border-bottom:1px solid #F1F5F9;font-size:0.85rem">'
+                f'<span style="color:#7C4DE0;font-weight:700">'
+                f'{dt.strftime("%d-%m-%Y %H:%M")}</span> · {com}{firma}</div>',
+                unsafe_allow_html=True)
+
+
 def render_bitacora_auto(s, e, unidad):
     """Bitácora de la unidad activa (botón de la serie). Muestra por defecto solo
     el día anterior; un selector permite elegir otro día dentro del período."""
@@ -298,6 +349,8 @@ def render_bitacora_auto(s, e, unidad):
 
     eventos = sorted([ev for ev in eventos_u if ev["dt"].date() == dia],
                      key=lambda ev: ev["dt"], reverse=True)
+
+    _aviso_novedades_fuera(unidad, dia)
 
     # Nota verde solo si ese día no se generó ninguna limitación para la unidad.
     hay_limitacion = any(ev["tipo"] == "Limitación" for ev in eventos)
