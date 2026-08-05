@@ -849,7 +849,16 @@ def fetch_cmg_online_api(start: str, end: str,
     Sin ninguno de los dos, baja el día completo.
     """
     url   = f"{API_BASE_SIP}/costo-marginal-online/v4/findByDate"
-    limit = 4000
+    # Medido 2026-08-04 sobre un día completo (el 03-08):
+    #    4000 → 40 págs × 2,9 s = 116 s
+    #   10000 → 16 págs × 3,2 s =  51 s   ← elegido
+    #   15000 → 11 págs × 6,7 s =  74 s   (menos páginas pero PEOR total)
+    #   20000 → 429
+    # Menos páginas no siempre es mejor: pasado cierto tamaño el servidor tarda
+    # más de lo que ahorra. El óptimo se mide en páginas × segundos, no en
+    # páginas. Y menos requests además reduce la probabilidad de 429, que es lo
+    # que de verdad encarece estos jobs.
+    limit = 10000
 
     def _pedir(page: int) -> dict:
         r = _get_with_retry(url, {"startDate": start, "endDate": end,

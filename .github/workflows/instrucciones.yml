@@ -1,0 +1,52 @@
+name: Instrucciones de despacho (cada 10 min)
+
+# Las instrucciones son EVENTOS de minuto exacto, no una serie con malla: la
+# latencia con que el dashboard las muestra ES esta frecuencia. Y son las que
+# encienden el aviso de limitación de unidad (SICF / SDCF / IL / IF), que el CEN
+# no publica en `limitaciones_transmision`.
+#
+# Cuesta casi nada: con limit=5000 el día entero cabe en UNA página (~3 s), así
+# que el job son segundos de trabajo real. El repo es PÚBLICO → Actions ilimitado,
+# de modo que el límite acá no son los minutos sino el rate limiter del CEN; 6
+# corridas/hora contra un endpoint de 1 página es holgado.
+#
+# El barrido de respaldo lo hace `operaciones.yml` cada 30 min sobre la ventana
+# completa: Actions descarta corridas programadas de forma sistemática (sobre
+# todo de madrugada), así que esta cadencia es la PEDIDA, no la garantizada.
+on:
+  schedule:
+    - cron: "*/10 * * * *"
+  workflow_dispatch:
+
+# Si una corrida se atrasa, no acumular: lo que importa es lo más reciente.
+concurrency:
+  group: instrucciones-ctm
+  cancel-in-progress: true
+
+jobs:
+  instrucciones:
+    name: Instrucciones de despacho CMG
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+
+    steps:
+      - name: Checkout repositorio
+        uses: actions/checkout@v5
+
+      - name: Configurar Python 3.11
+        uses: actions/setup-python@v6
+        with:
+          python-version: "3.11"
+          cache: "pip"
+
+      - name: Instalar dependencias
+        run: pip install -r requirements-adq.txt
+
+      - name: Ejecutar Adquisicion_instrucciones.py
+        env:
+          CEN_USER_KEY: ${{ secrets.CEN_USER_KEY }}
+          DATABASE_URL: ${{ secrets.DATABASE_URL }}
+          # Backoff corto: el job son ~5 s de trabajo útil, así que un 429 con la
+          # base de 10 s lo multiplicaría por varias veces sin ninguna necesidad.
+          CEN_BACKOFF_BASE_S: "3"
+        run: python3 Adquisicion_instrucciones.py

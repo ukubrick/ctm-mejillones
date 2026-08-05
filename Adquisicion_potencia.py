@@ -1,9 +1,14 @@
 """
 Adquisición rápida de GENERACIÓN BRUTA EN TIEMPO REAL — solo generación real.
 
-Ejecutado por GitHub Actions cada 30 min (cron 25,55 * * * *) para tener la
-generación de las 4 unidades (ANG1/ANG2/CCR1/CCR2) lo antes posible, sin esperar
-a la corrida horaria completa (PCP/PID/CMG/SSCC/limitaciones son más lentos).
+Ejecutado por GitHub Actions cada 30 min para tener la generación de las 4
+unidades (ANG1/ANG2/CCR1/CCR2) lo antes posible, sin esperar a la corrida
+horaria completa.
+
+NO tiene sentido subirlo de ahí: medido 2026-08-04, la gen-real del CEN es
+HORARIA y llega con ~4,6 h de rezago, así que pedirla más seguido no adelanta
+un solo dato — solo gasta requests contra el rate limiter. El CMG online, que
+sí es de 15 min, se separó a `Adquisicion_cmg_min.py` justamente por eso.
 
 Reutiliza las funciones de Adquisicion.py para no duplicar lógica.
 Patrón replicado del proyecto Pulsar (ernc-aes-dashboard → Adquisicion_potencia_ernc.py).
@@ -30,25 +35,11 @@ from Adquisicion import (
     TZ_CHILE,
     fetch_generacion_real,
     upsert_generacion_real,
-    adquirir_cmg_online,
     log_adquisicion,
     ResumenCorrida,
     abortar_si_cen_caido,
     _redactar,
 )
-
-# Ventana del CMG online en cada corrida rápida, en HORAS de cobertura real.
-#
-# Antes esto era `CMG_ULTIMAS_PAGINAS = 6` con el comentario «≈ las últimas 4 h».
-# Medido el 2026-08-04 a las 20:00: esas 6 páginas cubrieron 2,5 h, no 4 —
-# CUATRO de las seis vinieron vacías (el hueco no determinista del SIP) y las
-# vacías se comen la ventana. Como los huecos cambian en cada corrida, la
-# cobertura real era distinta cada vez y nadie lo habría notado: lo que queda
-# fuera de la ventana no se vuelve a pedir nunca.
-#
-# 3 h cubren holgadamente varias corridas del cron aunque Actions salte algunas,
-# que es el modo de falla a cubrir (los saltos de madrugada llegan a 4 h).
-CMG_HORAS_ATRAS = 3.0
 
 # Ventana corta: hoy + ayer. La gen-real filtra por central en el servidor (rápido),
 # 2 días basta para refrescar lo más reciente y cubrir el cambio de día UTC/Chile.
@@ -86,24 +77,7 @@ def run() -> int:
         log_adquisicion("generacion_real", fecha, nuevos, dupes,
                         int((time.time() - t0) * 1000), err_str)
 
-    # ── CMG online (API SIP, 15 min) ── fuente principal desde 2026-07-29:
-    # trae las barras de las propias centrales y NO descarta los CMG = 0
-    # (el feed S3 hacía ambas cosas mal). Fallback automático al S3.
-    hoy_str = hoy.strftime("%Y-%m-%d")
-    log.info(f"\n  ── CMG online 15 min (API SIP, últimas {CMG_HORAS_ATRAS} h)")
-    t0 = time.time()
-    err_str = None
-    try:
-        n_min, n_hora = adquirir_cmg_online(hoy_str, hoy_str, horas_atras=CMG_HORAS_ATRAS)
-        log.info(f"  ✅ CMG: {n_min} puntos de 15 min, {n_hora} filas horarias")
-        resumen.paso_ok("cmg-online")
-    except Exception as e:
-        err_str = _redactar(e); log.error(f"  ❌ CMG: {err_str}"); n_min = n_hora = 0
-        resumen.paso_fallo("cmg-online", e)
-    log_adquisicion("cmg_online_min", hoy_str, n_min, n_hora,
-                    int((time.time() - t0) * 1000), err_str)
-
-    log.info(f"\n  Fin — {total} registros de potencia + CMG procesados\n")
+    log.info(f"\n  Fin — {total} registros de generación real\n")
     return resumen.cerrar()
 
 

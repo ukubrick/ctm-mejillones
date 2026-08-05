@@ -3,6 +3,8 @@ name: Potencia real CTM (30 min)
 on:
   schedule:
     # Minutos :25 y :55 — espaciado respecto a la corrida horaria completa (:05).
+    # Gen-real: HORARIA y con ~4,6 h de rezago (medido). Dos corridas por hora
+    # ya cubren la publicación del CEN con margen; subirlo no adelanta un dato.
     - cron: "25,55 * * * *"
   workflow_dispatch:
 

@@ -1,0 +1,54 @@
+name: CMG online 15 min (cada 15 min)
+
+# El CMG online es la ÚNICA serie del proyecto con granularidad de 15 minutos
+# (medido 2026-08-04, rezago ~1,1 h). Todo lo demás es horario, así que es la
+# única fuente donde una cadencia de 15 min entrega de verdad un dato nuevo en
+# cada corrida.
+#
+# Venía dentro de `potencia.yml` junto a la gen-real, que es horaria y llega con
+# 4,6 h de rezago: atados en el mismo cron, o el CMG iba demasiado lento o la
+# gen-real se pedía cuatro veces por hora para traer siempre lo mismo. Cada
+# request de más es una probabilidad de 429, y el rate limit del CEN —no los
+# minutos de Actions, que acá son ilimitados por ser repo público— es el cuello
+# real de estos jobs.
+#
+# La ventana del script se mide en HORAS de cobertura (3 h), no en páginas: ver
+# `fetch_cmg_online_api`, donde está medido por qué "las últimas N páginas" es
+# una cuenta que miente. El barrido del día completo lo hace la corrida horaria.
+on:
+  schedule:
+    - cron: "*/15 * * * *"
+  workflow_dispatch:
+
+concurrency:
+  group: cmg-min-ctm
+  cancel-in-progress: true
+
+jobs:
+  cmg_min:
+    name: CMG online 15 min
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+
+    steps:
+      - name: Checkout repositorio
+        uses: actions/checkout@v5
+
+      - name: Configurar Python 3.11
+        uses: actions/setup-python@v6
+        with:
+          python-version: "3.11"
+          cache: "pip"
+
+      - name: Instalar dependencias
+        run: pip install -r requirements-adq.txt
+
+      - name: Ejecutar Adquisicion_cmg_min.py
+        env:
+          CEN_USER_KEY: ${{ secrets.CEN_USER_KEY }}
+          DATABASE_URL: ${{ secrets.DATABASE_URL }}
+          # Este endpoint es el que más se irrita: con limit=10000 son pocas
+          # páginas pero grandes. Espaciado algo mayor y backoff corto.
+          CEN_THROTTLE_S: "0.5"
+          CEN_BACKOFF_BASE_S: "5"
+        run: python3 Adquisicion_cmg_min.py
