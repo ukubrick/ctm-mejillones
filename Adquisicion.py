@@ -15,7 +15,7 @@ Variables de entorno (.env o GitHub Secrets):
 ────────────────────────────────────────────────────────────────
 """
 
-import os, sys, time, logging, requests, psycopg2
+import os, re, sys, time, random, logging, requests, psycopg2
 from datetime import datetime, timedelta
 from collections import defaultdict
 from zoneinfo import ZoneInfo
@@ -205,7 +205,7 @@ def fetch_generacion_real(start: str, end: str) -> list[dict]:
                 })
             log.info(f"  Gen. real {nombre}: {len(registros)-antes} registros")
         except Exception as e:
-            log.error(f"  Error gen. real {nombre}: {e}")
+            log.error(f"  Error gen. real {nombre}: {_redactar(e)}")
         time.sleep(0.5)
     return registros
 
@@ -222,22 +222,79 @@ def _map_llave_gen_prog(texto: str) -> str | None:
     return None
 
 
+# ── Cliente HTTP del CEN ───────────────────────────────────────────────────────
+# Sesión reutilizable: reusa la conexión TCP/TLS entre llamadas. En un barrido de
+# 120 páginas evita 120 handshakes.
+_SESSION = requests.Session()
+_SESSION.headers.update({"Accept": "application/json"})
+
+# Espaciado mínimo entre requests al CEN. Un throttle chico previene el 429 EN
+# ORIGEN, y eso sale mucho más barato que pagarlo después: un solo 429 cuesta
+# 10-40 s de backoff, o sea 30-130 veces este espaciado. Subirlo en los jobs que
+# paginan el sistema completo; bajarlo a 0 solo si se mide que no hay 429.
+_MIN_INTERVALO_S = float(os.getenv("CEN_THROTTLE_S") or 0.3)
+
+# Base del backoff ante 429/5xx (10s, 20s, 40s). En los crons cortos y frecuentes
+# conviene bajarla: con 4 requests, un 429 con base 10 cuesta más que TODO el
+# trabajo útil del job.
+_BACKOFF_BASE_S = float(os.getenv("CEN_BACKOFF_BASE_S") or 10)
+_ULTIMO_REQUEST_TS = 0.0
+
+
+def _throttle():
+    global _ULTIMO_REQUEST_TS
+    espera = _MIN_INTERVALO_S - (time.monotonic() - _ULTIMO_REQUEST_TS)
+    if espera > 0:
+        time.sleep(espera)
+    _ULTIMO_REQUEST_TS = time.monotonic()
+
+
+def _redactar(msg) -> str:
+    """Quita la user_key de un mensaje de error.
+
+    Las excepciones de `requests` incluyen la URL COMPLETA con el query string, o
+    sea la key del CEN en claro. GitHub Actions enmascara los secrets, pero este
+    repo es PÚBLICO y un log local o un traceback pegado en un issue la filtraría.
+    """
+    return re.sub(r"(user_key=)[^&\s'\")]+", r"\1***", str(msg))
+
+
 def _get_with_retry(url: str, params: dict, timeout: int = 60,
                     max_retries: int = 3) -> requests.Response:
-    """GET con retry exponencial ante 429/5xx y errores de red (timeout, conexión)."""
+    """GET resiliente contra la API del CEN.
+
+    - Reintenta 429 y 5xx; en 429 respeta el header `Retry-After` si viene.
+    - Backoff exponencial CON JITTER: sin el jitter, varios reintentos se
+      sincronizan y vuelven a chocar contra el rate limiter a la vez.
+    - Un 4xx que no sea 429 falla rápido: no tiene sentido reintentar un 400/404.
+    - SSLError NO se reintenta. Hereda de ConnectionError, así que el `except`
+      genérico se lo tragaba y le aplicaba backoff a un problema que jamás se
+      arregla esperando (un certificado vencido del lado del servidor). En Pulsar
+      eso agotó el timeout del job sin traer un solo dato, y Actions lo marcó
+      `cancelled` en vez de fallido, lo que despista el diagnóstico.
+    """
     last_exc = None
     for intento in range(max_retries):
         try:
-            r = requests.get(url, params=params, timeout=timeout)
+            _throttle()
+            r = _SESSION.get(url, params=params, timeout=timeout)
+        except requests.exceptions.SSLError as exc:
+            log.error(f"  [SSL] Certificado inválido/vencido en el CEN: {_redactar(exc)}")
+            raise
         except (requests.exceptions.Timeout, requests.exceptions.ConnectionError) as exc:
             last_exc = exc
-            espera = 10 * 2 ** intento
-            log.warning(f"  Error de red ({exc.__class__.__name__}) — reintento {intento+1}/{max_retries} en {espera}s")
+            espera = _BACKOFF_BASE_S * 2 ** intento + random.uniform(0, 3)
+            log.warning(f"  Error de red ({exc.__class__.__name__}) — "
+                        f"reintento {intento+1}/{max_retries} en {espera:.0f}s")
             time.sleep(espera)
             continue
-        if r.status_code in (429, 500, 502, 503, 504):
-            espera = 10 * 2 ** intento          # 10s, 20s, 40s
-            log.warning(f"  HTTP {r.status_code} — reintento {intento+1}/{max_retries} en {espera}s")
+        if r.status_code == 429 or r.status_code >= 500:
+            retry_after = r.headers.get("Retry-After")
+            espera = (float(retry_after) if retry_after and retry_after.isdigit()
+                      else _BACKOFF_BASE_S * 2 ** intento + random.uniform(0, 3))
+            log.warning(f"  HTTP {r.status_code} — reintento {intento+1}/{max_retries} "
+                        f"en {espera:.0f}s")
+            last_exc = requests.HTTPError(f"HTTP {r.status_code}")
             time.sleep(espera)
             continue
         r.raise_for_status()
@@ -246,6 +303,101 @@ def _get_with_retry(url: str, params: dict, timeout: int = 60,
         raise last_exc
     r.raise_for_status()
     return r
+
+
+def preflight_cen(timeout: int = 15) -> tuple[bool, str]:
+    """Sonda barata: ¿está viva la API del CEN antes de gastar el runner?
+
+    Un fallo de TLS o de conexión acá significa que la API está caída del lado
+    del CEN y NINGÚN paso va a funcionar: mejor abortar en un segundo que quemar
+    el timeout completo del job en reintentos condenados. Un 4xx cuenta como
+    "viva": responde, y ya es problema del endpoint puntual, no del host.
+    """
+    if not CEN_USER_KEY:
+        return False, "CEN_USER_KEY no configurada"
+    hoy = datetime.now(TZ_CHILE).strftime("%Y-%m-%d")
+    try:
+        r = _SESSION.get(
+            f"{API_BASE_SIP}/generacion-real/v3/findByDate",
+            params={"user_key": CEN_USER_KEY, "startDate": hoy, "endDate": hoy,
+                    "idCentral": ID_ANGAMOS, "pageSize": 1, "page": 1},
+            timeout=timeout,
+        )
+        if r.status_code >= 500:
+            return False, f"API CEN responde {r.status_code} (caída del lado del CEN)"
+        return True, "ok"
+    except requests.exceptions.SSLError as e:
+        return False, f"certificado TLS inválido/vencido en el CEN: {_redactar(e)}"
+    except (requests.exceptions.ConnectionError, requests.exceptions.Timeout) as e:
+        return False, f"API CEN inalcanzable: {_redactar(e)}"
+
+
+# ── Paginado SIP: integridad del barrido ───────────────────────────────────────
+# El SIP intercala páginas VACÍAS de forma no determinista: una respuesta con
+# `data: []` en medio del feed NO significa que se acabó. Cortar ahí trunca el día
+# en un punto aleatorio y, como el feed tampoco viene ordenado por hora, lo que se
+# pierde son horas sueltas — no la cola. El síntoma no es un error ni una fila
+# repetida: son menos datos, en silencio, distintos en cada corrida.
+#
+# Y el cuerpo de esa página vacía NO trae `totalPages`, así que preguntárselo a
+# ella es preguntarle justo a la única página que no sabe cuántas hay: hay que
+# RECORDAR el último conteo conocido del barrido.
+#
+# (Verificado en el proyecto Pulsar sobre este mismo SIP, reglas #55/#59/#62: el
+#  cron de potencia cerraba en 1, 1, 2, 4 y 4 páginas de 11 en cinco corridas
+#  seguidas, entre 0 y 126 de los 488 registros del día.)
+
+def _total_pages(body, previo: int | None = None) -> int | None:
+    """`totalPages` del body, o el ÚLTIMO conocido del mismo barrido."""
+    tp = body.get("totalPages") if isinstance(body, dict) else None
+    try:
+        return int(tp) if tp is not None else previo
+    except (TypeError, ValueError):
+        return previo
+
+
+def _pedir_pagina(url: str, params: dict, tag: str,
+                  tp_previo: int | None = None, pagina_1based: int | None = None,
+                  reintentos: int = 2) -> tuple[list, int | None]:
+    """Pide una página del SIP y, si vuelve VACÍA existiendo más, la RE-pide.
+
+    Saltear la página vacía evita truncar el barrido, pero sus filas se pierden
+    igual. Como el hueco es no determinista, volver a pedir la MISMA página suele
+    traerla con datos. Retorna (data, total_pages).
+    """
+    if pagina_1based is None:
+        pagina_1based = int(params.get("page") or 1)
+    data, tp = [], tp_previo
+    for intento in range(reintentos + 1):
+        body = _get_with_retry(url, params).json()
+        data = body.get("data", []) if isinstance(body, dict) else []
+        tp   = _total_pages(body, tp)
+        if data or tp is None or pagina_1based >= tp:
+            return data, tp
+        if intento < reintentos:
+            log.warning(f"  [{tag}] Página {pagina_1based}/{tp} vacía — la re-pido.")
+            time.sleep(1.5)
+    return data, tp
+
+
+def _seguir_pese_a_vacia(tag: str, pagina_1based: int, tp: int | None) -> bool:
+    """True si una página vacía es un hueco del feed y hay que seguir paginando."""
+    if tp is None or pagina_1based >= tp:
+        return False
+    log.warning(f"  [{tag}] Página {pagina_1based}/{tp} vacía — sigo (hueco del feed).")
+    return True
+
+
+def _avisar_parcial(tag: str, paginas_ok: int, tp: int | None) -> None:
+    """Métrica de VERIFICACIÓN del barrido, no de progreso.
+
+    Una línea de log que nadie compara contra su valor esperado no sirve de nada:
+    en Pulsar se imprimió `4 páginas → 126 registros` durante días mientras se
+    perdía el 74% del día. Si el barrido cerró corto, tiene que decirlo.
+    """
+    if tp is not None and paginas_ok < tp:
+        log.warning(f"  [{tag}] AVISO: barrido PARCIAL — {paginas_ok} páginas con "
+                    f"datos de {tp}. Puede faltar información del período.")
 
 
 def fetch_generacion_programada(start: str, end: str) -> list[dict]:
@@ -270,18 +422,25 @@ def fetch_generacion_programada(start: str, end: str) -> list[dict]:
     mejores: dict[tuple[str, str], tuple[str, dict]] = {}
     llaves_no_mapeadas: set[str] = set()
 
+    tp_visto: int | None = None   # el body VACÍO no trae totalPages — recordarlo
+    paginas_ok = 0
+
     try:
         while True:
-            r    = _get_with_retry(
+            data, tp_visto = _pedir_pagina(
                 f"{API_BASE_SIP}/generacion-programada-pcp/v4/findByDate",
-                params={"user_key": CEN_USER_KEY, "startDate": start,
-                        "endDate": end, "page": page, "limit": limit},
+                {"user_key": CEN_USER_KEY, "startDate": start,
+                 "endDate": end, "page": page, "limit": limit},
+                "PCP", tp_visto, pagina_1based=page + 1,
             )
-            body = r.json()
-            data = body.get("data", [])
 
             if not data:
-                break
+                if not _seguir_pese_a_vacia("PCP", page + 1, tp_visto):
+                    break
+                page += 1
+                continue
+
+            paginas_ok += 1
 
             if page == 0:
                 muestra = [d for d in data if d.get("id_central") in ids_objetivo]
@@ -354,16 +513,16 @@ def fetch_generacion_programada(start: str, end: str) -> list[dict]:
                     "fuente":            "CEN_PCP",
                 })
 
-            total_pages = body.get("totalPages")
-            if total_pages is None or page + 1 >= int(total_pages):
+            if tp_visto is None or page + 1 >= tp_visto:
                 break
 
             page += 1
             time.sleep(0.15)
 
     except Exception as e:
-        log.error(f"  Error gen. programada PCP: {e}")
+        log.error(f"  Error gen. programada PCP: {_redactar(e)}")
 
+    _avisar_parcial("PCP", paginas_ok, tp_visto)
     registros = [v[1] for v in mejores.values()]
     log.info(f"  Gen. programada PCP ({start}): {len(registros)} registros ANG/CCR")
     return registros
@@ -389,17 +548,24 @@ def fetch_generacion_programada_pid(start: str, end: str) -> list[dict]:
     mejores: dict[tuple[str, str], tuple[tuple, dict]] = {}
     llaves_no_mapeadas: set[str] = set()
 
+    tp_visto: int | None = None
+    paginas_ok = 0
+
     try:
         while True:
-            r    = _get_with_retry(
+            data, tp_visto = _pedir_pagina(
                 f"{API_BASE_SIP}/generacion-programada-pid/v4/findByDate",
-                params={"user_key": CEN_USER_KEY, "startDate": start,
-                        "endDate": end, "page": page, "limit": limit},
+                {"user_key": CEN_USER_KEY, "startDate": start,
+                 "endDate": end, "page": page, "limit": limit},
+                "PID", tp_visto,
             )
-            body = r.json()
-            data = body.get("data", [])
             if not data:
-                break
+                if not _seguir_pese_a_vacia("PID", page, tp_visto):
+                    break
+                page += 1
+                continue
+
+            paginas_ok += 1
 
             for rec in data:
                 if rec.get("id_central") not in ids_objetivo:
@@ -451,15 +617,15 @@ def fetch_generacion_programada_pid(start: str, end: str) -> list[dict]:
                     "fuente":            "CEN_PID",
                 })
 
-            total_pages = body.get("totalPages")
-            if total_pages is None or page >= int(total_pages):
+            if tp_visto is None or page >= tp_visto:
                 break
             page += 1
             time.sleep(0.15)
 
     except Exception as e:
-        log.error(f"  Error gen. programada PID: {e}")
+        log.error(f"  Error gen. programada PID: {_redactar(e)}")
 
+    _avisar_parcial("PID", paginas_ok, tp_visto)
     registros = [v[1] for v in mejores.values()]
     log.info(f"  Gen. programada PID ({start}→{end}): {len(registros)} registros ANG/CCR")
     return registros
@@ -538,7 +704,7 @@ def fetch_cmg_nodos() -> list[dict]:
         return registros_total
 
     except Exception as e:
-        log.error(f"  Error CMG S3: {e}")
+        log.error(f"  Error CMG S3: {_redactar(e)}")
         return []
 
 
@@ -594,7 +760,7 @@ def upsert_generacion_real(registros: list[dict]) -> tuple[int, int]:
                     else:                dupes  += 1
             conn.commit()
     except Exception as e:
-        log.error(f"  Error upsert gen. real: {e}")
+        log.error(f"  Error upsert gen. real: {_redactar(e)}")
     return nuevos, dupes
 
 
@@ -624,7 +790,7 @@ def upsert_generacion_programada(registros: list[dict]) -> tuple[int, int]:
                     else:                actualizados  += 1
             conn.commit()
     except Exception as e:
-        log.error(f"  Error upsert gen. programada: {e}")
+        log.error(f"  Error upsert gen. programada: {_redactar(e)}")
     return nuevos, actualizados
 
 
@@ -652,7 +818,7 @@ def upsert_cmg(registros: list[dict]) -> tuple[int, int]:
                     else:                actualizados += 1
             conn.commit()
     except Exception as e:
-        log.error(f"  Error upsert CMG: {e}")
+        log.error(f"  Error upsert CMG: {_redactar(e)}")
     return nuevos, actualizados
 
 
@@ -785,7 +951,7 @@ def upsert_cmg_online_min(registros: list[dict]) -> tuple[int, int]:
                     else:                actualizados += 1
             conn.commit()
     except Exception as e:
-        log.error(f"  Error upsert CMG online min: {e}")
+        log.error(f"  Error upsert CMG online min: {_redactar(e)}")
     return nuevos, actualizados
 
 
@@ -800,7 +966,7 @@ def adquirir_cmg_online(start: str, end: str,
     try:
         regs_min = fetch_cmg_online_api(start, end, ultimas_paginas)
     except Exception as e:
-        log.error(f"  CMG online API falló: {e}")
+        log.error(f"  CMG online API falló: {_redactar(e)}")
 
     if not regs_min:
         log.warning("  CMG online API sin datos → fallback al feed S3")
@@ -828,17 +994,24 @@ def fetch_cmg_programado(start: str, end: str, fuente: str = "CEN_PID") -> list[
     mejor: dict[tuple, dict] = {}   # (barra, fecha_hora) → registro
     page  = 1   # 1-indexado (page=0 devuelve 502)
     limit = 2000
+    tag = f"CMG-PROG {fuente}"
+    tp_visto: int | None = None
+    paginas_ok = 0
     try:
         while True:
-            r = _get_with_retry(
+            data, tp_visto = _pedir_pagina(
                 f"{API_BASE_SIP}/{endpoint}/v4/findByDate",
-                params={"user_key": CEN_USER_KEY, "startDate": start,
-                        "endDate": end, "page": page, "limit": limit},
+                {"user_key": CEN_USER_KEY, "startDate": start,
+                 "endDate": end, "page": page, "limit": limit},
+                tag, tp_visto,
             )
-            body = r.json()
-            data = body.get("data", [])
             if not data:
-                break
+                if not _seguir_pese_a_vacia(tag, page, tp_visto):
+                    break
+                page += 1
+                continue
+
+            paginas_ok += 1
 
             for rec in data:
                 llave = rec.get("llave_cmg")
@@ -860,15 +1033,15 @@ def fetch_cmg_programado(start: str, end: str, fuente: str = "CEN_PID") -> list[
                         "fuente":         fuente,
                     }
 
-            total_pages = body.get("totalPages")
-            if total_pages is None or page >= int(total_pages):
+            if tp_visto is None or page >= tp_visto:
                 break
             page += 1
 
         log.info(f"  CMG programado {fuente} ({start}→{end}): {len(mejor)} registros "
                  f"({len(CMG_PROG_BARRAS)} barras)")
     except Exception as e:
-        log.error(f"  Error CMG programado {fuente}: {e}")
+        log.error(f"  Error CMG programado {fuente}: {_redactar(e)}")
+    _avisar_parcial(tag, paginas_ok, tp_visto)
     return list(mejor.values())
 
 
@@ -895,7 +1068,7 @@ def upsert_cmg_programado(registros: list[dict]) -> tuple[int, int]:
                     else:                actualizados += 1
             conn.commit()
     except Exception as e:
-        log.error(f"  Error upsert CMG programado: {e}")
+        log.error(f"  Error upsert CMG programado: {_redactar(e)}")
     return nuevos, actualizados
 
 
@@ -920,17 +1093,23 @@ def fetch_cmg_real(start: str, end: str) -> list[dict]:
         # Se usa limit=50 y se pagina (al contrario del PCP/PID que usan limit=2000).
         limit = 50
         antes = len(registros)
+        tag = f"CMG-REAL {barra}"
+        tp_visto: int | None = None
+        paginas_ok = 0
         try:
             while True:
-                r = _get_with_retry(
+                data, tp_visto = _pedir_pagina(
                     f"{API_BASE_SIP}/costo-marginal-real/v4/findByDate",
-                    params={"user_key": CEN_USER_KEY, "startDate": start, "endDate": end,
-                            "bar_transf": barra, "page": page, "limit": limit},
+                    {"user_key": CEN_USER_KEY, "startDate": start, "endDate": end,
+                     "bar_transf": barra, "page": page, "limit": limit},
+                    tag, tp_visto,
                 )
-                body = r.json()
-                data = body.get("data", [])
                 if not data:
-                    break
+                    if not _seguir_pese_a_vacia(tag, page, tp_visto):
+                        break
+                    page += 1
+                    continue
+                paginas_ok += 1
                 for rec in data:
                     if int(rec.get("min") or 0) != 0:
                         continue   # solo hora en punto
@@ -944,13 +1123,13 @@ def fetch_cmg_real(start: str, end: str) -> list[dict]:
                         "cmg_clp_kwh":  float(rec.get("cmg_clp_kwh_") or 0.0),
                         "version":      rec.get("version"),
                     })
-                total_pages = body.get("totalPages")
-                if total_pages is None or page >= int(total_pages):
+                if tp_visto is None or page >= tp_visto:
                     break
                 page += 1
             log.info(f"  CMG real {barra} ({start}→{end}): {len(registros)-antes} registros")
         except Exception as e:
-            log.error(f"  Error CMG real {barra}: {e}")
+            log.error(f"  Error CMG real {barra}: {_redactar(e)}")
+        _avisar_parcial(tag, paginas_ok, tp_visto)
         time.sleep(0.5)
     return registros
 
@@ -978,7 +1157,7 @@ def upsert_cmg_real(registros: list[dict]) -> tuple[int, int]:
                     else:                actualizados += 1
             conn.commit()
     except Exception as e:
-        log.error(f"  Error upsert CMG real: {e}")
+        log.error(f"  Error upsert CMG real: {_redactar(e)}")
     return nuevos, actualizados
 
 
@@ -993,17 +1172,22 @@ def fetch_pronostico_demanda(start: str, end: str) -> list[dict]:
     registros = []
     page  = 0
     limit = 2000
+    tp_visto: int | None = None
+    paginas_ok = 0
     try:
         while True:
-            r = _get_with_retry(
+            data, tp_visto = _pedir_pagina(
                 f"{API_BASE_SIP}/pronosticos-demanda-corto-plazo/v4/findByDate",
-                params={"user_key": CEN_USER_KEY, "startDate": start,
-                        "endDate": end, "page": page, "limit": limit},
+                {"user_key": CEN_USER_KEY, "startDate": start,
+                 "endDate": end, "page": page, "limit": limit},
+                "PRON-DEM", tp_visto, pagina_1based=page + 1,
             )
-            body = r.json()
-            data = body.get("data", [])
             if not data:
-                break
+                if not _seguir_pese_a_vacia("PRON-DEM", page + 1, tp_visto):
+                    break
+                page += 1
+                continue
+            paginas_ok += 1
             for rec in data:
                 if rec.get("barra") not in BARRAS_DEMANDA:
                     continue
@@ -1019,13 +1203,13 @@ def fetch_pronostico_demanda(start: str, end: str) -> list[dict]:
                     "hora":         hora,
                     "date_control": rec.get("date_control"),
                 })
-            total_pages = body.get("totalPages")
-            if total_pages is None or page + 1 >= int(total_pages):
+            if tp_visto is None or page + 1 >= tp_visto:
                 break
             page += 1
             time.sleep(0.15)
     except Exception as e:
-        log.error(f"  Error pronóstico demanda: {e}")
+        log.error(f"  Error pronóstico demanda: {_redactar(e)}")
+    _avisar_parcial("PRON-DEM", paginas_ok, tp_visto)
     log.info(f"  Pronóstico demanda ({start}→{end}): {len(registros)} registros "
              f"({', '.join(BARRAS_DEMANDA)})")
     return registros
@@ -1055,7 +1239,7 @@ def upsert_pronostico_demanda(registros: list[dict]) -> tuple[int, int]:
                     else:                actualizados += 1
             conn.commit()
     except Exception as e:
-        log.error(f"  Error upsert pronóstico demanda: {e}")
+        log.error(f"  Error upsert pronóstico demanda: {_redactar(e)}")
     return nuevos, actualizados
 
 
@@ -1112,7 +1296,7 @@ def fetch_sscc(start: str, end: str | None = None) -> list[dict]:
 
         log.info(f"  SSCC ANG/CCR ({start}→{end}): {len(registros)} registros")
     except Exception as e:
-        log.error(f"  Error SSCC: {e}")
+        log.error(f"  Error SSCC: {_redactar(e)}")
 
     return registros
 
@@ -1151,7 +1335,7 @@ def upsert_sscc(registros: list[dict]) -> tuple[int, int]:
                     else:                actualizados += 1
             conn.commit()
     except Exception as e:
-        log.error(f"  Error upsert SSCC: {e}")
+        log.error(f"  Error upsert SSCC: {_redactar(e)}")
     return nuevos, actualizados
 
 
@@ -1172,17 +1356,23 @@ def fetch_instrucciones_cmg(start: str, end: str | None = None) -> list[dict]:
     registros = []
     page  = 1   # 1-indexado
     limit = 100
+    tp_visto: int | None = None
+    paginas_ok = 0
     try:
         while True:
-            r = _get_with_retry(
+            data, tp_visto = _pedir_pagina(
                 f"{API_BASE_SIP}/instrucciones-operacionales-cmg/v4/findByDate",
-                params={"user_key": CEN_USER_KEY, "startDate": start,
-                        "endDate": end, "page": page, "limit": limit},
+                {"user_key": CEN_USER_KEY, "startDate": start,
+                 "endDate": end, "page": page, "limit": limit},
+                "INSTR-CMG", tp_visto,
             )
-            body = r.json()
-            data = body.get("data", [])
             if not data:
-                break
+                if not _seguir_pese_a_vacia("INSTR-CMG", page, tp_visto):
+                    break
+                page += 1
+                continue
+
+            paginas_ok += 1
 
             for rec in data:
                 central = (rec.get("central") or "").upper()
@@ -1210,14 +1400,14 @@ def fetch_instrucciones_cmg(start: str, end: str | None = None) -> list[dict]:
                     "control_tension":  rec.get("control_tension"),
                 })
 
-            total_pages = body.get("totalPages")
-            if total_pages is None or page >= int(total_pages):
+            if tp_visto is None or page >= tp_visto:
                 break
             page += 1
 
         log.info(f"  Instrucciones CMG ({start}→{end}): {len(registros)} registros ANG/CCR")
     except Exception as e:
-        log.error(f"  Error instrucciones CMG: {e}")
+        log.error(f"  Error instrucciones CMG: {_redactar(e)}")
+    _avisar_parcial("INSTR-CMG", paginas_ok, tp_visto)
     return registros
 
 
@@ -1254,7 +1444,7 @@ def upsert_instrucciones_cmg(registros: list[dict]) -> tuple[int, int]:
                     else:                actualizados += 1
             conn.commit()
     except Exception as e:
-        log.error(f"  Error upsert instrucciones CMG: {e}")
+        log.error(f"  Error upsert instrucciones CMG: {_redactar(e)}")
     return nuevos, actualizados
 
 
@@ -1273,19 +1463,26 @@ def fetch_limitaciones(start: str, end: str) -> list[dict]:
     page = 1
     base_url = f"{API_BASE_SIP}/limitaciones-transmision/v4/findByDate"
 
+    tp_visto: int | None = None
+    paginas_ok = 0
+
     try:
         while True:
-            r = _get_with_retry(
+            data, tp_visto = _pedir_pagina(
                 base_url,
-                params={"user_key": CEN_USER_KEY, "startDate": start,
-                        "endDate": end, "page": page, "limit": 100},
+                {"user_key": CEN_USER_KEY, "startDate": start,
+                 "endDate": end, "page": page, "limit": 100},
+                "LIMITACIONES", tp_visto,
             )
-            body  = r.json()
-            data  = body.get("data", [])
-            total = body.get("totalPages", 1)
+            total = tp_visto if tp_visto is not None else 1
 
             if not data:
-                break
+                if not _seguir_pese_a_vacia("LIMITACIONES", page, tp_visto):
+                    break
+                page += 1
+                continue
+
+            paginas_ok += 1
 
             for rec in data:
                 id_c      = rec.get("id_central")
@@ -1328,8 +1525,9 @@ def fetch_limitaciones(start: str, end: str) -> list[dict]:
 
         log.info(f"  Limitaciones ANG/CCR ({start}→{end}): {len(registros)} registros")
     except Exception as e:
-        log.error(f"  Error limitaciones: {e}")
+        log.error(f"  Error limitaciones: {_redactar(e)}")
 
+    _avisar_parcial("LIMITACIONES", paginas_ok, tp_visto)
     return registros
 
 
@@ -1367,7 +1565,7 @@ def upsert_limitaciones(registros: list[dict]) -> tuple[int, int]:
                     else:                actualizados += 1
             conn.commit()
     except Exception as e:
-        log.error(f"  Error upsert limitaciones: {e}")
+        log.error(f"  Error upsert limitaciones: {_redactar(e)}")
     return nuevos, actualizados
 
 
@@ -1389,19 +1587,26 @@ def fetch_solicitudes(start: str, end: str) -> list[dict]:
     page = 1
     base_url = f"{API_BASE_SIP}/solicitudes-trabajo/v4/findByDate"
 
+    tp_visto: int | None = None
+    paginas_ok = 0
+
     try:
         while True:
-            r = _get_with_retry(
+            data, tp_visto = _pedir_pagina(
                 base_url,
-                params={"user_key": CEN_USER_KEY, "startDate": start,
-                        "endDate": end, "page": page, "limit": 100},
+                {"user_key": CEN_USER_KEY, "startDate": start,
+                 "endDate": end, "page": page, "limit": 100},
+                "SOLICITUDES", tp_visto,
             )
-            body  = r.json()
-            data  = body.get("data", [])
-            total = body.get("totalPages", 1)
+            total = tp_visto if tp_visto is not None else 1
 
             if not data:
-                break
+                if not _seguir_pese_a_vacia("SOLICITUDES", page, tp_visto):
+                    break
+                page += 1
+                continue
+
+            paginas_ok += 1
 
             for rec in data:
                 empresa = (rec.get("empresa_nombre") or "").strip()
@@ -1435,8 +1640,9 @@ def fetch_solicitudes(start: str, end: str) -> list[dict]:
             page += 1
 
     except Exception as e:
-        log.error(f"  Error solicitudes: {e}")
+        log.error(f"  Error solicitudes: {_redactar(e)}")
 
+    _avisar_parcial("SOLICITUDES", paginas_ok, tp_visto)
     log.info(f"  Solicitudes AES/ANG/CCR ({start}→{end}): {len(registros)} registros")
     return registros
 
@@ -1473,7 +1679,7 @@ def upsert_solicitudes(registros: list[dict]) -> tuple[int, int]:
                     else:                actualizados += 1
             conn.commit()
     except Exception as e:
-        log.error(f"  Error upsert solicitudes: {e}")
+        log.error(f"  Error upsert solicitudes: {_redactar(e)}")
     return nuevos, actualizados
 
 
@@ -1498,17 +1704,22 @@ def fetch_mantenimiento_mayor(start: str, end: str) -> list[dict]:
         log.warning("  CEN_USER_KEY no configurada — saltando mantenimiento mayor")
         return []
     registros, page = [], 1
+    tp_visto: int | None = None
+    paginas_ok = 0
     try:
         while True:
-            r = _get_with_retry(
+            data, tp_visto = _pedir_pagina(
                 f"{API_BASE_SIP}/programas-mantenimiento-mayor/v4/findByDate",
-                params={"user_key": CEN_USER_KEY, "startDate": start,
-                        "endDate": end, "page": page, "limit": 500},
+                {"user_key": CEN_USER_KEY, "startDate": start,
+                 "endDate": end, "page": page, "limit": 500},
+                "MANT-MAYOR", tp_visto,
             )
-            body = r.json()
-            data = body.get("data", [])
             if not data:
-                break
+                if not _seguir_pese_a_vacia("MANT-MAYOR", page, tp_visto):
+                    break
+                page += 1
+                continue
+            paginas_ok += 1
             for rec in data:
                 texto = " ".join(str(rec.get(c) or "") for c in
                                  ("nombre_instalacion", "nombre_sub_instalacion",
@@ -1534,14 +1745,14 @@ def fetch_mantenimiento_mayor(start: str, end: str) -> list[dict]:
                     "fecha_termino_real":     rec.get("fecha_termino_real_programa"),
                     "fecha_dato":             rec.get("date"),
                 })
-            total_pages = body.get("totalPages")
-            if total_pages is None or page >= int(total_pages):
+            if tp_visto is None or page >= tp_visto:
                 break
             page += 1
             time.sleep(0.15)
         log.info(f"  Mantenimiento mayor ({start}→{end}): {len(registros)} programas CTM")
     except Exception as e:
-        log.error(f"  Error mantenimiento mayor: {e}")
+        log.error(f"  Error mantenimiento mayor: {_redactar(e)}")
+    _avisar_parcial("MANT-MAYOR", paginas_ok, tp_visto)
     return registros
 
 
@@ -1580,7 +1791,7 @@ def upsert_mantenimiento_mayor(registros: list[dict]) -> tuple[int, int]:
                     else:                actualizados += 1
             conn.commit()
     except Exception as e:
-        log.error(f"  Error upsert mantenimiento mayor: {e}")
+        log.error(f"  Error upsert mantenimiento mayor: {_redactar(e)}")
     return nuevos, actualizados
 
 
@@ -1593,17 +1804,22 @@ def fetch_demanda_neta(start: str, end: str) -> list[dict]:
     se usa como feature del forecast de precios en ml.py.
     """
     registros, page = [], 1
+    tp_visto: int | None = None
+    paginas_ok = 0
     try:
         while True:
-            r = _get_with_retry(
+            data, tp_visto = _pedir_pagina(
                 f"{API_BASE_SIP}/demanda-neta/v4/findByDate",
-                params={"user_key": CEN_USER_KEY, "startDate": start,
-                        "endDate": end, "page": page, "limit": 1000},
+                {"user_key": CEN_USER_KEY, "startDate": start,
+                 "endDate": end, "page": page, "limit": 1000},
+                "DEMANDA-NETA", tp_visto,
             )
-            body = r.json()
-            data = body.get("data", [])
             if not data:
-                break
+                if not _seguir_pese_a_vacia("DEMANDA-NETA", page, tp_visto):
+                    break
+                page += 1
+                continue
+            paginas_ok += 1
             for rec in data:
                 fh = (rec.get("fecha_hora") or "").replace("T", " ")[:19]
                 if not fh:
@@ -1616,14 +1832,14 @@ def fetch_demanda_neta(start: str, end: str) -> list[dict]:
                     "cons_propio_mwh":  rec.get("cons_propio_mwh"),
                     "demanda_neta_mwh": rec.get("demanda_neta_mwh"),
                 })
-            total_pages = body.get("totalPages")
-            if total_pages is None or page >= int(total_pages):
+            if tp_visto is None or page >= tp_visto:
                 break
             page += 1
             time.sleep(0.15)
         log.info(f"  Demanda neta ({start}→{end}): {len(registros)} registros")
     except Exception as e:
-        log.error(f"  Error demanda neta: {e}")
+        log.error(f"  Error demanda neta: {_redactar(e)}")
+    _avisar_parcial("DEMANDA-NETA", paginas_ok, tp_visto)
     return registros
 
 
@@ -1653,7 +1869,7 @@ def upsert_demanda_neta(registros: list[dict]) -> tuple[int, int]:
                     else:                actualizados += 1
             conn.commit()
     except Exception as e:
-        log.error(f"  Error upsert demanda neta: {e}")
+        log.error(f"  Error upsert demanda neta: {_redactar(e)}")
     return nuevos, actualizados
 
 
@@ -1677,7 +1893,7 @@ def fetch_mix_diario(fecha: str) -> list[dict]:
         log.info(f"  Mix diario ({fecha}): {len(registros)} tecnologías")
         return registros
     except Exception as e:
-        log.error(f"  Error mix diario {fecha}: {e}")
+        log.error(f"  Error mix diario {fecha}: {_redactar(e)}")
         return []
 
 
@@ -1700,7 +1916,7 @@ def upsert_mix_diario(registros: list[dict]) -> tuple[int, int]:
                     else:                actualizados += 1
             conn.commit()
     except Exception as e:
-        log.error(f"  Error upsert mix diario: {e}")
+        log.error(f"  Error upsert mix diario: {_redactar(e)}")
     return nuevos, actualizados
 
 
@@ -1719,17 +1935,23 @@ def fetch_desempeno_sscc(fecha: str) -> list[dict]:
     for tipo, ep in (("CPF", "indicador-desempeno-cpf"),
                      ("CSF", "indicador-desempeno-csf")):
         page = 1
+        tag = f"DESEMP-{tipo}"
+        tp_visto: int | None = None
+        paginas_ok = 0
         try:
             while True:
-                r = _get_with_retry(
+                data, tp_visto = _pedir_pagina(
                     f"{API_BASE_SIP}/{ep}/v4/findByDate",
-                    params={"user_key": CEN_USER_KEY, "startDate": fecha,
-                            "endDate": fecha, "page": page, "limit": 1000},
+                    {"user_key": CEN_USER_KEY, "startDate": fecha,
+                     "endDate": fecha, "page": page, "limit": 1000},
+                    tag, tp_visto,
                 )
-                body = r.json()
-                data = body.get("data", [])
                 if not data:
-                    break
+                    if not _seguir_pese_a_vacia(tag, page, tp_visto):
+                        break
+                    page += 1
+                    continue
+                paginas_ok += 1
                 for rec in data:
                     unidad = ID_UNIDAD_MAP.get(rec.get("id_unidad"))
                     if unidad is None:
@@ -1755,13 +1977,13 @@ def fetch_desempeno_sscc(fecha: str) -> list[dict]:
                         "factor":     rec.get(f"factor_desempeno_{sufijo}"),
                         "detalle":    str(detalle) if detalle is not None else None,
                     })
-                total_pages = body.get("totalPages")
-                if total_pages is None or page >= int(total_pages):
+                if tp_visto is None or page >= tp_visto:
                     break
                 page += 1
                 time.sleep(0.15)
         except Exception as e:
-            log.error(f"  Error desempeño {tipo} {fecha}: {e}")
+            log.error(f"  Error desempeño {tipo} {fecha}: {_redactar(e)}")
+        _avisar_parcial(tag, paginas_ok, tp_visto)
         time.sleep(0.3)
     if registros:
         log.info(f"  Desempeño SSCC ({fecha}): {len(registros)} registros ANG/CCR")
@@ -1793,7 +2015,7 @@ def upsert_desempeno_sscc(registros: list[dict]) -> tuple[int, int]:
                     else:                actualizados += 1
             conn.commit()
     except Exception as e:
-        log.error(f"  Error upsert desempeño SSCC: {e}")
+        log.error(f"  Error upsert desempeño SSCC: {_redactar(e)}")
     return nuevos, actualizados
 
 
@@ -1819,7 +2041,7 @@ def dias_faltantes_desempeno(dias_atras: int = 150, margen: int = 20,
                     "WHERE fecha_hora >= %s", (ini.strftime("%Y-%m-%d"),))
                 presentes = {r[0] for r in cur.fetchall()}
     except Exception as e:
-        log.warning(f"  No se pudo leer días presentes de desempeno_sscc: {e}")
+        log.warning(f"  No se pudo leer días presentes de desempeno_sscc: {_redactar(e)}")
     faltantes = []
     d = fin
     while d >= ini and len(faltantes) < cap:
@@ -1897,6 +2119,8 @@ def fetch_sscc_programado_pcp(fecha: str) -> list[dict]:
                                       timeout=90).json()
         total_pages = int(primera.get("totalPages") or 1)
         _consumir(primera.get("data", []))
+        paginas_ok = 1
+        paginas_vacias = 0
         for pg in range(2, total_pages + 1):
             try:
                 body = _get_with_retry(url, {"user_key": CEN_USER_KEY, "startDate": fecha,
@@ -1909,11 +2133,19 @@ def fetch_sscc_programado_pcp(fecha: str) -> list[dict]:
                 continue
             data = body.get("data", [])
             if not data:
-                break
+                # Una página vacía es un hueco del feed, NO el fin: cortar acá
+                # abandonaba el resto de las ~121 páginas del día en silencio.
+                log.warning(f"  [SSCC-PROG] Página {pg}/{total_pages} vacía — sigo.")
+                paginas_vacias += 1
+                continue
             _consumir(data)
+            paginas_ok += 1
             time.sleep(0.15)
         log.info(f"  SSCC programado PCP ({fecha}): {len(mejores)} filas ANG/CCR "
                  f"de {total_pages} páginas")
+        if paginas_vacias:
+            log.warning(f"  [SSCC-PROG] AVISO: {paginas_vacias} páginas vacías de "
+                        f"{total_pages} — puede faltar información del día.")
     except Exception as e:
         log.error(f"  Error SSCC programado {fecha}: {e.__class__.__name__}")
 
@@ -1946,7 +2178,7 @@ def upsert_sscc_programado(registros: list[dict]) -> tuple[int, int]:
                     else:                actualizados += 1
             conn.commit()
     except Exception as e:
-        log.error(f"  Error upsert SSCC programado: {e}")
+        log.error(f"  Error upsert SSCC programado: {_redactar(e)}")
     return nuevos, actualizados
 
 
@@ -1975,17 +2207,22 @@ def fetch_unidades_generadoras(fecha: str) -> list[dict]:
         log.warning("  CEN_USER_KEY no configurada — saltando unidades generadoras")
         return []
     registros, page = [], 1
+    tp_visto: int | None = None
+    paginas_ok = 0
     try:
         while True:
-            r = _get_with_retry(
+            data, tp_visto = _pedir_pagina(
                 f"{API_BASE_SIP}/unidades-generadoras/v4/findByDate",
-                params={"user_key": CEN_USER_KEY, "startDate": fecha,
-                        "endDate": fecha, "page": page, "limit": 300},
+                {"user_key": CEN_USER_KEY, "startDate": fecha,
+                 "endDate": fecha, "page": page, "limit": 300},
+                "UNIDADES", tp_visto,
             )
-            body = r.json()
-            data = body.get("data", [])
             if not data:
-                break
+                if not _seguir_pese_a_vacia("UNIDADES", page, tp_visto):
+                    break
+                page += 1
+                continue
+            paginas_ok += 1
             for rec in data:
                 unidad = IDS_UNIDAD_MAESTRO.get(rec.get("id_unidad"))
                 if unidad is None:
@@ -2009,8 +2246,7 @@ def fetch_unidades_generadoras(fecha: str) -> list[dict]:
                     "factor_pot_nominal":  _num_cl(rec.get("factor_pot_nominal")),
                     "fecha_dato":          fecha,
                 })
-            total_pages = body.get("totalPages")
-            if total_pages is None or page >= int(total_pages):
+            if tp_visto is None or page >= tp_visto:
                 break
             page += 1
             time.sleep(0.15)
@@ -2018,7 +2254,8 @@ def fetch_unidades_generadoras(fecha: str) -> list[dict]:
         registros = list({r["unidad"]: r for r in registros}.values())
         log.info(f"  Unidades generadoras ({fecha}): {len(registros)} fichas ANG/CCR")
     except Exception as e:
-        log.error(f"  Error unidades generadoras: {e}")
+        log.error(f"  Error unidades generadoras: {_redactar(e)}")
+    _avisar_parcial("UNIDADES", paginas_ok, tp_visto)
     return registros
 
 
@@ -2064,8 +2301,65 @@ def upsert_unidades_maestro(registros: list[dict]) -> tuple[int, int]:
                     else:                actualizados += 1
             conn.commit()
     except Exception as e:
-        log.error(f"  Error upsert unidades maestro: {e}")
+        log.error(f"  Error upsert unidades maestro: {_redactar(e)}")
     return nuevos, actualizados
+
+
+class ResumenCorrida:
+    """Contabiliza los pasos de una corrida para decidir el código de salida.
+
+    Por qué existe: los entrypoints atrapan la excepción de cada paso y siguen,
+    así que una corrida que no adquirió NADA terminaba en `exit 0` y GitHub la
+    marcaba VERDE. Un job verde sin datos es peor que uno rojo: oculta la caída.
+    En Pulsar ese patrón le costó a este mismo proyecto ~19 h de datos sin que
+    nadie lo notara (su regla #36).
+
+    Criterio deliberado: se falla cuando NINGÚN paso funcionó (la fuente está
+    caída o la credencial es inválida). Un fallo parcial deja la corrida verde
+    pero grita en el log — porque un monitor que se pone rojo seguido entrena a
+    ignorarlo, que es exactamente cómo se pierde el próximo fallo real.
+    """
+
+    def __init__(self, nombre: str):
+        self.nombre = nombre
+        self.ok: list[str] = []
+        self.fallos: list[tuple[str, str]] = []
+
+    def paso_ok(self, paso: str) -> None:
+        self.ok.append(paso)
+
+    def paso_fallo(self, paso: str, err) -> None:
+        self.fallos.append((paso, _redactar(err)))
+
+    def cerrar(self) -> int:
+        """Loguea el resumen y devuelve el código de salida (0 ok / 1 fallo)."""
+        log.info(f"\n  Resumen {self.nombre}: {len(self.ok)} pasos OK, "
+                 f"{len(self.fallos)} con error")
+        for paso, err in self.fallos:
+            log.error(f"    ✗ {paso}: {err}")
+
+        if self.fallos and not self.ok:
+            log.error(f"  ❌ {self.nombre}: NINGÚN paso se completó — la corrida "
+                      f"no adquirió datos. Saliendo con error.")
+            return 1
+        if self.fallos:
+            log.warning(f"  ⚠ {self.nombre}: corrida PARCIAL — "
+                        f"{len(self.fallos)} de {len(self.ok) + len(self.fallos)} "
+                        f"pasos fallaron. Revisar el log.")
+        return 0
+
+
+def abortar_si_cen_caido(nombre: str) -> None:
+    """Sonda la API del CEN y termina en rojo si está caída.
+
+    Una corrida contra un host caído gasta el timeout completo del job en
+    reintentos condenados sin traer un dato. Mejor abortar en un segundo.
+    """
+    vivo, motivo = preflight_cen()
+    if not vivo:
+        log.error(f"  ❌ {nombre}: preflight falló — {motivo}")
+        sys.exit(1)
+    log.info("  Preflight CEN: OK")
 
 
 def log_adquisicion(endpoint, fecha, nuevos, dupes, duracion_ms, error=None):
@@ -2081,14 +2375,14 @@ def log_adquisicion(endpoint, fecha, nuevos, dupes, duracion_ms, error=None):
                 cur.execute(sql, (endpoint, fecha, nuevos, dupes, duracion_ms, error))
             conn.commit()
     except Exception as e:
-        log.warning(f"  No se pudo registrar log: {e}")
+        log.warning(f"  No se pudo registrar log: {_redactar(e)}")
 
 
 # ══════════════════════════════════════════════════════════════
 # EJECUCIÓN PRINCIPAL
 # ══════════════════════════════════════════════════════════════
 
-def run():
+def run() -> int:
     log.info("═" * 58)
     log.info("  Adquisición CTM Mejillones — API CEN + CMG S3")
     log.info("═" * 58)
@@ -2097,6 +2391,9 @@ def run():
         log.error("❌  CEN_USER_KEY no configurada"); sys.exit(1)
     if not DATABASE_URL:
         log.error("❌  DATABASE_URL no configurada"); sys.exit(1)
+
+    abortar_si_cen_caido("Horaria")
+    resumen = ResumenCorrida("Horaria")
 
     # Usar hora chilena para evitar desfase UTC en GitHub Actions
     hoy    = datetime.now(TZ_CHILE).date()
@@ -2115,8 +2412,10 @@ def run():
             regs          = fetch_generacion_real(fecha, fecha)
             nuevos, dupes = upsert_generacion_real(regs)
             log.info(f"  ✅ {nuevos} nuevos, {dupes} duplicados")
+            resumen.paso_ok("gen-real")
         except Exception as e:
-            err_str = str(e); log.error(f"  ❌ {e}"); nuevos = dupes = 0
+            err_str = _redactar(e); log.error(f"  ❌ {_redactar(e)}"); nuevos = dupes = 0
+            resumen.paso_fallo("gen-real", e)
         log_adquisicion("generacion_real", fecha, nuevos, dupes,
                         int((time.time() - t0) * 1000), err_str)
 
@@ -2135,8 +2434,10 @@ def run():
         try:
             n_min, n_hora = adquirir_cmg_online(fecha, fecha)
             log.info(f"  ✅ CMG: {n_min} puntos de 15 min, {n_hora} filas horarias")
+            resumen.paso_ok("cmg-online")
         except Exception as e:
-            err_str = str(e); log.error(f"  ❌ CMG: {e}"); n_min = n_hora = 0
+            err_str = _redactar(e); log.error(f"  ❌ CMG: {_redactar(e)}"); n_min = n_hora = 0
+            resumen.paso_fallo("cmg-online", e)
         log_adquisicion("cmg_online_min", fecha, n_min, n_hora,
                         int((time.time() - t0) * 1000), err_str)
 
@@ -2152,8 +2453,10 @@ def run():
         regs                 = fetch_generacion_programada(pcp_start, pcp_end)
         nuevos, actualizados = upsert_generacion_programada(regs)
         log.info(f"  ✅ PCP: {nuevos} nuevos, {actualizados} actualizados")
+        resumen.paso_ok("pcp")
     except Exception as e:
-        err_str = str(e); log.error(f"  ❌ PCP: {e}"); nuevos = actualizados = 0
+        err_str = _redactar(e); log.error(f"  ❌ PCP: {_redactar(e)}"); nuevos = actualizados = 0
+        resumen.paso_fallo("pcp", e)
     log_adquisicion("generacion_programada_pcp", pcp_end, nuevos, actualizados,
                     int((time.time() - t0) * 1000), err_str)
 
@@ -2169,8 +2472,10 @@ def run():
         regs                 = fetch_generacion_programada_pid(pid_start, pid_end)
         nuevos, actualizados = upsert_generacion_programada(regs)
         log.info(f"  ✅ PID: {nuevos} nuevos, {actualizados} actualizados")
+        resumen.paso_ok("pid")
     except Exception as e:
-        err_str = str(e); log.error(f"  ❌ PID: {e}"); nuevos = actualizados = 0
+        err_str = _redactar(e); log.error(f"  ❌ PID: {_redactar(e)}"); nuevos = actualizados = 0
+        resumen.paso_fallo("pid", e)
     log_adquisicion("generacion_programada_pid", pid_end, nuevos, actualizados,
                     int((time.time() - t0) * 1000), err_str)
 
@@ -2186,8 +2491,10 @@ def run():
         regs_cmgp            = fetch_cmg_programado(cmgp_start, cmgp_end)
         nuevos, actualizados = upsert_cmg_programado(regs_cmgp)
         log.info(f"  ✅ CMG programado: {nuevos} nuevos, {actualizados} actualizados")
+        resumen.paso_ok("cmg-programado")
     except Exception as e:
-        err_str = str(e); log.error(f"  ❌ CMG programado: {e}"); nuevos = actualizados = 0
+        err_str = _redactar(e); log.error(f"  ❌ CMG programado: {_redactar(e)}"); nuevos = actualizados = 0
+        resumen.paso_fallo("cmg-programado", e)
     log_adquisicion("cmg_programado_pid", cmgp_end, nuevos, actualizados,
                     int((time.time() - t0) * 1000), err_str)
 
@@ -2197,8 +2504,9 @@ def run():
     #   · CMG real · Pronóstico demanda · Solicitudes · Unidades maestro (lentos, cambian poco)
     #     → Adquisicion_diaria.py (1×/día). El horario conserva su núcleo: PCP/PID/CMG-programado.
 
-    log.info(f"\n  Fin adquisición\n")
+    log.info("\n  Fin adquisición\n")
+    return resumen.cerrar()
 
 
 if __name__ == "__main__":
-    run()
+    sys.exit(run())

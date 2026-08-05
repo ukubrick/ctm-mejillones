@@ -26,7 +26,16 @@ jobs:
           cache: "pip"
 
       - name: Instalar dependencias
-        run: pip install -r requirements.txt
+        run: pip install -r requirements-adq.txt
+
+      # Los tests del paginado corren en seco (sin red, sin DB) en ~0,1 s. Viven
+      # DENTRO de este job y no en un workflow por push a propósito: el diario ya
+      # dura decenas de minutos, así que el costo es nulo. `continue-on-error`
+      # porque un test rojo no debe impedir la adquisición del día — el objetivo
+      # es que quede gritando en el log.
+      - name: Tests del paginado SIP
+        continue-on-error: true
+        run: python3 -m unittest discover tests -v || echo "::warning::fallaron tests del paginado"
 
       - name: Ejecutar Adquisicion_diaria.py
         env:
