@@ -28,7 +28,7 @@ jobs:
           cache: "pip"
 
       - name: Instalar dependencias
-        run: pip install -r requirements.txt
+        run: pip install -r requirements-adq.txt
 
       - name: Adquisición operaciones (SSCC + Despacho CMG + Limitaciones)
         env:

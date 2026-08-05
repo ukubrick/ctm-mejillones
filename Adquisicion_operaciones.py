@@ -39,13 +39,19 @@ from Adquisicion import (
     fetch_limitaciones,
     upsert_limitaciones,
     log_adquisicion,
+    ResumenCorrida,
+    abortar_si_cen_caido,
+    _redactar,
 )
 
 
-def run():
+def run() -> int:
     log.info("═" * 58)
     log.info("  Adquisición OPERACIONES (SSCC + Despacho CMG + Limitaciones)")
     log.info("═" * 58)
+
+    abortar_si_cen_caido("Operaciones")
+    resumen = ResumenCorrida("Operaciones")
 
     hoy    = datetime.now(TZ_CHILE).date()
     fechas = [(hoy - timedelta(days=d)).strftime("%Y-%m-%d")
@@ -59,8 +65,10 @@ def run():
         regs_sscc            = fetch_sscc(fechas[0], fechas[-1])
         nuevos, actualizados = upsert_sscc(regs_sscc)
         log.info(f"  ✅ SSCC: {nuevos} nuevos, {actualizados} actualizados")
+        resumen.paso_ok("sscc")
     except Exception as e:
-        err_str = str(e); log.error(f"  ❌ SSCC: {e}"); nuevos = actualizados = 0
+        err_str = _redactar(e); log.error(f"  ❌ SSCC: {err_str}"); nuevos = actualizados = 0
+        resumen.paso_fallo("sscc", e)
     log_adquisicion("sscc_instrucciones", fechas[-1], nuevos, actualizados,
                     int((time.time() - t0) * 1000), err_str)
 
@@ -72,8 +80,10 @@ def run():
         regs_icmg            = fetch_instrucciones_cmg(fechas[0], fechas[-1])
         nuevos, actualizados = upsert_instrucciones_cmg(regs_icmg)
         log.info(f"  ✅ Instrucciones CMG: {nuevos} nuevos, {actualizados} actualizados")
+        resumen.paso_ok("instrucciones-cmg")
     except Exception as e:
-        err_str = str(e); log.error(f"  ❌ Instrucciones CMG: {e}"); nuevos = actualizados = 0
+        err_str = _redactar(e); log.error(f"  ❌ Instrucciones CMG: {err_str}"); nuevos = actualizados = 0
+        resumen.paso_fallo("instrucciones-cmg", e)
     log_adquisicion("instrucciones_cmg", fechas[-1], nuevos, actualizados,
                     int((time.time() - t0) * 1000), err_str)
 
@@ -87,13 +97,16 @@ def run():
         regs_lim             = fetch_limitaciones(lim_start, lim_end)
         nuevos, actualizados = upsert_limitaciones(regs_lim)
         log.info(f"  ✅ Limitaciones: {nuevos} nuevos, {actualizados} actualizados")
+        resumen.paso_ok("limitaciones")
     except Exception as e:
-        err_str = str(e); log.error(f"  ❌ Limitaciones: {e}"); nuevos = actualizados = 0
+        err_str = _redactar(e); log.error(f"  ❌ Limitaciones: {err_str}"); nuevos = actualizados = 0
+        resumen.paso_fallo("limitaciones", e)
     log_adquisicion("limitaciones_transmision", lim_end, nuevos, actualizados,
                     int((time.time() - t0) * 1000), err_str)
 
-    log.info(f"\n  Fin adquisición operaciones\n")
+    log.info("\n  Fin adquisición operaciones\n")
+    return resumen.cerrar()
 
 
 if __name__ == "__main__":
-    run()
+    sys.exit(run())

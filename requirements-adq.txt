@@ -1,0 +1,17 @@
+# Dependencias de la ADQUISICIÓN (GitHub Actions), no del dashboard.
+#
+# Los scripts Adquisicion*.py, backfill_* y migracion_* solo usan requests +
+# psycopg2 + dotenv (verificado con grep sobre sus imports: no hay pandas, numpy,
+# streamlit ni nada de la stack de análisis).
+#
+# Instalar el requirements.txt completo en cada corrida traía streamlit, xgboost,
+# scikit-learn, scipy, pyarrow, matplotlib, reportlab, python-pptx y plotly — peso
+# muerto que se paga como LATENCIA antes del primer request al CEN, en cada una de
+# las ~50 corridas diarias. Para un dashboard que apunta a tiempo real ése es el
+# minuto y medio más barato de recuperar.
+#
+# Las versiones van pineadas igual que en requirements.txt: un redeploy no debe
+# traer una versión nueva sin que nadie lo decida.
+requests==2.32.3
+psycopg2-binary==2.9.10
+python-dotenv==1.0.1

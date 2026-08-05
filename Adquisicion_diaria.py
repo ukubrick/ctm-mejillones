@@ -44,7 +44,14 @@ from Adquisicion import (
     fetch_mix_diario, upsert_mix_diario,
     fetch_desempeno_sscc, upsert_desempeno_sscc, dias_faltantes_desempeno,
     log_adquisicion,
+    ResumenCorrida,
+    abortar_si_cen_caido,
+    _redactar,
 )
+
+# Resumen de la corrida en curso. Lo llena `_bloque` y lo lee `run()` para decidir
+# el código de salida: una corrida que no adquirió nada debe salir ROJA.
+_RESUMEN: ResumenCorrida | None = None
 
 
 def _bloque(nombre, tabla, fecha_log, fetch_fn, upsert_fn, *args):
@@ -55,16 +62,24 @@ def _bloque(nombre, tabla, fecha_log, fetch_fn, upsert_fn, *args):
         regs = fetch_fn(*args)
         nuevos, actualizados = upsert_fn(regs)
         log.info(f"  ✅ {nombre}: {nuevos} nuevos, {actualizados} actualizados")
+        if _RESUMEN:
+            _RESUMEN.paso_ok(tabla)
     except Exception as e:
-        err_str = str(e); log.error(f"  ❌ {nombre}: {e}"); nuevos = actualizados = 0
+        err_str = _redactar(e); log.error(f"  ❌ {nombre}: {err_str}"); nuevos = actualizados = 0
+        if _RESUMEN:
+            _RESUMEN.paso_fallo(tabla, e)
     log_adquisicion(tabla, fecha_log, nuevos, actualizados,
                     int((time.time() - t0) * 1000), err_str)
 
 
-def run():
+def run() -> int:
+    global _RESUMEN
     log.info("═" * 58)
     log.info("  Adquisición DIARIA (CMG real · demanda · solicitudes · maestro)")
     log.info("═" * 58)
+
+    abortar_si_cen_caido("Diaria")
+    _RESUMEN = ResumenCorrida("Diaria")
 
     hoy = datetime.now(TZ_CHILE).date()
 
@@ -123,18 +138,28 @@ def run():
     log.info(f"\n  ── Desempeño SSCC: {len(faltantes)} días faltantes por sondear")
     total_regs = 0
     t0 = time.time()
+    fallos_desempeno = 0
     for f_d in faltantes:
         try:
             regs = fetch_desempeno_sscc(f_d)
             n, a = upsert_desempeno_sscc(regs)
             total_regs += n + a
         except Exception as e:
-            log.error(f"  ❌ Desempeño SSCC {f_d}: {e}")
+            fallos_desempeno += 1
+            log.error(f"  ❌ Desempeño SSCC {f_d}: {_redactar(e)}")
     log_adquisicion("desempeno_sscc", hoy.strftime("%Y-%m-%d"), total_regs, 0,
                     int((time.time() - t0) * 1000), None)
+    # Los días faltantes suelen ser cero (el CEN publica con 2-3 meses de rezago),
+    # así que "sin días que sondear" NO es un fallo: solo cuenta si algo reventó.
+    if faltantes:
+        if fallos_desempeno == len(faltantes):
+            _RESUMEN.paso_fallo("desempeno_sscc", f"{fallos_desempeno} días fallaron")
+        else:
+            _RESUMEN.paso_ok("desempeno_sscc")
 
     log.info("\n  Fin adquisición diaria\n")
+    return _RESUMEN.cerrar()
 
 
 if __name__ == "__main__":
-    run()
+    sys.exit(run())

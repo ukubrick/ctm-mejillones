@@ -32,6 +32,9 @@ from Adquisicion import (
     upsert_generacion_real,
     adquirir_cmg_online,
     log_adquisicion,
+    ResumenCorrida,
+    abortar_si_cen_caido,
+    _redactar,
 )
 
 # Páginas finales del día que se bajan del CMG online en cada corrida rápida.
@@ -44,10 +47,13 @@ CMG_ULTIMAS_PAGINAS = 6
 DIAS_VENTANA_POT = 2
 
 
-def run():
+def run() -> int:
     log.info("═" * 58)
     log.info("  Adquisición POTENCIA REAL (gen-real, cada 30 min) — CTM")
     log.info("═" * 58)
+
+    abortar_si_cen_caido("Potencia")
+    resumen = ResumenCorrida("Potencia")
 
     hoy    = datetime.now(TZ_CHILE).date()
     fechas = [(hoy - timedelta(days=d)).strftime("%Y-%m-%d")
@@ -65,8 +71,10 @@ def run():
             nuevos, dupes = upsert_generacion_real(regs)
             total += nuevos
             log.info(f"  ✅ {nuevos} nuevos, {dupes} duplicados")
+            resumen.paso_ok(f"gen-real {fecha}")
         except Exception as e:
-            err_str = str(e); log.error(f"  ❌ {e}"); nuevos = dupes = 0
+            err_str = _redactar(e); log.error(f"  ❌ {err_str}"); nuevos = dupes = 0
+            resumen.paso_fallo(f"gen-real {fecha}", e)
         log_adquisicion("generacion_real", fecha, nuevos, dupes,
                         int((time.time() - t0) * 1000), err_str)
 
@@ -80,13 +88,16 @@ def run():
     try:
         n_min, n_hora = adquirir_cmg_online(hoy_str, hoy_str, CMG_ULTIMAS_PAGINAS)
         log.info(f"  ✅ CMG: {n_min} puntos de 15 min, {n_hora} filas horarias")
+        resumen.paso_ok("cmg-online")
     except Exception as e:
-        err_str = str(e); log.error(f"  ❌ CMG: {e}"); n_min = n_hora = 0
+        err_str = _redactar(e); log.error(f"  ❌ CMG: {err_str}"); n_min = n_hora = 0
+        resumen.paso_fallo("cmg-online", e)
     log_adquisicion("cmg_online_min", hoy_str, n_min, n_hora,
                     int((time.time() - t0) * 1000), err_str)
 
     log.info(f"\n  Fin — {total} registros de potencia + CMG procesados\n")
+    return resumen.cerrar()
 
 
 if __name__ == "__main__":
-    run()
+    sys.exit(run())

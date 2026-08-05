@@ -28,7 +28,7 @@ jobs:
           cache: "pip"
 
       - name: Instalar dependencias
-        run: pip install -r requirements.txt
+        run: pip install -r requirements-adq.txt
 
       - name: Adquisición potencia real (gen-real)
         env:

@@ -38,13 +38,15 @@ from Adquisicion import (
     log, TZ_CHILE,
     fetch_sscc_programado_pcp, upsert_sscc_programado,
     log_adquisicion,
+    ResumenCorrida,
+    abortar_si_cen_caido,
 )
 
 # Tope de días por corrida: 2 × 21 min ya roza el timeout de 60 min del workflow.
 MAX_DIAS = 2
 
 
-def run():
+def run() -> int:
     dias = int(sys.argv[1]) if len(sys.argv) > 1 else 1
     if dias > MAX_DIAS:
         log.warning(f"  DIAS_ATRAS={dias} excede el tope de {MAX_DIAS} "
@@ -54,6 +56,9 @@ def run():
     log.info("═" * 58)
     log.info("  Adquisición SSCC PROGRAMADO (PCP)")
     log.info("═" * 58)
+
+    abortar_si_cen_caido("SSCC programado")
+    resumen = ResumenCorrida("SSCC programado")
 
     hoy = datetime.now(TZ_CHILE).date()
     for d in range(dias, 0, -1):
@@ -68,14 +73,17 @@ def run():
             con_mw = sum(1 for r in regs if (r.get("provision_mw") or 0) > 0)
             log.info(f"  ✅ {len(regs)} filas ({con_mw} con provisión > 0): "
                      f"{nuevos} nuevas, {actualizados} actualizadas")
+            resumen.paso_ok(f"sscc-prog {fecha}")
         except Exception as e:
             err_str = e.__class__.__name__
             log.error(f"  ❌ SSCC programado {fecha}: {err_str}")
+            resumen.paso_fallo(f"sscc-prog {fecha}", err_str)
         log_adquisicion("sscc_programado", fecha, nuevos, actualizados,
                         int((time.time() - t0) * 1000), err_str)
 
     log.info("\n  Fin adquisición SSCC programado\n")
+    return resumen.cerrar()
 
 
 if __name__ == "__main__":
-    run()
+    sys.exit(run())
