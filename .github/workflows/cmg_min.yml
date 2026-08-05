@@ -17,7 +17,12 @@ name: CMG online 15 min (cada 15 min)
 # una cuenta que miente. El barrido del día completo lo hace la corrida horaria.
 on:
   schedule:
-    - cron: "*/15 * * * *"
+    # Desfasado (no `*/15`) para no arrancar junto a `instrucciones.yml`, que
+    # corre en los múltiplos de 10: con `*/15` coincidían en :00 y :30 y las dos
+    # corridas se peleaban la MISMA cuota del CEN (la user_key es una sola para
+    # todos los jobs). Un 429 cuesta 10-42 s de backoff; correr 2 min después no
+    # cuesta nada.
+    - cron: "7,22,37,52 * * * *"
   workflow_dispatch:
 
 concurrency:

@@ -42,6 +42,13 @@ jobs:
           CEN_USER_KEY: ${{ secrets.CEN_USER_KEY }}
           CEN_OPS_KEY:  ${{ secrets.CEN_OPS_KEY }}
           DATABASE_URL:  ${{ secrets.DATABASE_URL }}
+          # Este job es el que más 429 come (19-25 por corrida, medido el
+          # 2026-08-05 sobre 4 corridas seguidas): a 10-42 s de backoff cada uno,
+          # el rate limiter le costaba más que todos sus fetch juntos, y llegó a
+          # perder un día entero de gen-real por agotar los 3 reintentos.
+          # Prevenir el 429 en origen sale mucho más barato que pagarlo después:
+          # +0,5 s × ~30 requests = 15 s, contra los ~400 s de backoff.
+          CEN_THROTTLE_S: "0.8"
         run: python3 Adquisicion.py
 
       - name: Subir log como artefacto

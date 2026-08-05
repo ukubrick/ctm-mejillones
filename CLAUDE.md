@@ -1,7 +1,19 @@
 # CLAUDE.md — Dashboard CTM Mejillones
 > Contexto completo para Claude Code. Leer al inicio de cada sesión.
 > Autor: Erick Herrera — AES Andes, Antofagasta, Chile.
-> Última actualización: 2026-08-05 (**la cancelación de la SICF ahora SÍ cierra la ventana**
+> Última actualización: 2026-08-05 (2ª sesión: **adquisición 5× más rápida** — el job horario
+>   tardaba 24-55 min. Dos causas medidas: los 17 upserts escribían **fila por fila** (~145 ms de
+>   round-trip cada una: 754 filas del PCP = 102 s; Pulsar ya usaba lotes de 500 y de ahí venía la
+>   diferencia que se notaba a ojo) y el horario pedía cada hora cosas que no cambian cada hora
+>   (el **PCP es day-ahead** y cuesta 124 páginas ≈ 11 min; el CMG online re-barría AYER completo;
+>   gen-real pedía 7 días con 4,6 h de rezago). `_upsert_lote` con `execute_values` + workflow
+>   nuevo `adquisicion_pcp.yml` (cada 3 h) + self-heal de las ventanas largas en la diaria.
+>   **Horaria 1.450-3.286 s → 600 s**, ~3.400 páginas diarias menos contra el rate limiter.
+>   Reglas 58/59/60; `tests/test_upsert_lote.py`. Hallazgo de paso: el conteo de los upserts
+>   mentía desde siempre — `rowcount == 1` no distingue INSERT de UPDATE. Y las KPI cards del tope
+>   mostraban el PROMEDIO del período como si fuera el último dato, con el FP mal calculado:
+>   ahora muestran último MW, **régimen operacional** y FP = energía / (Pmax × horas).)
+> Anterior: 2026-08-05 (**la cancelación de la SICF ahora SÍ cierra la ventana**
 >   — reporte del usuario: la instrucción «Cancela SICF 2026087731» (04/08 20:27) caía DENTRO
 >   del propio bloque (cita el código), así que el cierre se buscaba después de ella y ANG1
 >   seguía apareciendo limitada. El bloque se arma ahora desde la declaración hasta el cierre;
@@ -517,6 +529,54 @@ Destiladas de bugs y quirks reales del CEN/Streamlit:
     a tiempo real. Usar `requirements-adq.txt`. Verificado en un venv limpio: los 5 scripts de
     adquisición importan, los 14 de migración/backfill cargan y los 37 tests pasan.
 
+58. **La cadencia de un cron se dimensiona por lo que la fuente PUBLICA, y el costo de un endpoint
+    hay que medirlo por corrida × corridas/día.** Corolario operativo de la regla 55, medido el
+    2026-08-05 sobre las corridas reales del job horario (24 a 55 min, con timeout de 60):
+    · **PCP: 62 páginas por DÍA de ventana** con `limit=5000` (o sea 124 con ayer→mañana) ≈ 11 min
+      a ritmo sostenido — casi la mitad del job horario. Y es un programa **day-ahead**: el CEN lo
+      publica una vez al día. Pedirlo 24 veces eran ~3.000 páginas diarias contra el rate limiter
+      para traer casi siempre el mismo dato. Salió a `Adquisicion_pcp.py` (cada 3 h = 8 corridas,
+      igual 8× más seguido de lo que la fuente publica). El **PID sí se mueve intra-día** y por eso
+      se queda en el horario: son dos fuentes con nombre parecido y ritmo opuesto.
+    · **Barrer un día YA CERRADO en un cron frecuente es gasto puro.** El horario re-barría el día
+      completo de AYER del CMG online: 16 páginas × 24 corridas = 384 páginas diarias para no
+      traer un dato nuevo. Ese barrido pertenece a la diaria; el cron frecuente solo mira HOY.
+    · Lo mismo con la gen-real: 7 días por corrida contra un endpoint que publica **horario y con
+      4,6 h de rezago**. El horario hace hoy+ayer; los 7 días son self-heal en la diaria.
+    · Resultado medido: job horario **1.450-3.286 s → 600 s**, y ~3.400 páginas diarias menos
+      contra el rate limiter.
+
+59. **Escribir fila por fila cuesta la LATENCIA de la red multiplicada por la cantidad de filas.**
+    Los 17 upserts hacían un `cur.execute` por registro. Cada uno es un round-trip al pooler de
+    São Paulo (~145 ms medidos en los logs de Actions), así que el costo de guardar no dependía
+    del volumen de datos sino del NÚMERO DE FILAS: 96 filas de gen-real = **14 s**, 754 del PCP =
+    **102 s**, ~5,7 min por corrida horaria de puro viaje — más que varios de los fetch. Con
+    `execute_values` (`_upsert_lote`, lotes de 500) las mismas 754 filas bajan a ~1 s.
+    · Era la diferencia de velocidad que se notaba contra Pulsar, que ya escribía en lotes de 500.
+    · **El lote se lleva por delante dos cosas que el bucle daba gratis, y las dos fallan callado:**
+      (a) **deduplicar dentro del lote** — Postgres aborta con «ON CONFLICT DO UPDATE cannot affect
+      row a second time» y se pierde el INSERT ENTERO, no una fila (fila a fila, la segunda
+      simplemente pisaba a la primera); (b) el **conteo**.
+    · De paso quedó al descubierto que el conteo mentía desde siempre: `cur.rowcount == 1` es
+      cierto tanto para un INSERT como para un DO UPDATE que disparó, así que la corrida horaria
+      reportaba «754 nuevos, 0 actualizados» sobre datos que ya estaban en la DB. `RETURNING
+      (xmax = 0)` distingue de verdad insertada de ya existente. Cubierto por
+      `tests/test_upsert_lote.py`.
+
+60. **El 429 del CEN es el costo dominante de la adquisición, y la cuota es UNA sola para todos
+    los jobs.** Medido 2026-08-05: el job horario come **19-25 HTTP 429 por corrida**, a 10-42 s
+    de backoff cada uno (≈400 s), y en una corrida agotó los 3 reintentos y **perdió el día
+    completo de gen-real del 04/08** — con el job igualmente VERDE, porque `ResumenCorrida` solo
+    pinta rojo si NO funcionó ningún paso (regla 56).
+    · La respuesta 429 del CEN **no trae ningún header de rate limit** (ni `Retry-After`, ni
+      `X-RateLimit-*`, ni `reset`): el cuerpo es `{"message":"Too Many Requests"}` y nada más. No
+      hay forma de leer el límite — solo se puede inferir bajando la presión y observando.
+    · La `user_key` es una sola, así que **dos workflows simultáneos se pelean el mismo cupo**.
+      `cmg_min.yml` usaba `*/15` e `instrucciones.yml` `*/10`: coincidían en :00 y :30. Desfasado
+      a `:07,:22,:37,:52`. Al programar un cron nuevo, mirar con qué otro cae encima.
+    · Prevenir sale mucho más barato que pagar: +0,5 s de `CEN_THROTTLE_S` × 30 requests = 15 s,
+      contra ~400 s de backoff.
+
 ---
 
 ## CONVENCIONES DE CÓDIGO
@@ -598,7 +658,9 @@ dashboard_api/
 ├── config.py                       ← paleta AES (degradados), constantes, LABELS/PMAX/mapeos, get_css()
 ├── requirements.txt
 ├── app.py                          ← orquestador: page_config, CSS, sidebar, KPIs, navegación plana, dispatch
-├── Adquisicion.py                  ← funciones fetch_/upsert_ + run() horario (núcleo PCP/PID/CMG-prog)
+├── Adquisicion.py                  ← funciones fetch_/upsert_ + run() horario (PID/CMG-prog/gen-real
+│                                      hoy+ayer/CMG online de hoy). `_upsert_lote`: TODA escritura
+│                                      va por lotes de 500 con execute_values — regla 59
 ├── Adquisicion_potencia.py         ← cron :25/:55 — gen-real + CMG S3 (baja latencia)
 ├── Adquisicion_operaciones.py      ← cron :10/:40 — SSCC + Despacho CMG + Limitaciones
 ├── Adquisicion_diaria.py           ← cron 08:20 UTC — CMG real (4 barras) + CMG prog PCP, pronóstico
@@ -611,17 +673,22 @@ dashboard_api/
 │                                      limitación SICF/SDCF/IL/IF — regla 55
 ├── Adquisicion_cmg_min.py          ← cron cada 15 min — SOLO CMG online 15 min (ventana por HORAS
 │                                      de cobertura real, no por páginas — regla 54)
+├── Adquisicion_pcp.py              ← cron cada 3 h — SOLO gen. programada PCP. Es day-ahead y
+│                                      cuesta 124 páginas ≈ 11 min: pedirlo cada hora era casi la
+│                                      mitad del job horario para el mismo dato (regla 58)
 ├── medir_endpoints.py              ← utilidad de MEDICIÓN (no escribe en la DB): `cobertura` (ventana
 │                                      real de una ventana de paginado), `limites` (techo de `limit`
 │                                      por endpoint) y `ritmo` (s/página sostenidos). Re-medir antes
 │                                      de cambiar cualquier cadencia — reglas 53 y 54
 ├── requirements-adq.txt            ← deps de la ADQUISICIÓN (3 paquetes) — regla 57
-├── tests/                          ← suite en seco, sin red ni DB (41 tests, ~0,13 s)
+├── tests/                          ← suite en seco, sin red ni DB (50 tests, ~0,3 s)
 │   ├── test_paginado_sip.py        ← integridad del barrido (regla 51)
 │   ├── test_robustez.py            ← exit codes, redacción de la key, SSLError, preflight (regla 56)
 │   ├── test_fecha_chile.py         ← hoy_chile() + test de PATRÓN anti-`date.today()` (regla 52)
-│   └── test_eventos_instrucciones.py ← cierre de la limitación declarada en despacho: cancelación,
-│                                      prueba de subida a PC, re-limitación (regla 50)
+│   ├── test_eventos_instrucciones.py ← cierre de la limitación declarada en despacho: cancelación,
+│   │                                  prueba de subida a PC, re-limitación (regla 50)
+│   └── test_upsert_lote.py         ← escritura por lotes: dedup dentro del lote, paginado a 500
+│                                      y conteo insertadas/ya existentes (regla 59)
 ├── backfill_programada.py          ← utilidad puntual (recupera PCP por rango)
 ├── migracion_*.py                  ← migraciones puntuales (correr vía workflow migracion.yml)
 │                                      · migracion_cmg_ceros.py: repone en costo_marginal las horas
@@ -683,10 +750,11 @@ dashboard_api/
 │   └── infotecnica.py              ← fichas técnicas por unidad (unidades_maestro + fallback config)
 ├── pages/ml_analysis.py            ← wrapper delgado que llama components.ml.render_ml()
 └── .github/workflows/
-    ├── adquisicion.yml             ← cron :05 (núcleo horario, timeout 60)
+    ├── adquisicion.yml             ← cron :05 (lo que cambia dentro de la hora, timeout 30)
     ├── adquisicion_potencia.yml    ← cron :25/:55 (gen-real + CMG S3)
     ├── adquisicion_operaciones.yml ← cron :10/:40 (SSCC + despacho + limitaciones)
     ├── adquisicion_diaria.yml      ← cron 08:20 UTC (endpoints lentos que cambian poco)
+    ├── adquisicion_pcp.yml         ← cron :35 cada 3 h (gen. programada PCP, day-ahead — regla 58)
     ├── adquisicion_sscc_prog.yml   ← cron 09:50 UTC (SSCC programado PCP, timeout 60)
     └── migracion.yml               ← workflow_dispatch (corre cualquier migracion_*.py)
 ```
@@ -725,7 +793,7 @@ Se abandonaron las categorías desplegables (popovers). El menú es un **segment
 
 ---
 
-## ADQUISICIÓN — 7 WORKFLOWS, CADENCIA POR GRANULARIDAD DE LA FUENTE
+## ADQUISICIÓN — 8 WORKFLOWS, CADENCIA POR GRANULARIDAD DE LA FUENTE
 
 Separación por concern + **cadencia dimensionada por lo que publica cada fuente** (regla 55), no
 por lo que uno quisiera ver. El repo es PÚBLICO → Actions ilimitado, así que el límite NO son los
@@ -734,21 +802,26 @@ minutos sino el **rate limiter del CEN** (regla 53).
 | Workflow | Script | Endpoints | Cron | Timeout |
 |----------|--------|-----------|------|---------|
 | **Instrucciones** | `Adquisicion_instrucciones.py` | Despacho CMG (eventos de minuto exacto) | `*/10` | 10 min |
-| **CMG 15 min** | `Adquisicion_cmg_min.py` | CMG online (ventana de 3 h de cobertura REAL) | `*/15` | 10 min |
+| **CMG 15 min** | `Adquisicion_cmg_min.py` | CMG online (ventana de 3 h de cobertura REAL) | `:07,:22,:37,:52` | 10 min |
 | Operaciones | `Adquisicion_operaciones.py` | SSCC + Limitaciones + Despacho CMG (**self-heal** del cron de 10 min) | `:10,:40` | 15 min |
 | Potencia | `Adquisicion_potencia.py` | gen-real (horaria, rezago 4,6 h → NO subir) | `:25,:55` | 15 min |
-| Horaria | `Adquisicion.py` | **Núcleo:** PCP · PID · CMG-programado + **día COMPLETO del CMG online (self-heal del cron de 15 min)** | `:05` | 60 min |
-| Diaria | `Adquisicion_diaria.py` | CMG real (4 barras) + CMG prog PCP + pronóstico demanda + solicitudes + maestro + mantenimiento mayor + demanda neta + mix diario + desempeño SSCC + **los 37 tests** | `08:20 UTC` | 60 min |
+| Horaria | `Adquisicion.py` | **Lo que cambia dentro de la hora:** PID · CMG-programado · gen-real hoy+ayer · **día de HOY del CMG online (self-heal del cron de 15 min)** | `:05` | 30 min |
+| **PCP** | `Adquisicion_pcp.py` | Gen. programada PCP (day-ahead, 124 págs ≈ 11 min) | `:35 */3h` | 30 min |
+| Diaria | `Adquisicion_diaria.py` | CMG real (4 barras) + CMG prog PCP + pronóstico demanda + solicitudes + maestro + mantenimiento mayor + demanda neta + mix diario + desempeño SSCC + **self-heal de gen-real (7 d) y del CMG online de ayer** + los tests | `08:20 UTC` | 60 min |
 | SSCC prog | `Adquisicion_sscc_prog.py` | SSCC programado PCP (1 día, ~21 min) | `09:50 UTC` | 60 min |
 
-- **Los dos self-heal no son decorativos:** Actions descarta corridas programadas de forma
+- **La cadencia sigue a lo que PUBLICA la fuente, no a lo que uno quisiera ver** (regla 55, y su
+  corolario nuevo, la 58): el PCP es day-ahead → cada 3 h; el PID se mueve intra-día → horario.
+- **Los self-heal no son decorativos:** Actions descarta corridas programadas de forma
   sistemática, así que la cadencia pedida no es la garantizada (regla 54). Con upsert idempotente,
-  un hueco del cron rápido se rellena dentro de la hora.
+  un hueco del cron rápido se rellena dentro de la hora (o del día, para las ventanas largas).
 - Todos instalan `requirements-adq.txt` (3 paquetes), no el del dashboard (regla 57).
 - Cada script hace `abortar_si_cen_caido()` al inicio y devuelve exit code vía `ResumenCorrida`:
   una corrida sin datos sale ROJA (regla 56).
-- Crons espaciados para no solaparse; todos con `concurrency` + `cancel-in-progress`.
+- Crons espaciados para no solaparse (la `user_key` es UNA sola y la cuota es compartida: dos jobs
+  simultáneos se pelean el mismo cupo); todos con `concurrency` + `cancel-in-progress`.
 - `gen-real` SIEMPRE por día (el v3 trunca rangos). PCP/PID/CMG-prog por rango ayer→mañana.
+- **Toda escritura va por LOTES** (`_upsert_lote`, regla 59). Nunca un `execute` por fila.
 
 ---
 
@@ -823,7 +896,21 @@ SIDEBAR_GRAD = "linear-gradient(168deg,#0E7E93,#2A38C9,#4A25A0)"                
 
 ## PENDIENTES VIVOS (lista única — actualizar aquí)
 
-- [ ] **Vigilar los 429 con la cadencia nueva (2026-08-04, 2ª sesión) — lo primero a revisar.**
+- [ ] **429 crónicos: confirmar que bajaron con los cambios del 2026-08-05 — lo primero a revisar.**
+      Está MEDIDO que el job horario comía 19-25 por corrida y que uno le costó el día completo de
+      gen-real del 04/08 (regla 60). Los cambios de esa sesión atacan el volumen (~3.400 páginas
+      diarias menos) y la colisión de crons (`cmg_min` desfasado a :07,:22,:37,:52) y suben el
+      throttle del horario a 0,8 s. Falta ver las corridas PROGRAMADAS —las de ese día fueron
+      manuales y se pisaron entre sí— y contar de nuevo:
+      `for id in $(gh run list --workflow adquisicion.yml --limit 4 --json databaseId --jq '.[].databaseId'); do gh run view $id --log | grep -c "HTTP 429"; done`
+      · Si siguen altos: subir `CEN_THROTTLE_S` (variable de entorno del yml, no toca código) o
+        bajar `instrucciones` a `*/15`.
+      · Vale la pena además que un paso que agota los 3 reintentos **se vea**: hoy sale ERROR en
+        el log pero el job queda verde. Evaluar un umbral en `ResumenCorrida` (p.ej. rojo si falló
+        más de la mitad de los pasos), cuidando la regla 56: un monitor que se enciende seguido
+        entrena a ignorarlo.
+
+- [ ] **Cadencia nueva del 2026-08-04 (2ª sesión) — contexto del pendiente anterior.**
       `instrucciones.yml` (10 min) y `cmg_min.yml` (15 min) son bastante más agresivos que lo que
       había (6 y 4 corridas/hora contra 2). Durante las mediciones de esa sesión el rate limiter
       cortó varias veces — desde UNA máquina y en ráfagas, que es peor que el patrón real, pero
@@ -1413,3 +1500,52 @@ Limpieza de scripts probe/test/check.
     con `.badge-live` fuera del CSS).
   · **Tests nuevos:** `tests/test_eventos_instrucciones.py` (4, en seco, sobre la secuencia real).
     Suite total 41, OK. Se verificó que fallan con el código anterior.
+
+- **2026-08-05 (2ª sesión) — KPI cards corregidas + adquisición 5× más rápida:**
+  · **Reporte del usuario (1):** «los KPI cards no muestran bien el último dato de potencia, y que
+    el FP sea EL CORRECTO; que diga si está en plena carga, mínimo técnico, subiendo o bajando».
+    Tenía razón en las tres: el valor grande de la card era el **promedio del período** (el último
+    dato iba en letra chica al pie), el delta decía «vs última hora» pero comparaba contra ese
+    promedio, y el FP salía de `promedio / Pmax`, que ignora las horas sin dato — 6 h de dato a
+    plena carga daban 97% de FP en una semana. Ahora: último MW como valor principal, **píldora de
+    régimen operacional** (plena carga ≥95% Pmax · mínimo técnico ≤ Pmin+8 MW · subiendo/bajando ·
+    carga parcial · detenida), barra de carga sobre Pmax, FP = energía / (Pmax × horas del período)
+    con aviso de cobertura, y hora + antigüedad del dato.
+    · La rampa se mide sobre 3 registros y exige que la maniobra **siga en curso**: sin eso, CCR1
+      aparecía «bajando carga» con variación 0,0 MW estando ya estabilizada en su mínimo.
+    · De paso, `_limitacion_activa` filtraba por `status == 'pendiente'` — justo lo que la regla 47
+      prohíbe. Ahora pasa por `limitaciones_vigentes`.
+  · **Reporte del usuario (2):** «la adquisición en algunos datos es más lenta que en Pulsar,
+    siendo que allá tengo cuota de minutos y aquí no; lo noto por ejemplo en el CMG». Confirmado
+    con los tiempos reales de Actions: el **job horario tardaba 24-55 min** (timeout 60).
+  · **Causa 1 — escritura fila por fila (regla 59).** Los 17 upserts hacían un `cur.execute` por
+    registro: ~145 ms de round-trip al pooler de São Paulo cada uno, o sea 96 filas de gen-real =
+    14 s y 754 del PCP = 102 s. ~5,7 min por corrida de puro viaje, más que varios de los fetch.
+    Se comparó con Pulsar (`utils/db.py`): ya escribía en **lotes de 500** vía REST — esa era
+    exactamente la diferencia que el usuario notaba. `_upsert_lote` (execute_values) repone a mano
+    lo que el bucle daba gratis: dedup dentro del lote (un duplicado ABORTA el INSERT entero) y el
+    conteo. **Hallazgo de paso:** el conteo mentía desde siempre — `rowcount == 1` es cierto para
+    INSERT y para DO UPDATE, así que se reportaba «754 nuevos, 0 actualizados» sobre datos ya
+    cargados; con `RETURNING (xmax = 0)` el log dice la verdad.
+  · **Causa 2 — cadencias contra lo que la fuente publica (regla 58).** Medido en vivo contra la
+    API: el **PCP cuesta 62 páginas por DÍA** de ventana con limit=5000 (124 con ayer→mañana)
+    ≈ 11 min, casi la mitad del job — y es **day-ahead**. Salió a `Adquisicion_pcp.py` + workflow
+    propio cada 3 h; el PID, que sí se mueve intra-día, se quedó en el horario. El CMG online
+    dejó de re-barrer AYER completo cada hora (16 págs × 24 = 384 páginas diarias para no traer un
+    dato nuevo) y la gen-real bajó de 7 días a hoy+ayer. Ambas ventanas largas viven ahora como
+    **self-heal en la diaria**, que es lo que la regla 54 exige (Actions descarta corridas).
+  · **Resultado verificado en producción** (corrida real, no estimación): **horaria 1.450-3.286 s
+    → 600 s**, PCP en su propio job 790 s, ~3.400 páginas diarias menos contra el rate limiter.
+    Los upserts se ven en el log: 125 puntos de CMG + horarias en 4 s (antes 65 s por 360).
+  · **Hallazgo nuevo, sin resolver (regla 60):** el job horario come **19-25 HTTP 429 por corrida**
+    (medido sobre 4 corridas seguidas) y en una de ellas agotó los 3 reintentos y **perdió el día
+    completo de gen-real del 04/08**, saliendo VERDE igual. La respuesta 429 del CEN no trae
+    ningún header de rate limit, así que el límite no se puede leer — solo bajar la presión y
+    observar. Mitigado en esta sesión (menos volumen, `cmg_min` desfasado a :07,:22,:37,:52 para no
+    chocar con `instrucciones` en :00 y :30, throttle del horario a 0,8 s); queda como el primer
+    pendiente, incluido si conviene que un paso que agota los reintentos pinte el job de rojo.
+  · **Método:** tiempos y 429 leídos de los logs reales de Actions (`gh run view --log`), páginas
+    y techos medidos contra la API en vivo, `tests/test_upsert_lote.py` (9 en seco) con las tres
+    regresiones verificadas a mano, y las cards comprobadas con `AppTest` headless contra la DB
+    real. No se pudo probar el upsert por lotes contra un Postgres local (no hay servidor ni
+    Docker en la máquina, regla 10) → se verificó en Actions con corridas manuales.
