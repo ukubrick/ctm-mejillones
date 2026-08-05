@@ -16,6 +16,16 @@ PCP/PID/CMG-programado).
   · Mix de generación diaria por tecnología
   · Desempeño SSCC CPF/CSF (solo días faltantes; el CEN publica con rezago 2-3 meses)
 
+Y el SELF-HEAL de las fuentes de alta frecuencia, cuyos crons trabajan sobre
+ventanas cortas para no gastar requests repitiendo lo mismo:
+
+  · Gen. real de los últimos 7 días (el horario solo hace hoy + ayer)
+  · CMG online: día completo de ayer (el horario solo barre hoy)
+
+Actions descarta corridas programadas de forma sistemática (regla 54), así que
+lo que queda fuera de una ventana corta no se vuelve a pedir nunca: este barrido
+diario, con upsert idempotente, es lo que garantiza que el hueco se tape.
+
 Reutiliza las funciones de Adquisicion.py. Requiere CEN_USER_KEY + DATABASE_URL.
 """
 import os
@@ -33,7 +43,9 @@ if _missing:
     sys.exit(1)
 
 from Adquisicion import (
-    log, TZ_CHILE,
+    log, TZ_CHILE, DIAS_VENTANA,
+    fetch_generacion_real, upsert_generacion_real,
+    adquirir_cmg_online,
     fetch_cmg_real, upsert_cmg_real,
     fetch_cmg_programado, upsert_cmg_programado,
     fetch_pronostico_demanda, upsert_pronostico_demanda,
@@ -156,6 +168,37 @@ def run() -> int:
             _RESUMEN.paso_fallo("desempeno_sscc", f"{fallos_desempeno} días fallaron")
         else:
             _RESUMEN.paso_ok("desempeno_sscc")
+
+    # ── SELF-HEAL de las fuentes de alta frecuencia ───────────────────────────
+    # Los crons rápidos trabajan sobre ventanas cortas (gen-real: hoy+ayer; CMG
+    # online: 3 h) porque repetir la ventana larga 24 veces al día es puro gasto
+    # contra el rate limiter. Pero Actions descarta corridas programadas de forma
+    # sistemática (regla 54), así que la cadencia pedida no es la garantizada y lo
+    # que cae fuera de una ventana corta no se vuelve a pedir NUNCA. Acá se
+    # re-barre el rango completo una vez al día, con upsert idempotente.
+    log.info(f"\n  ── Self-heal gen. real (últimos {DIAS_VENTANA} días)")
+    for d in range(DIAS_VENTANA - 1, -1, -1):
+        f_gr = (hoy - timedelta(days=d)).strftime("%Y-%m-%d")
+        _bloque(f"Gen. real {f_gr}", "generacion_real", f_gr,
+                fetch_generacion_real, upsert_generacion_real, f_gr, f_gr)
+
+    # CMG online: día completo de AYER, que a esta hora ya cerró y no cambia más.
+    # El job horario solo barre HOY.
+    ayer = (hoy - timedelta(days=1)).strftime("%Y-%m-%d")
+    log.info(f"\n  ── Self-heal CMG online día completo {ayer}")
+    t0 = time.time()
+    err_str = None
+    n_min = n_hora = 0
+    try:
+        n_min, n_hora = adquirir_cmg_online(ayer, ayer)
+        log.info(f"  ✅ CMG: {n_min} puntos de 15 min, {n_hora} filas horarias")
+        _RESUMEN.paso_ok("cmg-online")
+    except Exception as e:
+        err_str = _redactar(e)
+        log.error(f"  ❌ CMG online: {err_str}")
+        _RESUMEN.paso_fallo("cmg-online", e)
+    log_adquisicion("cmg_online_min", ayer, n_min, n_hora,
+                    int((time.time() - t0) * 1000), err_str)
 
     log.info("\n  Fin adquisición diaria\n")
     return _RESUMEN.cerrar()

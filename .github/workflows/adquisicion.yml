@@ -9,10 +9,18 @@ jobs:
   adquirir:
     name: Consulta API CEN y guarda en DB
     runs-on: ubuntu-latest
-    # Job aligerado: solo su núcleo exclusivo (PCP/PID/CMG-programado) + gen-real/CMG
-    # de respaldo. Los endpoints lentos se movieron a Adquisicion_diaria.py. 60 min
-    # es holgura de sobra y detecta cuelgues del CEN sin esperar 2 horas.
-    timeout-minutes: 60
+    # Núcleo de lo que SÍ cambia dentro de la hora: PID (programa intra-día) +
+    # CMG programado, gen-real de hoy+ayer y el barrido del día de hoy del CMG
+    # online (self-heal del cron de 15 min).
+    #
+    # Fuera de acá, por medición (2026-08-05, corridas de 24-55 min):
+    #   · PCP        → adquisicion_pcp.yml (cada 3 h). Es day-ahead y costaba
+    #                  124 páginas ≈ 11 min, casi la mitad del job.
+    #   · gen-real de 7 días y CMG online de AYER → self-heal en la diaria.
+    #   · endpoints lentos → Adquisicion_diaria.py.
+    # Con eso y la escritura por lotes el job baja a ~5 min; el timeout se deja
+    # holgado igual, que es lo que detecta un cuelgue del CEN sin esperar 2 horas.
+    timeout-minutes: 30
     env:
       FORCE_JAVASCRIPT_ACTIONS_TO_NODE24: true
 

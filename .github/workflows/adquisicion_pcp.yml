@@ -1,0 +1,60 @@
+name: Generacion programada PCP (cada 3 h)
+
+# El PCP es un programa DAY-AHEAD: el CEN lo publica una vez por día y lo reemite
+# de vez en cuando. Vivía dentro del job horario, donde costaba 124 páginas por
+# corrida (62 por día de ventana con limit=5000, medido 2026-08-05) ≈ 11 min —
+# casi la mitad de ese job— para traer casi siempre exactamente el mismo dato.
+#
+# Cada 3 h son 8 corridas diarias: 8× más seguido de lo que la fuente publica, y
+# una reemisión llega al dashboard dentro de las 3 h. El programa INTRA-DÍA
+# (PID), que es el que sí se mueve durante la jornada, sigue en el job horario.
+#
+# El desfase con el resto de los crons (:35) evita solaparse con el horario (:05)
+# y con operaciones (:10,:40): el cuello de estos jobs es el rate limiter del
+# CEN, no los minutos de Actions.
+on:
+  schedule:
+    - cron: "35 */3 * * *"
+  workflow_dispatch:
+
+concurrency:
+  group: pcp-ctm
+  cancel-in-progress: true
+
+jobs:
+  pcp:
+    name: Generación programada PCP
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+
+    steps:
+      - name: Checkout repositorio
+        uses: actions/checkout@v5
+
+      - name: Configurar Python 3.11
+        uses: actions/setup-python@v6
+        with:
+          python-version: "3.11"
+          cache: "pip"
+
+      - name: Instalar dependencias
+        run: pip install -r requirements-adq.txt
+
+      - name: Ejecutar Adquisicion_pcp.py
+        env:
+          CEN_USER_KEY: ${{ secrets.CEN_USER_KEY }}
+          DATABASE_URL: ${{ secrets.DATABASE_URL }}
+          # Pagina el SEN completo (124 páginas seguidas): espaciado algo mayor
+          # para prevenir el 429 en origen, que sale más barato que pagarlo con
+          # 10-40 s de backoff a mitad del barrido.
+          CEN_THROTTLE_S: "0.5"
+        run: python3 Adquisicion_pcp.py
+
+      - name: Subir log como artefacto
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: log-pcp-${{ github.run_id }}
+          path: adquisicion.log
+          retention-days: 7
+          if-no-files-found: ignore

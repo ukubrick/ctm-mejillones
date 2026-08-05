@@ -16,6 +16,7 @@ Variables de entorno (.env o GitHub Secrets):
 """
 
 import os, re, sys, time, random, logging, requests, psycopg2
+from psycopg2.extras import execute_values
 from datetime import datetime, timedelta
 from collections import defaultdict
 from zoneinfo import ZoneInfo
@@ -143,7 +144,13 @@ LLAVES_INSTR_CMG = {
 }
 
 DIAS_VENTANA     = 7   # días hacia atrás para gen. real y SSCC (filtra en servidor, rápido)
-DIAS_VENTANA_PCP = 2   # días hacia atrás para PCP: ~120 páginas × 0.3s ≈ 8 min (427 págs con 7 días → timeout)
+DIAS_VENTANA_PCP = 2   # días hacia atrás para PCP: 62 páginas por DÍA con limit=5000 (medido 2026-08-05)
+
+# Ventana de gen-real del job HORARIO. El endpoint publica con 4,6 h de rezago
+# (regla 55), así que hoy + ayer cubre de sobra lo que puede haber cambiado desde
+# la corrida anterior. Los 7 días completos son un self-heal, y un self-heal no
+# tiene por qué correr 24 veces al día: vive en `Adquisicion_diaria.py`.
+DIAS_VENTANA_HORARIO = 2
 
 # id_unidad → código interno (confirmado en exploración 2026-06-11)
 ID_UNIDAD_MAP = {1965: "ANG1", 1966: "ANG2", 1967: "CCR1", 1968: "CCR2"}
@@ -716,6 +723,95 @@ def get_conn():
     return psycopg2.connect(DATABASE_URL)
 
 
+# ── Escritura por LOTES ───────────────────────────────────────────────────────
+# Los 17 upserts hacían un `cur.execute` POR FILA. Cada fila es un viaje de ida y
+# vuelta al pooler de São Paulo (~145 ms medidos en Actions), así que el costo de
+# guardar no dependía del volumen de datos sino de la CANTIDAD de filas:
+#
+#     96 filas de gen-real   →  14 s     754 filas de PCP  → 102 s
+#
+# Sumado sobre la corrida horaria eran ~5,7 min de puro round-trip, más que el
+# tiempo de varios de los fetch. `execute_values` manda el lote en UNA sentencia:
+# las mismas 754 filas bajan a ~1 s. (Pulsar ya lo hacía: upsert REST en lotes
+# de 500 — de ahí venía la diferencia de velocidad que se notaba a ojo.)
+#
+# Dos cosas que el bucle fila-a-fila daba gratis y hay que reponer a mano:
+#   · DEDUPLICAR dentro del lote. Postgres aborta con «ON CONFLICT DO UPDATE
+#     cannot affect row a second time» si la misma clave viene dos veces en el
+#     mismo INSERT; fila por fila la segunda simplemente pisaba a la primera.
+#   · El CONTEO. `cur.rowcount == 1` es cierto tanto para un INSERT como para un
+#     DO UPDATE que disparó, así que «nuevos» venía inflado: la corrida horaria
+#     reportaba «754 nuevos, 0 actualizados» sobre datos que ya estaban en la DB.
+#     `RETURNING (xmax = 0)` distingue de verdad insertada de actualizada.
+LOTE_UPSERT = 500
+
+_RE_ON_CONFLICT = re.compile(r"ON\s+CONFLICT\s*\(([^)]*)\)", re.IGNORECASE)
+
+
+def _partir_sql(sql: str) -> tuple[str, str, str]:
+    """Parte un INSERT ... VALUES (...) ON CONFLICT ... en (prefijo, plantilla, resto).
+
+    La plantilla es la lista de placeholders con nombre, que es justo lo que
+    `execute_values` necesita como `template`.
+    """
+    i = sql.upper().index("VALUES")
+    j = sql.index("(", i)
+    prof, k = 0, j
+    while k < len(sql):
+        if sql[k] == "(":
+            prof += 1
+        elif sql[k] == ")":
+            prof -= 1
+            if prof == 0:
+                break
+        k += 1
+    return sql[:i] + "VALUES %s", sql[j:k + 1], sql[k + 1:]
+
+
+def _dedup_lote(registros: list[dict], claves: list[str]) -> list[dict]:
+    """Una sola fila por clave de conflicto; gana la ÚLTIMA (como el bucle viejo)."""
+    if not claves:
+        return registros
+    unicos: dict[tuple, dict] = {}
+    for r in registros:
+        unicos[tuple(r.get(c) for c in claves)] = r
+    return list(unicos.values())
+
+
+def _upsert_lote(sql: str, registros: list[dict], que: str, pre=None) -> tuple[int, int]:
+    """Ejecuta el upsert por lotes. Devuelve (insertadas, ya existentes).
+
+    «Ya existentes» son las filas que la clave de conflicto encontró ocupadas:
+    actualizadas, o preservadas por el WHERE del DO UPDATE (p.ej. una fila
+    marcada `origen='MANUAL'`, que la adquisición no debe pisar).
+    """
+    if not registros:
+        return 0, 0
+    m = _RE_ON_CONFLICT.search(sql)
+    claves = [c.strip() for c in m.group(1).split(",")] if m else []
+    filas  = _dedup_lote(registros, claves)
+    prefijo, plantilla, resto = _partir_sql(sql)
+    sql_lote = f"{prefijo}{resto} RETURNING (xmax = 0)"
+
+    insertadas = 0
+    try:
+        with get_conn() as conn:
+            with conn.cursor() as cur:
+                if pre is not None:
+                    pre(cur)
+                for i in range(0, len(filas), LOTE_UPSERT):
+                    devueltas = execute_values(
+                        cur, sql_lote, filas[i:i + LOTE_UPSERT],
+                        template=plantilla, page_size=LOTE_UPSERT, fetch=True,
+                    )
+                    insertadas += sum(1 for f in devueltas if f[0])
+            conn.commit()
+    except Exception as e:
+        log.error(f"  Error upsert {que}: {_redactar(e)}")
+        return 0, 0
+    return insertadas, len(filas) - insertadas
+
+
 _origen_col_ok = False
 
 
@@ -749,19 +845,7 @@ def upsert_generacion_real(registros: list[dict]) -> tuple[int, int]:
               AND (generacion_real.gen_real_mw = 0
                    OR EXCLUDED.gen_real_mw > 0)
     """
-    nuevos = dupes = 0
-    try:
-        with get_conn() as conn:
-            with conn.cursor() as cur:
-                _ensure_origen_col(cur)
-                for rec in registros:
-                    cur.execute(sql, rec)
-                    if cur.rowcount == 1: nuevos += 1
-                    else:                dupes  += 1
-            conn.commit()
-    except Exception as e:
-        log.error(f"  Error upsert gen. real: {_redactar(e)}")
-    return nuevos, dupes
+    return _upsert_lote(sql, registros, "gen. real", pre=_ensure_origen_col)
 
 
 def upsert_generacion_programada(registros: list[dict]) -> tuple[int, int]:
@@ -780,18 +864,7 @@ def upsert_generacion_programada(registros: list[dict]) -> tuple[int, int]:
         ON CONFLICT (unidad, fecha_hora, fuente) DO UPDATE
             SET gen_programada_mw = EXCLUDED.gen_programada_mw
     """
-    nuevos = actualizados = 0
-    try:
-        with get_conn() as conn:
-            with conn.cursor() as cur:
-                for rec in registros:
-                    cur.execute(sql, rec)
-                    if cur.rowcount == 1: nuevos       += 1
-                    else:                actualizados  += 1
-            conn.commit()
-    except Exception as e:
-        log.error(f"  Error upsert gen. programada: {_redactar(e)}")
-    return nuevos, actualizados
+    return _upsert_lote(sql, registros, "gen. programada")
 
 
 def upsert_cmg(registros: list[dict]) -> tuple[int, int]:
@@ -808,18 +881,7 @@ def upsert_cmg(registros: list[dict]) -> tuple[int, int]:
             SET cmg_usd_mwh = EXCLUDED.cmg_usd_mwh,
                 version     = EXCLUDED.version
     """
-    nuevos = actualizados = 0
-    try:
-        with get_conn() as conn:
-            with conn.cursor() as cur:
-                for rec in registros:
-                    cur.execute(sql, rec)
-                    if cur.rowcount == 1: nuevos      += 1
-                    else:                actualizados += 1
-            conn.commit()
-    except Exception as e:
-        log.error(f"  Error upsert CMG: {_redactar(e)}")
-    return nuevos, actualizados
+    return _upsert_lote(sql, registros, "CMG")
 
 
 def fetch_cmg_online_api(start: str, end: str,
@@ -1007,18 +1069,7 @@ def upsert_cmg_online_min(registros: list[dict]) -> tuple[int, int]:
                 cmg_clp_kwh = EXCLUDED.cmg_clp_kwh,
                 version     = EXCLUDED.version
     """
-    nuevos = actualizados = 0
-    try:
-        with get_conn() as conn:
-            with conn.cursor() as cur:
-                for rec in registros:
-                    cur.execute(sql, rec)
-                    if cur.rowcount == 1: nuevos      += 1
-                    else:                actualizados += 1
-            conn.commit()
-    except Exception as e:
-        log.error(f"  Error upsert CMG online min: {_redactar(e)}")
-    return nuevos, actualizados
+    return _upsert_lote(sql, registros, "CMG online min")
 
 
 def adquirir_cmg_online(start: str, end: str,
@@ -1127,18 +1178,7 @@ def upsert_cmg_programado(registros: list[dict]) -> tuple[int, int]:
             SET cmg_usd_mwh    = EXCLUDED.cmg_usd_mwh,
                 fecha_programa = EXCLUDED.fecha_programa
     """
-    nuevos = actualizados = 0
-    try:
-        with get_conn() as conn:
-            with conn.cursor() as cur:
-                for rec in registros:
-                    cur.execute(sql, rec)
-                    if cur.rowcount == 1: nuevos      += 1
-                    else:                actualizados += 1
-            conn.commit()
-    except Exception as e:
-        log.error(f"  Error upsert CMG programado: {_redactar(e)}")
-    return nuevos, actualizados
+    return _upsert_lote(sql, registros, "CMG programado")
 
 
 def fetch_cmg_real(start: str, end: str) -> list[dict]:
@@ -1216,18 +1256,7 @@ def upsert_cmg_real(registros: list[dict]) -> tuple[int, int]:
                 cmg_clp_kwh = EXCLUDED.cmg_clp_kwh,
                 version     = EXCLUDED.version
     """
-    nuevos = actualizados = 0
-    try:
-        with get_conn() as conn:
-            with conn.cursor() as cur:
-                for rec in registros:
-                    cur.execute(sql, rec)
-                    if cur.rowcount == 1: nuevos      += 1
-                    else:                actualizados += 1
-            conn.commit()
-    except Exception as e:
-        log.error(f"  Error upsert CMG real: {_redactar(e)}")
-    return nuevos, actualizados
+    return _upsert_lote(sql, registros, "CMG real")
 
 
 def fetch_pronostico_demanda(start: str, end: str) -> list[dict]:
@@ -1298,18 +1327,7 @@ def upsert_pronostico_demanda(registros: list[dict]) -> tuple[int, int]:
             SET energia_mwh  = EXCLUDED.energia_mwh,
                 date_control = EXCLUDED.date_control
     """
-    nuevos = actualizados = 0
-    try:
-        with get_conn() as conn:
-            with conn.cursor() as cur:
-                for rec in registros:
-                    cur.execute(sql, rec)
-                    if cur.rowcount == 1: nuevos      += 1
-                    else:                actualizados += 1
-            conn.commit()
-    except Exception as e:
-        log.error(f"  Error upsert pronóstico demanda: {_redactar(e)}")
-    return nuevos, actualizados
+    return _upsert_lote(sql, registros, "pronóstico demanda")
 
 
 def fetch_sscc(start: str, end: str | None = None) -> list[dict]:
@@ -1394,18 +1412,7 @@ def upsert_sscc(registros: list[dict]) -> tuple[int, int]:
             fecha_accion       = EXCLUDED.fecha_accion,
             usuario            = EXCLUDED.usuario
     """
-    nuevos = actualizados = 0
-    try:
-        with get_conn() as conn:
-            with conn.cursor() as cur:
-                for rec in registros:
-                    cur.execute(sql, rec)
-                    if cur.rowcount == 1: nuevos      += 1
-                    else:                actualizados += 1
-            conn.commit()
-    except Exception as e:
-        log.error(f"  Error upsert SSCC: {_redactar(e)}")
-    return nuevos, actualizados
+    return _upsert_lote(sql, registros, "SSCC")
 
 
 def fetch_instrucciones_cmg(start: str, end: str | None = None) -> list[dict]:
@@ -1508,18 +1515,7 @@ def upsert_instrucciones_cmg(registros: list[dict]) -> tuple[int, int]:
             zona_desaclope   = EXCLUDED.zona_desaclope,
             control_tension  = EXCLUDED.control_tension
     """
-    nuevos = actualizados = 0
-    try:
-        with get_conn() as conn:
-            with conn.cursor() as cur:
-                for rec in registros:
-                    cur.execute(sql, rec)
-                    if cur.rowcount == 1: nuevos      += 1
-                    else:                actualizados += 1
-            conn.commit()
-    except Exception as e:
-        log.error(f"  Error upsert instrucciones CMG: {_redactar(e)}")
-    return nuevos, actualizados
+    return _upsert_lote(sql, registros, "instrucciones CMG")
 
 
 def fetch_limitaciones(start: str, end: str) -> list[dict]:
@@ -1629,18 +1625,7 @@ def upsert_limitaciones(registros: list[dict]) -> tuple[int, int]:
             observacion              = EXCLUDED.observacion,
             modified                 = EXCLUDED.modified
     """
-    nuevos = actualizados = 0
-    try:
-        with get_conn() as conn:
-            with conn.cursor() as cur:
-                for rec in registros:
-                    cur.execute(sql, rec)
-                    if cur.rowcount == 1: nuevos      += 1
-                    else:                actualizados += 1
-            conn.commit()
-    except Exception as e:
-        log.error(f"  Error upsert limitaciones: {_redactar(e)}")
-    return nuevos, actualizados
+    return _upsert_lote(sql, registros, "limitaciones")
 
 
 def fetch_solicitudes(start: str, end: str) -> list[dict]:
@@ -1745,18 +1730,7 @@ def upsert_solicitudes(registros: list[dict]) -> tuple[int, int]:
             fecha_fin          = EXCLUDED.fecha_fin,
             modified           = EXCLUDED.modified
     """
-    nuevos = actualizados = 0
-    try:
-        with get_conn() as conn:
-            with conn.cursor() as cur:
-                for rec in registros:
-                    cur.execute(sql, rec)
-                    if cur.rowcount == 1: nuevos      += 1
-                    else:                actualizados += 1
-            conn.commit()
-    except Exception as e:
-        log.error(f"  Error upsert solicitudes: {_redactar(e)}")
-    return nuevos, actualizados
+    return _upsert_lote(sql, registros, "solicitudes")
 
 
 # Relevancia CTM para mantenimientos mayores: instalaciones del complejo o de su
@@ -1857,18 +1831,7 @@ def upsert_mantenimiento_mayor(registros: list[dict]) -> tuple[int, int]:
             fecha_termino_real  = EXCLUDED.fecha_termino_real,
             fecha_dato          = EXCLUDED.fecha_dato
     """
-    nuevos = actualizados = 0
-    try:
-        with get_conn() as conn:
-            with conn.cursor() as cur:
-                for rec in registros:
-                    cur.execute(sql, rec)
-                    if cur.rowcount == 1: nuevos      += 1
-                    else:                actualizados += 1
-            conn.commit()
-    except Exception as e:
-        log.error(f"  Error upsert mantenimiento mayor: {_redactar(e)}")
-    return nuevos, actualizados
+    return _upsert_lote(sql, registros, "mantenimiento mayor")
 
 
 def fetch_demanda_neta(start: str, end: str) -> list[dict]:
@@ -1935,18 +1898,7 @@ def upsert_demanda_neta(registros: list[dict]) -> tuple[int, int]:
             cons_propio_mwh  = EXCLUDED.cons_propio_mwh,
             demanda_neta_mwh = EXCLUDED.demanda_neta_mwh
     """
-    nuevos = actualizados = 0
-    try:
-        with get_conn() as conn:
-            with conn.cursor() as cur:
-                for rec in registros:
-                    cur.execute(sql, rec)
-                    if cur.rowcount == 1: nuevos      += 1
-                    else:                actualizados += 1
-            conn.commit()
-    except Exception as e:
-        log.error(f"  Error upsert demanda neta: {_redactar(e)}")
-    return nuevos, actualizados
+    return _upsert_lote(sql, registros, "demanda neta")
 
 
 def fetch_mix_diario(fecha: str) -> list[dict]:
@@ -1982,18 +1934,7 @@ def upsert_mix_diario(registros: list[dict]) -> tuple[int, int]:
         ON CONFLICT (fecha, tecnologia) DO UPDATE SET
             energia_mwh = EXCLUDED.energia_mwh
     """
-    nuevos = actualizados = 0
-    try:
-        with get_conn() as conn:
-            with conn.cursor() as cur:
-                for rec in registros:
-                    cur.execute(sql, rec)
-                    if cur.rowcount == 1: nuevos      += 1
-                    else:                actualizados += 1
-            conn.commit()
-    except Exception as e:
-        log.error(f"  Error upsert mix diario: {_redactar(e)}")
-    return nuevos, actualizados
+    return _upsert_lote(sql, registros, "mix diario")
 
 
 def fetch_desempeno_sscc(fecha: str) -> list[dict]:
@@ -2081,18 +2022,7 @@ def upsert_desempeno_sscc(registros: list[dict]) -> tuple[int, int]:
             factor    = EXCLUDED.factor,
             detalle   = EXCLUDED.detalle
     """
-    nuevos = actualizados = 0
-    try:
-        with get_conn() as conn:
-            with conn.cursor() as cur:
-                for rec in registros:
-                    cur.execute(sql, rec)
-                    if cur.rowcount == 1: nuevos      += 1
-                    else:                actualizados += 1
-            conn.commit()
-    except Exception as e:
-        log.error(f"  Error upsert desempeño SSCC: {_redactar(e)}")
-    return nuevos, actualizados
+    return _upsert_lote(sql, registros, "desempeño SSCC")
 
 
 def dias_faltantes_desempeno(dias_atras: int = 150, margen: int = 20,
@@ -2244,18 +2174,7 @@ def upsert_sscc_programado(registros: list[dict]) -> tuple[int, int]:
             llave_sscc     = EXCLUDED.llave_sscc,
             fecha_programa = EXCLUDED.fecha_programa
     """
-    nuevos = actualizados = 0
-    try:
-        with get_conn() as conn:
-            with conn.cursor() as cur:
-                for rec in registros:
-                    cur.execute(sql, rec)
-                    if cur.rowcount == 1: nuevos      += 1
-                    else:                actualizados += 1
-            conn.commit()
-    except Exception as e:
-        log.error(f"  Error upsert SSCC programado: {_redactar(e)}")
-    return nuevos, actualizados
+    return _upsert_lote(sql, registros, "SSCC programado")
 
 
 def _num_cl(v):
@@ -2367,18 +2286,7 @@ def upsert_unidades_maestro(registros: list[dict]) -> tuple[int, int]:
             factor_pot_nominal   = EXCLUDED.factor_pot_nominal,
             fecha_dato           = EXCLUDED.fecha_dato
     """
-    nuevos = actualizados = 0
-    try:
-        with get_conn() as conn:
-            with conn.cursor() as cur:
-                for rec in registros:
-                    cur.execute(sql, rec)
-                    if cur.rowcount == 1: nuevos      += 1
-                    else:                actualizados += 1
-            conn.commit()
-    except Exception as e:
-        log.error(f"  Error upsert unidades maestro: {_redactar(e)}")
-    return nuevos, actualizados
+    return _upsert_lote(sql, registros, "unidades maestro")
 
 
 class ResumenCorrida:
@@ -2474,7 +2382,7 @@ def run() -> int:
     # Usar hora chilena para evitar desfase UTC en GitHub Actions
     hoy    = datetime.now(TZ_CHILE).date()
     fechas = [(hoy - timedelta(days=d)).strftime("%Y-%m-%d")
-              for d in range(DIAS_VENTANA - 1, -1, -1)]
+              for d in range(DIAS_VENTANA_HORARIO - 1, -1, -1)]
 
     # ── Generación real ───────────────────────────────────────
     # ⚠️ SIEMPRE una llamada POR DÍA: el endpoint v3 TRUNCA los rangos multi-día
@@ -2500,10 +2408,12 @@ def run() -> int:
     # dato más sensible al tiempo real → no debe quedar sin correr si PCP/PID se
     # cuelgan y el job se cancela por timeout. (También se refresca cada 30 min en
     # Adquisicion_potencia.py.)
-    # Día COMPLETO (todas las páginas) de hoy y ayer: rellena los huecos que el
-    # cron rápido de 30 min (solo últimas páginas) no alcanzó a cubrir.
-    for fecha in [(hoy - timedelta(days=1)).strftime("%Y-%m-%d"),
-                  hoy.strftime("%Y-%m-%d")]:
+    # Día COMPLETO (todas las páginas) de HOY: rellena los huecos que el cron de
+    # 15 min (ventana de 3 h) no alcanzó a cubrir. AYER ya no se toca acá — a
+    # esta altura está cerrado y no cambia, así que barrer sus 16 páginas cada
+    # hora era pedir 384 páginas al día para no traer un dato nuevo. Su barrido
+    # completo quedó en la diaria, que corre cuando el día anterior ya cerró.
+    for fecha in [hoy.strftime("%Y-%m-%d")]:
         log.info(f"\n  ── CMG online 15 min (API SIP) {fecha}")
         t0 = time.time()
         err_str = None
@@ -2517,24 +2427,12 @@ def run() -> int:
         log_adquisicion("cmg_online_min", fecha, n_min, n_hora,
                         int((time.time() - t0) * 1000), err_str)
 
-    # ── Generación programada PCP (rango completo en una sola llamada) ──
-    # Ventana: ayer → mañana (3 días). Incluir mañana captura la programación
-    # del día completo que CEN publica con anticipación. ~180 páginas ≈ 10 min.
-    pcp_start = (hoy - timedelta(days=DIAS_VENTANA_PCP - 1)).strftime("%Y-%m-%d")
-    pcp_end   = (hoy + timedelta(days=1)).strftime("%Y-%m-%d")
-    log.info(f"\n  ── Gen. programada PCP {pcp_start} → {pcp_end}")
-    t0 = time.time()
-    err_str = None
-    try:
-        regs                 = fetch_generacion_programada(pcp_start, pcp_end)
-        nuevos, actualizados = upsert_generacion_programada(regs)
-        log.info(f"  ✅ PCP: {nuevos} nuevos, {actualizados} actualizados")
-        resumen.paso_ok("pcp")
-    except Exception as e:
-        err_str = _redactar(e); log.error(f"  ❌ PCP: {_redactar(e)}"); nuevos = actualizados = 0
-        resumen.paso_fallo("pcp", e)
-    log_adquisicion("generacion_programada_pcp", pcp_end, nuevos, actualizados,
-                    int((time.time() - t0) * 1000), err_str)
+    # ── Generación programada PCP → `Adquisicion_pcp.py` (cada 3 h) ───────────
+    # El PCP es un programa DAY-AHEAD: el CEN lo publica una vez por día y lo
+    # reemite de vez en cuando. Pedirlo 24 veces al día costaba 124 páginas por
+    # corrida (62 por día de ventana, medido 2026-08-05) ≈ 11 min, o sea casi la
+    # mitad del job horario, para traer casi siempre exactamente lo mismo.
+    # El que sí cambia dentro del día es el PID, y ese se queda acá.
 
     # ── Generación programada PID (Programa Intra-Día) ────────
     # Segunda fuente de programación: el PID reajusta el PCP durante el día.
