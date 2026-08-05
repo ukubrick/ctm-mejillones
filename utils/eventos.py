@@ -77,8 +77,6 @@ _PAT_FOLIO = re.compile(r"(?:SICF|SDCF|IL|IF)[\s.:N°ºno-]*(\d{3,})", re.I)
 # Campos de la instrucción donde puede venir declarado el documento.
 CAMPOS_INSTRUCCION = ("motivo", "consigna", "instruccion_cmg", "estado",
                       "zona_desaclope", "control_tension")
-# Huelgo para unir instrucciones consecutivas en una sola ventana de evento.
-GAP_INSTRUCCION_H = 2
 
 # `estado` de la instrucción mientras la unidad está limitada: LF (forzosa) y
 # LP (programada). Confirmado con datos el 2026-08-04: las 6 instrucciones que
@@ -92,6 +90,14 @@ MARGEN_SUBIDA_MW = 5.0
 _PAT_CANCELA = re.compile(
     r"(cancela\w*|anula\w*|finaliza\w*|termina\w*|levanta\w*|deja sin efecto|"
     r"fin de|fin\s+(?:de\s+)?limitaci[oó]n|normaliza\w*)", re.I)
+# Antes de cancelar el documento el CEN suele instruir una PRUEBA: la unidad
+# sube a potencia de conexión / máxima para verificar que la intervención
+# resultó, y recién después queda disponible (aviso del usuario, 2026-08-05).
+# Esas instrucciones citan la MISMA SICF, así que no cierran la ventana: son
+# parte del proceso y se registran como antecedente del cierre.
+_PAT_PRUEBA = re.compile(
+    r"(hora de prueba|prueba\w*|sube a pc\b|a pc\b|potencia de conexi[oó]n|"
+    r"potencia m[aá]xima|subida anticipada)", re.I)
 
 
 def _cancela_marca(txt, codigo):
@@ -104,6 +110,15 @@ def _cancela_marca(txt, codigo):
     if not _PAT_CANCELA.search(t):
         return False
     return bool(re.search(codigo, t, re.I) or re.search(r"limitaci[oó]n", t, re.I))
+
+
+def _texto_antecedente(row):
+    """Texto corto de la instrucción de prueba, para el detalle del evento."""
+    for c in ("motivo", "consigna", "instruccion_cmg"):
+        v = str(row.get(c) or "").strip()
+        if v and v.lower() != "null":
+            return v[:80]
+    return "instrucción de prueba"
 
 
 def _ahora():
@@ -326,17 +341,15 @@ def eventos_desde_instrucciones(df_instr, unidad=None, ref=None):
         lambda r: " ".join(str(r.get(c) or "") for c in CAMPOS_INSTRUCCION), axis=1)
     instr_por_unidad = {u: g for u, g in todas.groupby("unidad")}
 
-    d = d[d["_es_limitacion"]].copy()
+    d = todas[todas["_es_limitacion"]].copy()
     if unidad is not None:
         d = d[d["unidad"] == unidad]
     if d.empty:
         return pd.DataFrame(columns=cols)
 
-    d["_dt"] = pd.to_datetime(d.get("fecha_hora"), errors="coerce")
-    d = d.dropna(subset=["_dt"])
     d["_folio"] = d.apply(folio_instruccion, axis=1)
 
-    def _cierre(uni, ultimo, codigo, mw_lim, estado_lim):
+    def _cierre(uni, ini, codigo, mw_lim, estado_lim):
         """Instante en que la limitación se LEVANTA, y por qué.
 
         Reglas del operador (2026-08-04): la limitación termina cuando la unidad
@@ -346,25 +359,43 @@ def eventos_desde_instrucciones(df_instr, unidad=None, ref=None):
         ANG1 del 02/08 23:13 va seguido de seis instrucciones más, todas con
         `estado='LF'` y despacho clavado en 87 MW — la unidad seguía limitada.
 
-        Devuelve (fin, motivo_cierre) con motivo ∈ {cancelacion, estado, carga,
-        abierta}.
+        Mientras una instrucción siga CITANDO el mismo documento, la ventana no
+        se cierra por estado ni por carga: la prueba de subida a potencia de
+        conexión que precede a la cancelación es parte de la intervención
+        (aviso del usuario, 2026-08-05) y sale con `estado='PO'` y despacho por
+        encima del limitado — con la lógica anterior habría cerrado la ventana
+        a mitad del proceso. Solo el texto de CANCELACIÓN la termina.
+
+        Devuelve (fin, motivo_cierre, antecedentes) con motivo ∈ {cancelacion,
+        estado, carga, abierta}.
         """
+        antecedentes = []
         post = instr_por_unidad.get(uni)
         if post is not None:
-            post = post[post["_dt"] > ultimo]
+            post = post[post["_dt"] > ini]
             for _, r in post.iterrows():
                 t = pd.Timestamp(r["_dt"])
-                if _cancela_marca(r["_txt"], codigo):
-                    return t, "cancelacion"
+                txt = str(r["_txt"] or "")
+                if _cancela_marca(txt, codigo):
+                    return t, "cancelacion", antecedentes
+                cita = bool(re.search(codigo, txt, re.I))
+                if cita and _PAT_PRUEBA.search(txt):
+                    ant = (t, _texto_antecedente(r))
+                    # El CEN reemite la misma instrucción (regla 50).
+                    if ant not in antecedentes:
+                        antecedentes.append(ant)
+                if cita:
+                    # Sigue bajo el mismo documento: no cierra por estado/carga.
+                    continue
                 # Sale del estado de limitación (LF forzosa / LP programada).
                 if estado_lim in ESTADOS_LIMITACION and r["_estado"] not in ESTADOS_LIMITACION:
-                    return t, "estado"
+                    return t, "estado", antecedentes
                 # Sube carga por encima del despacho limitado.
                 if (mw_lim is not None and pd.notna(r["_desp"])
                         and float(r["_desp"]) > mw_lim + MARGEN_SUBIDA_MW):
-                    return t, "carga"
-        tope = ultimo + pd.Timedelta(days=VENTANA_DEFECTO_DIAS)
-        return (min(ref, tope) if ref > ultimo else tope), "abierta"
+                    return t, "carga", antecedentes
+        tope = ini + pd.Timedelta(days=VENTANA_DEFECTO_DIAS)
+        return (min(ref, tope) if ref > ini else tope), "abierta", antecedentes
 
     out = []
     # Una fila puede citar más de un documento (p. ej. «Cancela IL … según SICF …»).
@@ -372,20 +403,30 @@ def eventos_desde_instrucciones(df_instr, unidad=None, ref=None):
     # El bloque se arma por unidad + código, NO por folio: el CEN reemite la misma
     # instrucción con el folio primero en blanco («SICF XXXXXX») y luego con el
     # número real, y agrupar por folio duplicaba el evento sobre la misma hora.
+    # Una instrucción que CANCELA el documento no abre limitación: es su cierre.
+    d["_cancela"] = [_cancela_marca(t, c) for t, c in zip(d["_txt"], d["_marcas"])]
+
     for (uni, codigo), g in d.groupby(["unidad", "_marcas"], dropna=False):
-        g = g.sort_values("_dt")
-        # Corte de bloque: salto mayor al huelgo entre instrucciones sucesivas.
-        salto = g["_dt"].diff() > pd.Timedelta(hours=GAP_INSTRUCCION_H)
-        for _, blq in g.groupby(salto.cumsum()):
-            ini = blq["_dt"].min()
+        # El bloque va desde la instrucción que declara el documento hasta que
+        # `_cierre` lo levanta; lo que quede después abre un bloque nuevo (una
+        # re-limitación bajo el mismo código). No se usa un huelgo fijo: quien
+        # corta la ventana es el cierre, no el silencio entre instrucciones.
+        restantes = g[~g["_cancela"]].sort_values("_dt")
+        while len(restantes):
+            fila0 = restantes.iloc[0]
+            ini = pd.Timestamp(fila0["_dt"])
+            mw_lim = float(fila0["_desp"]) if pd.notna(fila0["_desp"]) else None
+            est_lim = fila0["_estado"] if fila0["_estado"] in ESTADOS_LIMITACION else ""
+            fin, motivo_cierre, antecedentes = _cierre(uni, ini, codigo, mw_lim, est_lim)
+            blq = restantes[restantes["_dt"] <= fin]
+            restantes = restantes[restantes["_dt"] > fin]
             desp = pd.to_numeric(blq.get("despacho"), errors="coerce").dropna()
-            mw = float(desp.min()) if not desp.empty else None
-            est = blq.get("estado", pd.Series(dtype=str)).astype(str).str.strip().str.upper()
-            est_lim = next((e for e in est if e in ESTADOS_LIMITACION), "")
-            fin, motivo_cierre = _cierre(uni, blq["_dt"].max(), codigo, mw, est_lim)
+            mw = float(desp.min()) if not desp.empty else mw_lim
             motivos = [str(m).strip() for m in blq.get("motivo", pd.Series(dtype=str))
                        if str(m).strip() and str(m).strip().lower() != "null"]
-            det = motivos[0][:180] if motivos else ""
+            # El motivo más informativo, no el primero: la reemisión con folio en
+            # blanco («Según SICFXXXXXX») suele llegar antes que la descriptiva.
+            det = max(motivos, key=len)[:180] if motivos else ""
             det = (det + " · " if det else "") + \
                   f"{MARCAS_INSTRUCCION[codigo]} citada en la instrucción de despacho"
             det += " · " + {
@@ -395,6 +436,9 @@ def eventos_desde_instrucciones(df_instr, unidad=None, ref=None):
                 "abierta": "sigue vigente: la unidad no ha subido carga ni hay "
                            "instrucción que la cancele (ventana abierta)",
             }[motivo_cierre]
+            if antecedentes:
+                ant = "; ".join(f"{t:%d-%m %H:%M} {x}" for t, x in antecedentes[:3])
+                det += f" · Prueba previa al cierre: {ant}"
             folios = [f for f in dict.fromkeys(blq["_folio"]) if f]
             ident = f"{codigo} {folios[0]}" if folios else codigo
             if len(folios) > 1:

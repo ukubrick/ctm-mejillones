@@ -1,7 +1,14 @@
 # CLAUDE.md — Dashboard CTM Mejillones
 > Contexto completo para Claude Code. Leer al inicio de cada sesión.
 > Autor: Erick Herrera — AES Andes, Antofagasta, Chile.
-> Última actualización: 2026-08-04 (2ª sesión: **adquisición endurecida y cadencias desacopladas**
+> Última actualización: 2026-08-05 (**la cancelación de la SICF ahora SÍ cierra la ventana**
+>   — reporte del usuario: la instrucción «Cancela SICF 2026087731» (04/08 20:27) caía DENTRO
+>   del propio bloque (cita el código), así que el cierre se buscaba después de ella y ANG1
+>   seguía apareciendo limitada. El bloque se arma ahora desde la declaración hasta el cierre;
+>   la PRUEBA de subida a PC previa a la cancelación es parte de la intervención (no cierra) y
+>   queda como antecedente en el detalle del evento. `tests/test_eventos_instrucciones.py`.
+>   ANG1: limitación 02/08 23:13 → 04/08 20:27, **cerrada**.)
+> Anterior: 2026-08-04 (2ª sesión: **adquisición endurecida y cadencias desacopladas**
 >   — se importaron las lecciones de Pulsar. El paginado del SIP cortaba en la primera página
 >   VACÍA en los 13 barridos (pérdida silenciosa de datos, reglas 51); primera suite de `tests/`
 >   del proyecto (37, en seco); `ResumenCorrida` hace que un job sin datos salga ROJO;
@@ -379,6 +386,27 @@ Destiladas de bugs y quirks reales del CEN/Streamlit:
       + mención del código o de «limitación», (b) salida de `ESTADOS_LIMITACION = {LF, LP}`, o
       (c) despacho por encima del limitado + `MARGEN_SUBIDA_MW = 5`. Si nada de eso ocurre, la
       ventana queda ABIERTA hasta «ahora», topeada a 7 días (regla 41).
+    · **La instrucción que CANCELA el documento lo cita, así que caía dentro del propio bloque
+      y la ventana nunca se cerraba** (bug reportado por el usuario, 2026-08-05: «te dice
+      explícitamente que se canceló la SICF y aún veo la unidad limitada»). El bloque se cerraba
+      con `blq["_dt"].max()` y después buscaba el cierre *entre lo posterior a ese máximo* → la
+      cancelación quedaba del lado equivocado. Ahora el bloque se arma **desde la instrucción que
+      declara el documento hasta el cierre** (`restantes[_dt <= fin]`), las filas que cancelan no
+      abren bloque (`_cancela`), y lo que queda después abre un bloque NUEVO (re-limitación bajo
+      el mismo código). Se eliminó el huelgo fijo `GAP_INSTRUCCION_H`: quien corta la ventana es
+      el cierre, no el silencio entre instrucciones.
+    · **Antes de cancelar, el CEN instruye una PRUEBA de subida a potencia de conexión** para
+      verificar que la intervención resultó; recién después la unidad queda disponible (aviso del
+      usuario, 2026-08-05). Esas instrucciones citan la MISMA SICF pero salen con `estado='PO'` y
+      despacho por encima del limitado → con los criterios de estado/carga habrían cerrado la
+      ventana a mitad del proceso. Regla: **mientras la instrucción siga citando el código, solo
+      el texto de cancelación cierra**; la prueba se registra como antecedente en el `detalle`
+      del evento (`_PAT_PRUEBA`, «Prueba previa al cierre: 04-08 18:23 A PC e inicia hora de
+      prueba…»).
+    · El `detalle` toma el motivo MÁS LARGO del bloque, no el primero: la reemisión con folio en
+      blanco («Según SICFXXXXXX») suele llegar antes que la descriptiva.
+    · Cubierto por `tests/test_eventos_instrucciones.py` (4 tests en seco sobre la secuencia real
+      de ANG1 02/08 → 04/08).
     · **`estado` LF/LP SÍ es señal de limitación** (confirmado con datos 2026-08-04, ya no es
       inferencia): el bloque LF de ANG1 coincide exacto con el SICF, y los 25 LP de ANG2 (julio)
       alternan despacho 87/60 MW. Se usa como criterio de CIERRE; el texto sigue siendo el que
@@ -588,10 +616,12 @@ dashboard_api/
 │                                      por endpoint) y `ritmo` (s/página sostenidos). Re-medir antes
 │                                      de cambiar cualquier cadencia — reglas 53 y 54
 ├── requirements-adq.txt            ← deps de la ADQUISICIÓN (3 paquetes) — regla 57
-├── tests/                          ← suite en seco, sin red ni DB (37 tests, ~0,01 s)
+├── tests/                          ← suite en seco, sin red ni DB (41 tests, ~0,13 s)
 │   ├── test_paginado_sip.py        ← integridad del barrido (regla 51)
 │   ├── test_robustez.py            ← exit codes, redacción de la key, SSLError, preflight (regla 56)
-│   └── test_fecha_chile.py         ← hoy_chile() + test de PATRÓN anti-`date.today()` (regla 52)
+│   ├── test_fecha_chile.py         ← hoy_chile() + test de PATRÓN anti-`date.today()` (regla 52)
+│   └── test_eventos_instrucciones.py ← cierre de la limitación declarada en despacho: cancelación,
+│                                      prueba de subida a PC, re-limitación (regla 50)
 ├── backfill_programada.py          ← utilidad puntual (recupera PCP por rango)
 ├── migracion_*.py                  ← migraciones puntuales (correr vía workflow migracion.yml)
 │                                      · migracion_cmg_ceros.py: repone en costo_marginal las horas
@@ -1360,3 +1390,26 @@ Limpieza de scripts probe/test/check.
     instrucciones en vivo (34 filas, 4,0 s, 1 página), ventana del CMG online en vivo (3 págs de 14,
     cobertura 18:15 → 21:00, las 4 barras), `AppTest` headless para la bitácora (día por defecto
     03-08 con 10 eventos de despacho + 4 de SSCC) y venv limpio para las deps. 6 commits a main.
+
+- **2026-08-05 — La cancelación de la SICF cierra la ventana (y la prueba previa no):**
+  · **Reporte del usuario:** en la bitácora de ANG1 aparece «Instrucción de despacho CMG · 87 MW ·
+    consigna MT — Cancela SICF 2026087731» y aun así la unidad seguía marcada como limitada.
+    Aportó además el antecedente operacional: antes de cancelar se hace una **prueba de subida a
+    potencia máxima** para verificar que la intervención resultó, y recién ahí la máquina queda
+    disponible.
+  · **Causa:** la instrucción que cancela CITA el documento → `marcas_instruccion` la marcaba como
+    limitación y entraba al propio bloque. `_cierre` recibía `blq["_dt"].max()` (o sea, la hora de
+    la cancelación) y buscaba el levantamiento entre lo POSTERIOR a ella → no había nada → ventana
+    «abierta» hasta el tope de 7 días, con badge palpitante incluido.
+  · **Corregido en `utils/eventos.py`:** las filas que cancelan no abren bloque (`_cancela`); el
+    bloque va de la declaración al cierre y lo que queda después abre una re-limitación nueva; se
+    eliminó el huelgo `GAP_INSTRUCCION_H`. Mientras una instrucción siga citando el código, los
+    criterios de estado/carga NO cierran — si no, la prueba de subida (PO, 87 MW, «A PC e inicia
+    hora de prueba, según SICF …») habría cortado la ventana el 04/08 17:23, a mitad de la
+    intervención. La prueba se guarda como antecedente en el `detalle` del evento (`_PAT_PRUEBA`).
+  · **Resultado sobre datos reales:** ANG1, SICF 2026087731, **02/08 23:13 → 04/08 20:27,
+    cerrada**, motivo «cerrada por instrucción posterior que la cancela/finaliza», con la prueba
+    listada. El badge palpitante desapareció (verificado con `AppTest` headless: ningún markdown
+    con `.badge-live` fuera del CSS).
+  · **Tests nuevos:** `tests/test_eventos_instrucciones.py` (4, en seco, sobre la secuencia real).
+    Suite total 41, OK. Se verificó que fallan con el código anterior.
