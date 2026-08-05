@@ -341,6 +341,27 @@ p,span,div,label {{ font-family:'Inter',sans-serif; }}
 .kpi-mw {{ font-size:1rem; font-weight:400; color:var(--muted); }}
 .kpi-sub {{ font-size:0.75rem; color:var(--muted); margin-top:0.4rem; }}
 .kpi-delta {{ font-size:0.78rem; margin-top:0.5rem; font-weight:600; }}
+/* Píldora de régimen operacional (plena carga / mínimo técnico / rampa / detenida) */
+.kpi-pill {{
+  display:inline-block; margin-top:0.55rem; padding:3px 10px; border-radius:20px;
+  font-size:0.72rem; font-weight:700; letter-spacing:0.01em; white-space:nowrap;
+}}
+/* Barra de carga sobre Pmax */
+.kpi-bar {{
+  height:6px; border-radius:4px; background:#EEF2F7; margin-top:0.75rem; overflow:hidden;
+}}
+.kpi-bar-fill {{ height:100%; border-radius:4px; transition:width 0.4s ease; }}
+.kpi-bar-lbl {{
+  display:flex; justify-content:space-between; font-size:0.68rem; color:var(--muted);
+  margin-top:4px;
+}}
+/* Filas de detalle (etiqueta a la izquierda, valor a la derecha) */
+.kpi-row {{
+  display:flex; justify-content:space-between; align-items:baseline;
+  font-size:0.75rem; color:var(--muted); padding:4px 0; border-top:1px solid #F1F5F9;
+}}
+.kpi-row b {{ color:var(--txt); font-size:0.86rem; font-weight:700; }}
+.kpi-foot {{ font-size:0.67rem; color:#9CA3AF; margin-top:0.55rem; line-height:1.35; }}
 
 /* ── Títulos de sección (sentence case + acento degradado corto) ──────── */
 .sec {{
