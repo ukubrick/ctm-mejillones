@@ -37,10 +37,18 @@ from Adquisicion import (
     _redactar,
 )
 
-# Páginas finales del día que se bajan del CMG online en cada corrida rápida.
-# El feed viene ordenado por fecha_minuto (~40 páginas/día) → las últimas son los
-# puntos más frescos. 6 páginas ≈ las últimas ~4 h, suficiente para un cron de 30 min.
-CMG_ULTIMAS_PAGINAS = 6
+# Ventana del CMG online en cada corrida rápida, en HORAS de cobertura real.
+#
+# Antes esto era `CMG_ULTIMAS_PAGINAS = 6` con el comentario «≈ las últimas 4 h».
+# Medido el 2026-08-04 a las 20:00: esas 6 páginas cubrieron 2,5 h, no 4 —
+# CUATRO de las seis vinieron vacías (el hueco no determinista del SIP) y las
+# vacías se comen la ventana. Como los huecos cambian en cada corrida, la
+# cobertura real era distinta cada vez y nadie lo habría notado: lo que queda
+# fuera de la ventana no se vuelve a pedir nunca.
+#
+# 3 h cubren holgadamente varias corridas del cron aunque Actions salte algunas,
+# que es el modo de falla a cubrir (los saltos de madrugada llegan a 4 h).
+CMG_HORAS_ATRAS = 3.0
 
 # Ventana corta: hoy + ayer. La gen-real filtra por central en el servidor (rápido),
 # 2 días basta para refrescar lo más reciente y cubrir el cambio de día UTC/Chile.
@@ -82,11 +90,11 @@ def run() -> int:
     # trae las barras de las propias centrales y NO descarta los CMG = 0
     # (el feed S3 hacía ambas cosas mal). Fallback automático al S3.
     hoy_str = hoy.strftime("%Y-%m-%d")
-    log.info(f"\n  ── CMG online 15 min (API SIP, últimas {CMG_ULTIMAS_PAGINAS} págs)")
+    log.info(f"\n  ── CMG online 15 min (API SIP, últimas {CMG_HORAS_ATRAS} h)")
     t0 = time.time()
     err_str = None
     try:
-        n_min, n_hora = adquirir_cmg_online(hoy_str, hoy_str, CMG_ULTIMAS_PAGINAS)
+        n_min, n_hora = adquirir_cmg_online(hoy_str, hoy_str, horas_atras=CMG_HORAS_ATRAS)
         log.info(f"  ✅ CMG: {n_min} puntos de 15 min, {n_hora} filas horarias")
         resumen.paso_ok("cmg-online")
     except Exception as e:

@@ -823,7 +823,8 @@ def upsert_cmg(registros: list[dict]) -> tuple[int, int]:
 
 
 def fetch_cmg_online_api(start: str, end: str,
-                         ultimas_paginas: int | None = None) -> list[dict]:
+                         ultimas_paginas: int | None = None,
+                         horas_atras: float | None = None) -> list[dict]:
     """
     CMG real EN LÍNEA con resolución de 15 min desde la API SIP
     (/costo-marginal-online/v4/findByDate), filtrado local a CMG_ONLINE_BARRAS.
@@ -834,9 +835,18 @@ def fetch_cmg_online_api(start: str, end: str,
       · NO descarta los valores 0 — el desacople con CMG=0 es un dato real.
 
     El feed es de TODO el sistema (~1.600 barras, ~40 páginas de 4000 por día) y
-    NO filtra por barra en el servidor. Viene ordenado por fecha_minuto → con
-    `ultimas_paginas=N` se bajan solo las N últimas páginas (lo más fresco), para
-    el cron de 30 min. La última página suele venir vacía.
+    NO filtra por barra en el servidor. Viene ordenado por fecha_minuto, así que
+    lo más fresco está al final.
+
+    Dos modos para el cron frecuente:
+      · `horas_atras=N` (PREFERIDO): retrocede desde la última página hasta
+        cubrir N horas REALES, midiendo los timestamps que devuelve el feed.
+      · `ultimas_paginas=N` (heredado): baja N páginas y punto. Se conserva
+        para la migración, pero NO sirve para dimensionar una ventana — la
+        cobertura de N páginas no es N/totalPages y varía en cada corrida
+        según cuántas páginas vacías toquen (ver el bloque de `horas_atras`).
+
+    Sin ninguno de los dos, baja el día completo.
     """
     url   = f"{API_BASE_SIP}/costo-marginal-online/v4/findByDate"
     limit = 4000
@@ -850,22 +860,22 @@ def fetch_cmg_online_api(start: str, end: str,
     primera     = _pedir(1)
     total_pages = int(primera.get("totalPages") or 1)
 
-    if ultimas_paginas and total_pages > ultimas_paginas:
-        paginas    = range(total_pages - ultimas_paginas + 1, total_pages + 1)
-        items_ini  = []
-    else:
-        paginas    = range(2, total_pages + 1)
-        items_ini  = primera.get("data", [])
-
     # (barra, fecha_minuto) → registro. El dict deduplica reemitidos.
     mejor: dict[tuple[str, str], dict] = {}
+    # Timestamps CRUDOS de la página (todas las barras, no solo las nuestras):
+    # la cobertura hay que medirla sobre lo que trajo el feed, no sobre lo que
+    # sobrevivió al filtro — si una página no trae ninguna de nuestras 4 barras
+    # igual avanzó en el tiempo.
+    vistos: list[str] = []
 
     def _consumir(items):
         for rec in items:
+            fm = (rec.get("fecha_minuto") or rec.get("fecha_hora") or "").replace("T", " ")[:16]
+            if len(fm) == 16:
+                vistos.append(fm)
             barra = rec.get("barra_transf")
             if barra not in CMG_ONLINE_BARRAS:
                 continue
-            fm = (rec.get("fecha_minuto") or rec.get("fecha_hora") or "").replace("T", " ")[:16]
             if len(fm) != 16:
                 continue
             val = rec.get("cmg_usd_mwh_", rec.get("cmg_usd_mwh"))
@@ -881,6 +891,51 @@ def fetch_cmg_online_api(start: str, end: str,
                 "version":      rec.get("version") or "EN LINEA",
             }
 
+    if horas_atras:
+        # ── Ventana por TIEMPO (cron frecuente) ────────────────────────────────
+        # Antes esto era "las últimas N páginas", y esa cuenta MIENTE: la
+        # cobertura de N páginas no es N/totalPages. Medido el 2026-08-04 a las
+        # 20:00, de las 6 últimas páginas CUATRO vinieron vacías (el hueco no
+        # determinista del SIP), así que la ventana real fue de 2,5 h y no de
+        # las 3,5 h nominales — y como los huecos cambian en cada corrida, la
+        # cobertura era distinta cada vez. Lo que se pierde por quedar fuera de
+        # la ventana no se vuelve a pedir NUNCA.
+        #
+        # Ahora se retrocede desde la última página hasta cubrir de verdad las
+        # horas pedidas: una página vacía simplemente no cuenta y se sigue.
+        limite = (datetime.now(TZ_CHILE).replace(tzinfo=None)
+                  - timedelta(hours=horas_atras)).strftime("%Y-%m-%d %H:%M")
+        # Tope de seguridad: si el feed viniera desordenado o el reloj estuviera
+        # corrido, esto impide barrer el día entero en un cron de pocos minutos.
+        tope = min(total_pages, max(4, int(horas_atras * 4)))
+        pg, leidas = total_pages, 0
+        while pg >= 1 and leidas < tope:
+            try:
+                _consumir(_pedir(pg).get("data", []))
+            except Exception as e:
+                log.warning(f"  CMG online API: página {pg} falló ({e.__class__.__name__})")
+            leidas += 1
+            pg -= 1
+            if vistos and min(vistos) <= limite:
+                break   # ya se cubrió la ventana pedida
+        cubre = f"{min(vistos)} → {max(vistos)}" if vistos else "sin datos"
+        alcanzo = bool(vistos) and min(vistos) <= limite
+        log.info(f"  CMG online API: {len(mejor)} puntos de 15 min · "
+                 f"{leidas} págs de {total_pages} · cobertura {cubre}")
+        if not alcanzo:
+            # La ventana quedó corta: el cron siguiente no tapará el hueco.
+            log.warning(f"  [CMG-ONLINE] AVISO: no se alcanzaron las {horas_atras} h "
+                        f"pedidas (se pidió hasta {limite}). Subir horas_atras o el tope.")
+        return list(mejor.values())
+
+    # ── Día completo (cron horario / migración) ────────────────────────────────
+    if ultimas_paginas and total_pages > ultimas_paginas:
+        paginas   = range(total_pages - ultimas_paginas + 1, total_pages + 1)
+        items_ini = []
+    else:
+        paginas   = range(2, total_pages + 1)
+        items_ini = primera.get("data", [])
+
     _consumir(items_ini)
     for pg in paginas:
         try:
@@ -890,8 +945,10 @@ def fetch_cmg_online_api(start: str, end: str,
             # (con user_key) y los logs de Actions son públicos.
             log.warning(f"  CMG online API: página {pg} falló ({e.__class__.__name__})")
 
+    cubre = f"{min(vistos)} → {max(vistos)}" if vistos else "sin datos"
     log.info(f"  CMG online API: {len(mejor)} puntos de 15 min "
-             f"({len(paginas) + (1 if items_ini else 0)} de {total_pages} páginas)")
+             f"({len(paginas) + (1 if items_ini else 0)} de {total_pages} páginas) "
+             f"· cobertura {cubre}")
     return list(mejor.values())
 
 
@@ -956,7 +1013,8 @@ def upsert_cmg_online_min(registros: list[dict]) -> tuple[int, int]:
 
 
 def adquirir_cmg_online(start: str, end: str,
-                        ultimas_paginas: int | None = None) -> tuple[int, int]:
+                        ultimas_paginas: int | None = None,
+                        horas_atras: float | None = None) -> tuple[int, int]:
     """Trae el CMG online por API y escribe 15 min + agregado horario.
 
     Fallback al feed S3 si la API no devuelve nada (mantenimiento / 429 sostenido).
@@ -964,7 +1022,7 @@ def adquirir_cmg_online(start: str, end: str,
     """
     regs_min = []
     try:
-        regs_min = fetch_cmg_online_api(start, end, ultimas_paginas)
+        regs_min = fetch_cmg_online_api(start, end, ultimas_paginas, horas_atras)
     except Exception as e:
         log.error(f"  CMG online API falló: {_redactar(e)}")
 
@@ -993,7 +1051,9 @@ def fetch_cmg_programado(start: str, end: str, fuente: str = "CEN_PID") -> list[
     endpoint = "cmg-programado-pcp" if fuente == "CEN_PCP" else "cmg-programado-pid"
     mejor: dict[tuple, dict] = {}   # (barra, fecha_hora) → registro
     page  = 1   # 1-indexado (page=0 devuelve 502)
-    limit = 2000
+    # Medido 2026-08-04: 2000 → 16 páginas; 10000 → 4 páginas (4,5 s c/u).
+    # 20000 devuelve 502, así que 10000 es el techo real de ESTE endpoint.
+    limit = 10000
     tag = f"CMG-PROG {fuente}"
     tp_visto: int | None = None
     paginas_ok = 0
@@ -1355,7 +1415,12 @@ def fetch_instrucciones_cmg(start: str, end: str | None = None) -> list[dict]:
 
     registros = []
     page  = 1   # 1-indexado
-    limit = 100
+    # Medido 2026-08-04 sobre un día: con limit=100 son 27 páginas; con 5000
+    # cabe en UNA (2.663 filas, 3,2 s). Menos requests importa más que requests
+    # más rápidos, porque lo que domina el costo del job es el 429 del CEN, no
+    # el volumen de datos. Techo probado hasta 20000 sin error, pero 5000 deja
+    # margen de sobra para la ventana de varios días y no fuerza al servidor.
+    limit = 5000
     tp_visto: int | None = None
     paginas_ok = 0
     try:
@@ -1594,8 +1659,10 @@ def fetch_solicitudes(start: str, end: str) -> list[dict]:
         while True:
             data, tp_visto = _pedir_pagina(
                 base_url,
+                # Medido 2026-08-04 sobre 7 días: limit=100 → 8 páginas;
+                # limit=1000 → 1 página (772 filas, 1,8 s).
                 {"user_key": CEN_USER_KEY, "startDate": start,
-                 "endDate": end, "page": page, "limit": 100},
+                 "endDate": end, "page": page, "limit": 1000},
                 "SOLICITUDES", tp_visto,
             )
             total = tp_visto if tp_visto is not None else 1
