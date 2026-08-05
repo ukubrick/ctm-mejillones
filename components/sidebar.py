@@ -4,7 +4,7 @@ components/sidebar.py — Sidebar: marca, estado de fuentes, filtros y exportaci
 Devuelve los filtros seleccionados (rango de fechas, flags de programada/CMG,
 nodo CMG) que el resto de la app usa para cargar datos.
 """
-from datetime import date, datetime, timedelta
+from datetime import datetime, timedelta
 from zoneinfo import ZoneInfo
 
 import streamlit as st
@@ -14,6 +14,7 @@ from utils.db import test_conn, last_ts
 from utils.data import load_real, load_prog, load_cmg, load_sscc, load_limitaciones
 from utils.reports import generar_pdf, generar_ppt
 from utils.eventos import limitaciones_vigentes
+from utils.plotly_theme import hoy_chile
 
 TZ_CHILE = ZoneInfo("America/Santiago")
 
@@ -141,7 +142,9 @@ def render_sidebar():
         st.markdown('<p style="font-size:0.66rem;font-weight:700;letter-spacing:0.14em;'
                     'color:#C7D2FE;margin-bottom:4px;text-transform:uppercase">Período de análisis</p>',
                     unsafe_allow_html=True)
-        hoy = date.today()
+        # Fecha de CHILE: date.today() es la del servidor (UTC) y desde las
+        # 20:00 hora local proponía un 'Hasta' en el futuro.
+        hoy = hoy_chile()
         fi = st.date_input("Desde", value=hoy - timedelta(days=7), max_value=hoy)
         ff = st.date_input("Hasta", value=hoy, max_value=hoy)
         if fi > ff:

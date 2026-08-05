@@ -8,7 +8,6 @@ publicados (la ventana de adquisición filtra por fecha de publicación).
 
 Vista: KPIs + línea de tiempo (Gantt simple, un programa por fila) + tabla.
 """
-from datetime import date
 
 import pandas as pd
 import plotly.graph_objects as go
@@ -16,6 +15,7 @@ import streamlit as st
 
 from config import BG_TRANSP, C_GRID
 from utils.data import load_mantenimiento_mayor
+from utils.plotly_theme import hoy_chile
 from components._common import render_guia
 
 _ESTADO_COLOR = {
@@ -51,7 +51,7 @@ def render_mantenimiento(s, e):
                 "La adquisición diaria los incorpora automáticamente.")
         return
 
-    hoy = pd.Timestamp(date.today())
+    hoy = pd.Timestamp(hoy_chile())
     ini = df["fecha_inicio_programa_dt"]
     fin = df["fecha_fin_programa_dt"]
     en_curso = df[(ini <= hoy) & (fin >= hoy)]

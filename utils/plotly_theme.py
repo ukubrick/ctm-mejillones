@@ -14,6 +14,22 @@ from config import BG, BG_TRANSP, C_GRID, C_MUTED, C_TEXTO, SERIE
 TZ_CHILE = ZoneInfo("America/Santiago")
 
 
+def hoy_chile():
+    """Fecha de HOY en Chile — nunca `date.today()`, que es la del servidor.
+
+    Streamlit Cloud corre en UTC, así que desde las 20:00 hora de Chile (21:00
+    en invierno) `date.today()` ya devuelve el día SIGUIENTE. Todo lo que se
+    derive de ahí queda corrido un día justo en el horario de mayor uso de la
+    tarde: el «ayer» del selector de la bitácora apuntaba al día que en Chile
+    todavía es hoy (y la bitácora se vaciaba de golpe), y el «Hasta» del
+    sidebar arrancaba en una fecha futura.
+
+    Es la convención de la adquisición (`datetime.now(TZ_CHILE)`, nunca UTC ni
+    offset fijo) llevada a la capa de vistas, donde se había colado el atajo.
+    """
+    return datetime.now(TZ_CHILE).date()
+
+
 def hex_to_rgba(hex_color: str, alpha: float) -> str:
     """'#RRGGBB' → 'rgba(r,g,b,a)' para fills translúcidos."""
     h = hex_color.lstrip("#")
