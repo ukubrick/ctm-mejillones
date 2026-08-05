@@ -1,7 +1,15 @@
 # CLAUDE.md — Dashboard CTM Mejillones
 > Contexto completo para Claude Code. Leer al inicio de cada sesión.
 > Autor: Erick Herrera — AES Andes, Antofagasta, Chile.
-> Última actualización: 2026-08-04 (**la limitación se cierra al SUBIR CARGA o al cancelarse el
+> Última actualización: 2026-08-04 (2ª sesión: **adquisición endurecida y cadencias desacopladas**
+>   — se importaron las lecciones de Pulsar. El paginado del SIP cortaba en la primera página
+>   VACÍA en los 13 barridos (pérdida silenciosa de datos, reglas 51); primera suite de `tests/`
+>   del proyecto (37, en seco); `ResumenCorrida` hace que un job sin datos salga ROJO;
+>   `preflight_cen`, SSLError sin reintento y redacción de la user_key; `requirements-adq.txt`
+>   (3 paquetes en vez de 17). Crons nuevos `instrucciones.yml` (10 min) y `cmg_min.yml` (15 min),
+>   dimensionados por la GRANULARIDAD medida de cada fuente. **Fix de la bitácora: usaba la fecha
+>   UTC del servidor** y se vaciaba cada noche a partir de las 20:00 de Chile.)
+> Anterior: 2026-08-04 (**la limitación se cierra al SUBIR CARGA o al cancelarse el
 >   documento, no con la siguiente instrucción** — corrección del usuario. `_cierre` en
 >   `utils/eventos.py`; `estado` LF/LP confirmado como estado de limitación. ANG1 sigue limitada
 >   desde el 02/08 23:13.)
@@ -381,6 +389,106 @@ Destiladas de bugs y quirks reales del CEN/Streamlit:
     · El aviso palpitante y las franjas se apagan solos en cuanto llegue la instrucción que
       cancele el documento o suba la carga.
 
+51. **Una página VACÍA del SIP no es el fin del feed — y su cuerpo NO trae `totalPages`.** El SIP
+    intercala páginas vacías de forma no determinista. Los 13 barridos de `Adquisicion.py` cortaban
+    ahí (`if not data: break`), así que cada corrida se quedaba con un subconjunto ARBITRARIO del
+    día: sin error, sin fila repetida, sin nada visible. Verificado con el bucle viejo contra un
+    escenario de 5 páginas con la 2 y la 3 vacías: devolvía **1 de 3 filas**. Y observado EN VIVO
+    el 04/08: de las 6 últimas páginas del CMG online, **4 volvieron vacías** con datos en las de
+    al lado.
+    · Cortar SOLO con `page >= totalPages`, RECORDANDO el último `totalPages` conocido del barrido
+      (`_total_pages(body, previo)`): preguntárselo a la página vacía es preguntarle justo a la
+      única que no lo sabe.
+    · Saltear la vacía evita truncar pero PIERDE sus filas → re-pedir la misma página
+      (`_pedir_pagina`), que suele volver con datos porque el hueco no es determinista.
+    · **Un fix de integridad necesita una métrica de VERIFICACIÓN en el log**, no solo "no falla":
+      `_avisar_parcial` imprime `AVISO: barrido PARCIAL — N páginas de M`. En Pulsar la línea
+      `4 páginas → 126 registros` se imprimió durante días mientras se perdía el 74% del día,
+      porque nadie la comparó contra el valor esperado.
+    · Aplicarlo en TODOS los caminos que comparten el patrón, no en el que dio el síntoma: en
+      Pulsar se arregló en tres barridos y quedó vivo en el cuarto, que alimentaba seis endpoints.
+      Lo que lo garantiza es un test, no la memoria (`tests/test_paginado_sip.py`).
+
+52. **`date.today()` en el dashboard es la fecha del SERVIDOR (UTC), no la de Chile.** Streamlit
+    Cloud corre en UTC, así que desde las 20:00 hora de Chile (21:00 en invierno) devuelve el día
+    SIGUIENTE. El selector de la bitácora calculaba «ayer» a partir de eso: pasada esa hora «ayer»
+    saltaba al día que en Chile todavía es HOY y la bitácora **se vaciaba de golpe**, para
+    rellenarse sola a la mañana siguiente. Reportado por el usuario el 04/08 21:25 («las novedades
+    automáticas ahora no aparecen, hace un par de horas salían todas las de ayer»); el mismo atajo
+    dejaba el «Hasta» del sidebar en una fecha FUTURA y afectaba al «hoy» del Gantt del PMPM.
+    · Usar `hoy_chile()` de `utils/plotly_theme.py`. Es la convención que la adquisición ya tenía
+      (`datetime.now(TZ_CHILE)`, nunca UTC ni offset fijo) llevada a la capa de vistas.
+    · `tests/test_fecha_chile.py` incluye un test de PATRÓN que falla si cualquier módulo de
+      `components/` o `utils/` vuelve a escribir `date.today()` (exentos: el valor por defecto de
+      un formulario en `datos.py`, y el docstring que lo explica en `plotly_theme.py`).
+
+53. **El óptimo de `limit` se mide en PÁGINAS × SEGUNDOS, y el techo es POR ENDPOINT.** Medido
+    2026-08-04 con `medir_endpoints.py` (modo `limites`): instrucciones 100→**5000** (27 págs → 1,
+    3,2 s), solicitudes 100→**1000** (8 → 1), CMG prog PID 2000→**10000** (16 → 4), CMG online
+    4000→**10000**. Los techos NO se extrapolan: `gen-programada-pcp/pid` dan 502 ya en 10000,
+    `cmg-programado-pid` en 20000, el CMG online devuelve 429 en 20000.
+    · **Menos páginas no siempre es mejor:** en el CMG online, 4000 → 40 págs × 2,9 s = 116 s;
+      10000 → 16 × 3,2 = **51 s**; 15000 → 11 × 6,7 = 74 s. Pasado cierto tamaño el servidor tarda
+      más de lo que ahorra.
+    · Lo que domina el costo de un job de adquisición es el **429 del CEN**, no el volumen de
+      datos → menos requests vale más que requests más rápidos.
+
+54. **La cobertura de «las últimas N páginas» NO es N/totalPages: se MIDE.** El cron de potencia
+    usaba `ultimas_paginas=6` documentado como «≈ 4 h». Medido el 04/08 a las 20:00: cubrió
+    **2,5 h**, porque 4 de esas 6 páginas vinieron vacías y las vacías se comen la ventana — y
+    como los huecos cambian en cada corrida, la cobertura real era distinta cada vez. Lo que queda
+    fuera de la ventana **no se vuelve a pedir nunca**.
+    · `fetch_cmg_online_api(..., horas_atras=N)` retrocede hasta cubrir N horas REALES mirando los
+      timestamps que devuelve el feed, loguea la cobertura (`min → max`) y AVISA si no la alcanzó.
+    · Toda fuente de alta frecuencia necesita además un **self-heal** en un cron confiable que
+      re-barra la ventana COMPLETA con upsert idempotente: Actions descarta corridas programadas
+      de forma sistemática (en Pulsar, intervalo efectivo de 147 min para un cron de 30), así que
+      la cadencia pedida NO es la garantizada.
+
+55. **La cadencia de un cron se dimensiona por la GRANULARIDAD de la fuente, no por lo que uno
+    quisiera ver.** Medido 2026-08-04 contra la DB:
+
+    | fuente | granularidad | rezago |
+    |---|---|---|
+    | CMG online | **15 min** | 1,1 h |
+    | instrucciones de despacho | **evento de minuto exacto** (06:20, 17:57) | — |
+    | gen-real | 1 h | **4,6 h** |
+    | programada PCP/PID | 1 h | hacia adelante |
+    | demanda neta | 1 h | ~1,5 días |
+    | desempeño CPF/CSF | 1 h | 2-3 meses |
+
+    · **La generación NO puede ser tiempo real** y no es culpa nuestra: el CEN la publica horaria
+      y con 4-5 h de atraso. Pedirla más seguido no adelanta un solo dato y sí gasta requests
+      contra el rate limiter. `potencia.yml` se queda en `:25,:55` y el yml lo documenta para que
+      nadie lo "optimice".
+    · Donde sí paga la frecuencia: el CMG online (única serie de 15 min → `cmg_min.yml`, 15 min) y
+      las instrucciones, que al ser EVENTOS sin malla tienen una latencia igual a la frecuencia de
+      sondeo (→ `instrucciones.yml`, 10 min; encienden el aviso de limitación SICF/SDCF/IL/IF).
+    · Corolario: no atar en un mismo cron dos fuentes de ritmo incompatible — o la rápida va lenta
+      o la lenta se pide de más.
+
+56. **Un job que atrapa las excepciones y sale `exit 0` queda VERDE sin haber adquirido nada.** Es
+    peor que un fallo rojo porque OCULTA la caída (a este proyecto le costó ~19 h de datos, según
+    el registro de Pulsar). `ResumenCorrida` (Adquisicion.py) contabiliza los pasos y `run()`
+    devuelve el código de salida.
+    · Criterio: **ROJO si NINGÚN paso funcionó**; verde con warning prominente si el fallo fue
+      parcial. Un monitor que se enciende seguido entrena a ignorarlo, que es exactamente cómo se
+      pierde el siguiente fallo real.
+    · Acompañan: `preflight_cen()` (sonda de 1 request — un host caído aborta en 1 s en vez de
+      quemar el timeout), `SSLError` capturado ANTES del genérico y **sin reintento** (hereda de
+      `ConnectionError`, así que el except genérico le aplicaba backoff a un certificado vencido),
+      y `_redactar()` en los 43 puntos donde la excepción llegaba a un log o a la tabla
+      `log_adquisicion` — las excepciones de `requests` traen la URL con la `user_key` en claro y
+      **el repo es PÚBLICO**.
+
+57. **Los crons NO deben instalar el `requirements.txt` del dashboard.** La adquisición usa solo
+    `requests` + `psycopg2` + `dotenv`; el requirements completo trae 17 paquetes (streamlit,
+    xgboost, scikit-learn, scipy, pyarrow, matplotlib, reportlab, pptx, plotly). En un repo
+    público los minutos son gratis, pero eso se paga como **LATENCIA** antes del primer request al
+    CEN, en cada una de las ~150 corridas diarias — justo lo que estorba a un dashboard que apunta
+    a tiempo real. Usar `requirements-adq.txt`. Verificado en un venv limpio: los 5 scripts de
+    adquisición importan, los 14 de migración/backfill cargan y los 37 tests pasan.
+
 ---
 
 ## CONVENCIONES DE CÓDIGO
@@ -470,6 +578,20 @@ dashboard_api/
 │                                      mix diario, desempeño SSCC (días faltantes)
 ├── Adquisicion_sscc_prog.py        ← cron 09:50 UTC — SSCC PROGRAMADO PCP (workflow propio: ~21 min
 │                                      por día, tope MAX_DIAS=2)
+├── Adquisicion_instrucciones.py    ← cron cada 10 min — SOLO instrucciones de despacho (eventos de
+│                                      minuto exacto; 1 página, ~4 s). Encienden el aviso de
+│                                      limitación SICF/SDCF/IL/IF — regla 55
+├── Adquisicion_cmg_min.py          ← cron cada 15 min — SOLO CMG online 15 min (ventana por HORAS
+│                                      de cobertura real, no por páginas — regla 54)
+├── medir_endpoints.py              ← utilidad de MEDICIÓN (no escribe en la DB): `cobertura` (ventana
+│                                      real de una ventana de paginado), `limites` (techo de `limit`
+│                                      por endpoint) y `ritmo` (s/página sostenidos). Re-medir antes
+│                                      de cambiar cualquier cadencia — reglas 53 y 54
+├── requirements-adq.txt            ← deps de la ADQUISICIÓN (3 paquetes) — regla 57
+├── tests/                          ← suite en seco, sin red ni DB (37 tests, ~0,01 s)
+│   ├── test_paginado_sip.py        ← integridad del barrido (regla 51)
+│   ├── test_robustez.py            ← exit codes, redacción de la key, SSLError, preflight (regla 56)
+│   └── test_fecha_chile.py         ← hoy_chile() + test de PATRÓN anti-`date.today()` (regla 52)
 ├── backfill_programada.py          ← utilidad puntual (recupera PCP por rango)
 ├── migracion_*.py                  ← migraciones puntuales (correr vía workflow migracion.yml)
 │                                      · migracion_cmg_ceros.py: repone en costo_marginal las horas
@@ -573,21 +695,29 @@ Se abandonaron las categorías desplegables (popovers). El menú es un **segment
 
 ---
 
-## ADQUISICIÓN — 5 WORKFLOWS ESCALONADOS
+## ADQUISICIÓN — 7 WORKFLOWS, CADENCIA POR GRANULARIDAD DE LA FUENTE
 
-Réplica del patrón de separación por concern. El job horario único se pasaba del timeout en
-PCP/PID (lentos paginados) → se separaron los endpoints rápidos y los lentos-que-cambian-poco.
+Separación por concern + **cadencia dimensionada por lo que publica cada fuente** (regla 55), no
+por lo que uno quisiera ver. El repo es PÚBLICO → Actions ilimitado, así que el límite NO son los
+minutos sino el **rate limiter del CEN** (regla 53).
 
 | Workflow | Script | Endpoints | Cron | Timeout |
 |----------|--------|-----------|------|---------|
-| Horaria | `Adquisicion.py` | **Núcleo:** PCP · PID · CMG-programado (+ gen-real/CMG S3 de respaldo) | `:05` | 60 min |
-| Potencia | `Adquisicion_potencia.py` | gen-real + CMG online 15 min (últimas 6 págs) | `:25,:55` | — |
-| Operaciones | `Adquisicion_operaciones.py` | SSCC + Despacho CMG + Limitaciones | `:10,:40` | — |
-| Diaria | `Adquisicion_diaria.py` | CMG real (4 barras) + CMG prog PCP + pronóstico demanda + solicitudes + maestro + mantenimiento mayor + demanda neta + mix diario + desempeño SSCC | `08:20 UTC` | 60 min |
+| **Instrucciones** | `Adquisicion_instrucciones.py` | Despacho CMG (eventos de minuto exacto) | `*/10` | 10 min |
+| **CMG 15 min** | `Adquisicion_cmg_min.py` | CMG online (ventana de 3 h de cobertura REAL) | `*/15` | 10 min |
+| Operaciones | `Adquisicion_operaciones.py` | SSCC + Limitaciones + Despacho CMG (**self-heal** del cron de 10 min) | `:10,:40` | 15 min |
+| Potencia | `Adquisicion_potencia.py` | gen-real (horaria, rezago 4,6 h → NO subir) | `:25,:55` | 15 min |
+| Horaria | `Adquisicion.py` | **Núcleo:** PCP · PID · CMG-programado + **día COMPLETO del CMG online (self-heal del cron de 15 min)** | `:05` | 60 min |
+| Diaria | `Adquisicion_diaria.py` | CMG real (4 barras) + CMG prog PCP + pronóstico demanda + solicitudes + maestro + mantenimiento mayor + demanda neta + mix diario + desempeño SSCC + **los 37 tests** | `08:20 UTC` | 60 min |
 | SSCC prog | `Adquisicion_sscc_prog.py` | SSCC programado PCP (1 día, ~21 min) | `09:50 UTC` | 60 min |
 
-- Crons espaciados para no solaparse. Cada script reutiliza las funciones de `Adquisicion.py`
-  (el guard `if __name__` evita correr `run()` al importar).
+- **Los dos self-heal no son decorativos:** Actions descarta corridas programadas de forma
+  sistemática, así que la cadencia pedida no es la garantizada (regla 54). Con upsert idempotente,
+  un hueco del cron rápido se rellena dentro de la hora.
+- Todos instalan `requirements-adq.txt` (3 paquetes), no el del dashboard (regla 57).
+- Cada script hace `abortar_si_cen_caido()` al inicio y devuelve exit code vía `ResumenCorrida`:
+  una corrida sin datos sale ROJA (regla 56).
+- Crons espaciados para no solaparse; todos con `concurrency` + `cancel-in-progress`.
 - `gen-real` SIEMPRE por día (el v3 trunca rangos). PCP/PID/CMG-prog por rango ayer→mañana.
 
 ---
@@ -662,6 +792,34 @@ SIDEBAR_GRAD = "linear-gradient(168deg,#0E7E93,#2A38C9,#4A25A0)"                
 ---
 
 ## PENDIENTES VIVOS (lista única — actualizar aquí)
+
+- [ ] **Vigilar los 429 con la cadencia nueva (2026-08-04, 2ª sesión) — lo primero a revisar.**
+      `instrucciones.yml` (10 min) y `cmg_min.yml` (15 min) son bastante más agresivos que lo que
+      había (6 y 4 corridas/hora contra 2). Durante las mediciones de esa sesión el rate limiter
+      cortó varias veces — desde UNA máquina y en ráfagas, que es peor que el patrón real, pero
+      conviene mirar los primeros logs buscando `HTTP 429`. Si aparecen seguido: bajar
+      `instrucciones` a `*/15` y subir `CEN_THROTTLE_S` en el yml (ambos son variables de entorno,
+      no hace falta tocar código).
+      · Mirar también si sale `[CMG-ONLINE] AVISO: no se alcanzaron las 3 h pedidas` → subir
+        `CMG_HORAS_ATRAS` o el tope de páginas.
+      · Y si sale `AVISO: barrido PARCIAL` en cualquier endpoint: NO es una regresión, es el
+        detector de la regla 51 funcionando sobre un problema que antes pasaba en silencio.
+
+- [ ] **Medir el consumo real de minutos con la cadencia nueva (2026-08-04).** Se pasó de ~50 a
+      ~150 corridas/día. Con repo público es gratis, pero si alguna vez vuelve a privado esto se
+      pasa de cualquier cuota (Pulsar vive con 2.880 min/mes proyectados y el margen al 4%).
+      Dejar anotado el número real por si acaso.
+
+- [ ] **Cuantificar el daño histórico del paginado truncado (2026-08-04).** El fix de la regla 51
+      detiene la pérdida pero no dice cuánto se perdió antes. Para medirlo: barrer un rango con el
+      código nuevo y comparar el conteo contra lo que hay en la DB. Sospechosos principales:
+      `generacion_programada` (PCP/PID, 62 y 54 páginas) y `sscc_programado` (~121 páginas, que
+      tenía la peor versión del bug: un `break` dentro de un `for` sobre un rango conocido).
+
+- [ ] **Re-medir `medir_endpoints.py limites` cada tanto (2026-08-04).** Los techos de `limit` son
+      del servidor del CEN y pueden cambiar sin aviso; `cmg-online` dio 429 (no 502) en 20000, así
+      que su techo real quedó sin determinar del todo. Re-medir en frío antes de subir cualquier
+      límite.
 
 - [ ] **EJECUTAR `migracion_cmg_ceros.py` (2026-08-01, 3ª sesión) — es lo primero de la lista.**
       Repone en `costo_marginal` las 272 horas de CMG = 0 que el feed S3 nunca emitió (regla 40),
@@ -1137,7 +1295,7 @@ Limpieza de scripts probe/test/check.
     Limitaciones, Panorama y Despacho CMG, sin excepciones) + Playwright sobre el CSS real para
     confirmar que el badge anima y no desborda el párrafo. 4 commits pusheados a main.
 
-*Actualizado 2026-08-03. Proyecto CTM Mejillones (4 térmicas ANG/CCR).*
+*Actualizado 2026-08-04. Proyecto CTM Mejillones (4 térmicas ANG/CCR).*
 *Stack: Streamlit + supabase-py/psycopg2 + GitHub Actions + API CEN (SIP/OPS) + CMG S3 + scikit-learn/xgboost.*
 
 - **2026-08-04 — Cierre correcto de la limitación declarada en despacho:**
@@ -1154,3 +1312,51 @@ Limpieza de scripts probe/test/check.
     `detalle` del evento declara cuál de los cuatro motivos cerró la ventana.
   · Resultado sobre datos reales: 1 evento, ANG1, 02/08 23:13 → ahora, estado **activa**.
     `AppTest` headless sobre Resumen y Operación sin excepciones.
+
+- **2026-08-04 (2ª sesión) — Adquisición endurecida, primeros tests y cadencias por granularidad:**
+  · **Punto de partida (pedido del usuario):** extraer del `CLAUDE.md` de Pulsar
+    (`Dashboard ERNC/ernc-aes-dashboard`, 1.394 líneas, 65 reglas) todo lo aplicable, y aprovechar
+    que el repo es PÚBLICO (Actions ilimitado) para acercar el dashboard al tiempo real.
+  · **Hallazgo mayor (regla 51):** CTM tenía vivo en producción el bug que Pulsar documentó en sus
+    reglas #55/#59/#62. Los **13** barridos paginados cortaban en la primera página VACÍA, y como
+    el SIP las intercala de forma no determinista, cada corrida se quedaba con un subconjunto
+    ARBITRARIO del día — sin error ni fila repetida. Reproducido en seco (5 páginas, la 2 y la 3
+    vacías → **1 de 3 filas**) y observado EN VIVO al medir el CMG online: 4 de 6 páginas vacías.
+    El SSCC programado tenía la peor versión: un `break` dentro de un `for` sobre ~121 páginas.
+  · **Primera suite de tests del proyecto** (`tests/`, 37 en seco, ~0,01 s, sin red ni DB):
+    paginado, robustez y fecha de Chile. Enganchados al workflow diario con `continue-on-error`.
+    Se verificó que cada uno FALLA con el código anterior — un test que no se vio fallar no prueba
+    nada. Es la idea que Pulsar destila en su `docs/optimizacion.md`: convertir una regla
+    *recordada* en una regla *ejecutada*.
+  · **Robustez (regla 56):** `ResumenCorrida` → un job que no adquirió nada sale ROJO (antes
+    cualquier corrida salía verde porque cada paso tragaba su excepción); `preflight_cen()`;
+    `SSLError` sin reintento; `Retry-After`, jitter y sesión HTTP reutilizable; `_redactar()` en
+    43 puntos donde la `user_key` llegaba a un log o a la tabla `log_adquisicion` (repo PÚBLICO).
+  · **`requirements-adq.txt` (regla 57):** 3 paquetes en vez de 17. Verificado en un venv limpio.
+  · **Medición antes de decidir** (`medir_endpoints.py`, modos `cobertura`/`limites`/`ritmo`):
+    subida de `limit` en 4 endpoints (instrucciones 27 págs → **1**, solicitudes 8 → 1, CMG prog
+    PID 16 → 4, CMG online 40 → 16) y el hallazgo de que **menos páginas no siempre es mejor**
+    (regla 53). La ventana del CMG online pasó de `ultimas_paginas=6` —que cubría 2,5 h y no las
+    4 documentadas, porque las páginas vacías se comen la ventana— a `horas_atras=3.0`, medida
+    contra los timestamps del feed (regla 54).
+  · **Granularidad medida (regla 55) → cadencias desacopladas.** El dato que reordenó el plan: la
+    gen-real es HORARIA y llega con **4,6 h** de rezago, así que la intuición de «todo más seguido»
+    habría gastado requests pidiendo cuatro veces por hora un dato que cambia una vez. Crons nuevos
+    solo donde paga: `instrucciones.yml` (10 min; eventos de minuto exacto, encienden el aviso de
+    limitación) y `cmg_min.yml` (15 min; única serie de 15 min). `potencia.yml` se queda en
+    `:25,:55` **a propósito y documentado en el yml**. Los self-heal viven en `operaciones.yml`
+    y en la corrida horaria.
+  · **Fix reportado por el usuario a mitad de sesión (regla 52):** «las novedades automáticas ahora
+    no aparecen, hace un par de horas salían todas las de ayer». No era regresión de la sesión:
+    `date.today()` en Streamlit Cloud es la fecha UTC, así que pasadas las 20:00 de Chile el «ayer»
+    del selector saltaba al día que acá todavía es hoy y **la bitácora se vaciaba cada noche**.
+    Visible en su captura: «04-08-2026 · ayer» siendo el 4, y «Hasta 2026/08/05» en el sidebar.
+    Resuelto con `hoy_chile()` compartido + un test de PATRÓN que impide reintroducir el atajo.
+    · **Error propio:** la primera lectura del reporte fue «novedades» = las manuales de la tabla
+      `bitacora`, y se implementó un aviso para ellas que hubo que revertir. El usuario tuvo que
+      corregir dos veces. Lección: cuando el reporte dice «antes salía y ahora no», lo primero es
+      preguntar QUÉ desapareció exactamente, no diagnosticar la primera lectura plausible.
+  · **Método:** todo verificado contra la API y la DB reales (no solo compilado): fetch de
+    instrucciones en vivo (34 filas, 4,0 s, 1 página), ventana del CMG online en vivo (3 págs de 14,
+    cobertura 18:15 → 21:00, las 4 barras), `AppTest` headless para la bitácora (día por defecto
+    03-08 con 10 eventos de despacho + 4 de SSCC) y venv limpio para las deps. 6 commits a main.
